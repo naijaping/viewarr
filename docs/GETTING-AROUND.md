@@ -13,7 +13,7 @@ The menu is see-through on every page. It slides the page and the picture aside 
 - **Right** (or **OK**) goes into the highlighted entry:
   - **Live TV**: its channel groups. Moving through them changes the guide behind as you go; OK picks one and takes you into the guide.
   - **Movies** and **Shows**: their home page, with your rows tucked under **Jump to a row**.
-  - **My Library**: every library on all your servers and your music; moving through them shows each behind.
+  - **My Library**: every library on all your servers and your music; moving through them shows each behind. **Left** from a library you opened here goes back to the My Library list, with your place kept.
   - **Recordings**, **Music** and the streaming services: straight into the page.
 - **Left** on an entry opens its own list (channel groups, libraries…); **Left** again goes back to the main list.
 - **Back** closes the menu from any list, and you stay on the page you were on.
@@ -36,7 +36,7 @@ You can change all of these in **Settings → Appearance → Menu** (see below).
 
 ### Edit menus
 
-**Edit menus** sits at the top of the menu (**Up** from Live TV), with a **⚙** to its left that opens Settings without going to the bottom of the list. Use Edit menus to tidy things up right there, with the page changing as you go:
+**Edit menus** sits at the top of the menu, with a **⚙** beside it that opens Settings without going to the bottom of the list. **Up** from Live TV lands on the ⚙; Right from there reaches Edit menus. Use Edit menus to tidy things up right there, with the page changing as you go:
 
 - Show, hide and reorder the menu's entries and streaming services.
 - Show or hide a service's rows.
@@ -64,6 +64,26 @@ Skip intro, the next-episode countdown, reminders and every other pop-up use the
 - **Pop-up glass**: from see-through to solid, for the info bar, the player's controls and every pop-up.
 - **Info bar: border**: the thin light edge round the glass, on or off.
 - **Info bar size** and **Preview cards**: how big the bar and the cards in its rows are drawn.
+
+### Info bar styles
+
+Choose how the bar looks in **Settings → Appearance → Info bar & controls → Info bar style**, or add the **Style** button to the bar and press it to try each in turn. The style applies to live TV and films alike.
+
+| Style | What it looks like |
+|---|---|
+| **Glass** | The Viewarr look: the whole bar in one rounded glass panel, inset from the edges. |
+| **Square glass** | The same panel with sharp corners. |
+| **Pill** | Fully rounded ends, floating a little higher. |
+| **Fade** | No panel: a dark fade up from the bottom, across the whole screen. |
+| **Full-width bar** | Edge to edge along the bottom, like a TV box. |
+| **Minimal** | Just the text and buttons, with a soft shade behind for reading. |
+| **Faded glass** | The glass panel, solid along the bottom and fading to clear at the top, with no hard edge. Unlike Fade, it keeps the bar's width and corners. |
+| **Feathered glass** | Glass with no edges at all, melting into the picture on every side. |
+| **Side fade** | Dark behind the text on the left, the picture left clear on the right. |
+| **Outline** | Almost clear glass with a fine edge in your highlight colour. |
+| **Corner card** | A smaller panel in the bottom left, leaving most of the picture clear. |
+
+**Info bar width** and **corners** apply to the panel styles. Side fade and Corner card are narrower, so if you've added many extra buttons, check they still fit.
 
 ## Main menu settings
 

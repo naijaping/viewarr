@@ -32,7 +32,7 @@ Viewarr doesn't provide any content. It plays only what your own servers and acc
 - **Watch progress for IPTV films and shows** too: Resume, watched ticks and Continue watching, kept on the box for each profile (Dispatcharr and Xtream keep none).
 - **Skip intro, next episode** and a **mini player** that keeps a film going while you browse.
 - **Music** from Navidrome, Plex, Jellyfin or Emby, with lyrics, the queue, song radio, artist pages and a spinning vinyl Now Playing.
-- **An info bar you arrange yourself**: show, hide and move its buttons, and add extras such as Favourite, Last channel, Audio sync, a Sleep timer and TV settings. Browse channels in it without changing until you press OK. Press Down for **rows you choose** under it: next episodes, Continue watching, favourite or recent channels, what's on now and more.
+- **An info bar you arrange yourself**, in **11 styles** from glass to a soft fade: show, hide and move its buttons, and add extras such as Favourite, Last channel, Audio sync, a Sleep timer and TV settings. Browse channels in it without changing until you press OK. Press Down for **rows you choose** under it: next episodes, Continue watching, favourite or recent channels, what's on now and more.
 - **Frame rate matching** for films and live TV (the TV switches to 50 Hz for UK channels), with frame-rate badges on the info bar.
 - **Every remote button your way**, with TiviMate and Viewarr presets.
 - **Profiles** for everyone in the house, sharing with friends in another house, and your setup saved on Dispatcharr.
