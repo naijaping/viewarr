@@ -17,6 +17,8 @@ interface VodRemote {
     fun skip(ms: Long)
     fun togglePause()
     fun pause()
+    /** Playing now (not paused, not stopped). */
+    val playing: Boolean
 }
 
 /** The player screen's parts the remote can open or change. */

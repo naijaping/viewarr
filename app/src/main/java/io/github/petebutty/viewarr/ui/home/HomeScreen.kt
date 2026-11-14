@@ -1381,8 +1381,10 @@ private fun androidx.compose.foundation.layout.BoxScope.MenuLayer(
             onFullPage = { hs.menuFullPage = it },
             // Live TV, Movies, Shows, Music, Recordings: the page behind changes as you move onto it (not from over
             // full-screen video).
+            // (Moving through the menu changes the page behind it, except over full-screen video. A film in the mini
+            // player doesn't count: it keeps playing in the corner while the page changes, as when browsing.)
             onHoverPage = { p ->
-                if (!hs.fullscreen && !hs.liveBehind && !VodHost.active) {
+                if (!hs.fullscreen && !hs.liveBehind && !filmFullScreen()) {
                     hs.sportsOpen = false
                     // Back on Movies / Shows from a service: the page's own rows again, not the service's.
                     // (A library left open from My Library is closed by the menu's Movies / Shows entries instead:
@@ -1400,9 +1402,9 @@ private fun androidx.compose.foundation.layout.BoxScope.MenuLayer(
                 hs.page == Page.Movies -> moviesVm.currentRowSet.value?.takeIf { it.startsWith("name:") }?.let { "svc:" + it.removePrefix("name:") }
                 else -> null
             },
-            onLiveEntry = { label, into -> if (into || (!hs.fullscreen && !hs.liveBehind && !VodHost.active)) hs.openLiveEntry(label, closeMenu = into) },
+            onLiveEntry = { label, into -> if (into || (!hs.fullscreen && !hs.liveBehind && !filmFullScreen())) hs.openLiveEntry(label, closeMenu = into) },
             // Moving onto a service: its page behind (not over full-screen video); Right / OK: into it.
-            onService = { name, rowId, into -> if (into || (!hs.fullscreen && !hs.liveBehind && !VodHost.active)) { hs.sportsOpen = false; hs.openService(name, closeMenu = into, rowId = rowId) } },
+            onService = { name, rowId, into -> if (into || (!hs.fullscreen && !hs.liveBehind && !filmFullScreen())) { hs.sportsOpen = false; hs.openService(name, closeMenu = into, rowId = rowId) } },
         )
     }
 }
@@ -1975,3 +1977,6 @@ val filmInfoRows: List<Pair<String, OsdRow>> = remember(infoRowsStamp, filmRowsW
 SideEffect { LiveShortcutsBridge.filmRows = filmInfoRows }
     return InfoBarRows(liveInfoRows, previewFor, posterRows)
 }
+
+/** A film or episode on full screen (or with the menu open over it): the menu mustn't change the page underneath. */
+private fun filmFullScreen() = VodHost.active && !VodHost.mini
