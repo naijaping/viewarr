@@ -117,6 +117,9 @@ class GuideViewModel @Inject constructor(
     /** The highlighted programme's artwork (TMDB), or null to show the channel logo. */
     suspend fun artFor(title: String): String? = programArt.imageFor(title)
 
+    /** The programme's own picture from Dispatcharr (its guide grid sends none), or null. */
+    suspend fun pictureFor(p: GuideProgram): String? = sessions.session.first()?.let { repo.lookupImage(it, p) }
+
 
     val sync = repo.sync
     // In your order (hold OK on a group in the menu → move); groups not placed yet keep the guide's order after them.

@@ -137,6 +137,7 @@ class CatalogRepository @Inject constructor(
     private val mediaServers: MediaServerService,
     private val sessions: io.github.petebutty.viewarr.data.session.SessionStore,
     private val xtream: io.github.petebutty.viewarr.data.xtream.XtreamClient,
+    private val rowLayouts: io.github.petebutty.viewarr.data.settings.RowLayoutStore,
 ) {
     /** Background work that outlives a screen (copying Trakt's history to Plex). */
     private val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
@@ -149,6 +150,7 @@ class CatalogRepository @Inject constructor(
     private fun clearPersonalCaches() {
         xcCache = null
         copyCache.clear()
+        groupCache.clear(); groupItemsCache.clear(); groupByKey.clear()
         plexEpisodeCache.clear()
         traktWatchlist.clear()
         _traktWatched.value = null
@@ -193,6 +195,8 @@ class CatalogRepository @Inject constructor(
             plexServers(a).forEach { p -> add { plexRecent(a, p, type) } }
             a.jellyfin?.let { j -> add { listOfNotNull(serverLatest(a, j, emby = false, type)) } }
             a.emby?.let { e -> add { listOfNotNull(serverLatest(a, e, emby = true, type)) } }
+            // Your collections and playlists (as cards), and any collection you've made a row of.
+            add { groupRows(a, type) }
             traktAuth?.let { t -> add { listOfNotNull(traktRecommended(a, t, type)) } }
             a.tmdbKey?.let { k ->
                 val t = if (type == MediaType.Movie) "movie" else "tv"
@@ -918,12 +922,14 @@ class CatalogRepository @Inject constructor(
             if (dispatcharrVod() == null && xcSession() == null) emptyList()
             else listOf(MediaLibrary("provider:${type.name}", if (type == MediaType.Movie) "IPTV Movies" else "IPTV Shows", PROVIDER_LIBRARY, "all"))
         }
-        (plexParts + others + provider).awaitAll().flatten()
+        val groups = async { runCatching { groupEntries(a, type) }.getOrDefault(emptyList()) }
+        (plexParts + others + provider + groups).awaitAll().flatten()
     }
 
     /** One page of a library and how many titles it has in all; null if the server didn't answer. */
     /** A library's genres, from the server itself (id to name), for filtering. */
     suspend fun libraryGenres(lib: MediaLibrary, type: MediaType): List<Pair<String, String>> {
+        if (lib.kind != LibKind.Library) return emptyList()
         val a = store.current()
         if (lib.source == PROVIDER_LIBRARY) {
             // The provider's categories stand in for genres ("|EN| ACTION/THRILLER" → "Action/Thriller").
@@ -970,6 +976,7 @@ class CatalogRepository @Inject constructor(
 
     /** What [lib] can be sorted and filtered by (from the server itself where it says). */
     suspend fun libraryOptions(lib: MediaLibrary, type: MediaType): LibraryOptions {
+        if (lib.kind != LibKind.Library) return groupOptions(lib)
         val a = store.current()
         if (lib.source == PROVIDER_LIBRARY) return LibraryOptions(
             sorts = listOf(SortOption("Title", "Title", false), SortOption("Added", "Date added"), SortOption("Released", "Release date"), SortOption("Rating", "Rating")),
@@ -1024,6 +1031,7 @@ class CatalogRepository @Inject constructor(
 
     /** The choices inside one filter (a library's genres, decades…). */
     suspend fun filterValues(lib: MediaLibrary, type: MediaType, group: String): List<FilterValue> {
+        if (lib.kind != LibKind.Library) return emptyList()
         val a = store.current()
         if (lib.source == PROVIDER_LIBRARY) return libraryGenres(lib, type).map { (id, name) -> FilterValue(id, name) }
         if (lib.server != null) {
@@ -1056,6 +1064,7 @@ class CatalogRepository @Inject constructor(
     suspend fun libraryPage(lib: MediaLibrary, type: MediaType, q: LibraryQuery, start: Int, size: Int): Pair<List<MediaItem>, Int>? {
         val a = store.current()
         val text = q.query.trim()
+        if (lib.kind != LibKind.Library) return groupPage(a, lib, type, q, start, size)
         if (lib.source == PROVIDER_LIBRARY) {
             val sort = LibrarySort.entries.firstOrNull { it.name == q.sort } ?: LibrarySort.Released
             val got = providerPage(type, sort, start, size, text, q.filters["category"]?.firstOrNull()?.id) ?: return null
@@ -1112,7 +1121,7 @@ class CatalogRepository @Inject constructor(
      * strip. Null when the server can't say up front (the strip then asks per letter, see [letterStart]).
      */
     suspend fun letterIndex(lib: MediaLibrary, type: MediaType, q: LibraryQuery): Map<Char, Int>? {
-        if (lib.server == null) return null
+        if (lib.server == null || lib.kind != LibKind.Library) return null
         val a = store.current()
         val p = plexServers(a).firstOrNull { it.machineId == lib.server } ?: return null
         val qq = q.copy(sort = "titleSort", desc = false)
@@ -1131,7 +1140,7 @@ class CatalogRepository @Inject constructor(
     /** How many titles (sorted by title, with [q]'s filters) come before [letter]. Null when the server can't say. */
     suspend fun letterStart(lib: MediaLibrary, type: MediaType, q: LibraryQuery, letter: Char): Int? {
         if (letter == '#') return 0
-        if (lib.source == PROVIDER_LIBRARY) return null
+        if (lib.source == PROVIDER_LIBRARY || lib.kind != LibKind.Library) return null
         if (lib.server != null) return letterIndex(lib, type, q)?.let { idx -> idx.entries.firstOrNull { it.key != '#' && it.key >= letter }?.value ?: idx.values.maxOrNull() }
         val a = store.current()
         val emby = lib.source == "Emby"
@@ -1299,6 +1308,198 @@ class CatalogRepository @Inject constructor(
         else MediaRow("plex-deck-${type.name}-${p.machineId}", "Continue watching on ${p.serverName}", items, group = "deck")
     }
 
+    // ------------------------------------------------------------------ your collections and playlists
+
+    /** Each server's collections / playlists (for 10 minutes), by "<what>|<server>|<type>". */
+    private val groupCache = ConcurrentHashMap<String, Pair<Long, List<MediaLibrary>>>()
+    /** What's in a collection / playlist (for 5 minutes): each title with when it was added. */
+    private val groupItemsCache = ConcurrentHashMap<String, Pair<Long, List<Pair<MediaItem, Long>>>>()
+    /** Collections and playlists seen so far, by key: a card ("col:<key>") opens its own. */
+    private val groupByKey = ConcurrentHashMap<String, MediaLibrary>()
+
+    /** The collection or playlist a card stands for ("col:<key>"), once listed. */
+    fun groupFor(itemKey: String): MediaLibrary? = groupByKey[itemKey.removePrefix("col:")]
+
+    private suspend fun cachedGroups(key: String, load: suspend () -> List<MediaLibrary>): List<MediaLibrary> {
+        groupCache[key]?.takeIf { System.currentTimeMillis() - it.first < 10 * 60_000L }?.let { return it.second }
+        val got = load()
+        got.forEach { groupByKey[it.key] = it }
+        groupCache[key] = System.currentTimeMillis() to got
+        return got
+    }
+
+    private fun plexSourceName(a: Accounts, p: PlexAuth) = if (plexServers(a).size > 1 && !isMainPlex(p)) "Plex · ${p.serverName}" else "Plex"
+
+    /** A Plex server's collections in its [type] libraries, in each library's own order. */
+    private suspend fun plexCollections(a: Accounts, p: PlexAuth, type: MediaType): List<MediaLibrary> = cachedGroups("pc|${p.machineId}|${type.name}") {
+        val src = plexSourceName(a, p)
+        coroutineScope {
+            plexSections(a, p, type).mapNotNull { it.str("key") }.map { key ->
+                async {
+                    runCatching { plexGet(a, p, "/library/sections/$key/collections") }.getOrNull()?.array("Metadata").orEmpty().mapNotNull { j ->
+                        val rk = j.str("ratingKey") ?: return@mapNotNull null
+                        MediaLibrary("plexcol:${p.machineId}:$rk", j.str("title") ?: return@mapNotNull null, src, rk, p.machineId, LibKind.Collection, plexImage(p, j.str("thumb"), 240, 360))
+                    }
+                }
+            }.awaitAll().flatten()
+        }
+    }
+
+    /** A Plex server's video playlists. */
+    private suspend fun plexPlaylists(a: Accounts, p: PlexAuth): List<MediaLibrary> = cachedGroups("pp|${p.machineId}") {
+        val src = plexSourceName(a, p)
+        runCatching { plexGet(a, p, "/playlists?playlistType=video") }.getOrNull()?.array("Metadata").orEmpty().mapNotNull { j ->
+            val rk = j.str("ratingKey") ?: return@mapNotNull null
+            if ((j.int("leafCount") ?: 1) == 0) return@mapNotNull null
+            MediaLibrary("plexlist:${p.machineId}:$rk", j.str("title") ?: return@mapNotNull null, src, rk, p.machineId, LibKind.Playlist, plexImage(p, j.str("thumb") ?: j.str("composite"), 240, 360))
+        }
+    }
+
+    /** Jellyfin / Emby collections (box sets) or video playlists. */
+    private suspend fun serverGroups(a: Accounts, srv: MediaServerAuth, emby: Boolean, kind: LibKind): List<MediaLibrary> {
+        val name = if (emby) "Emby" else "Jellyfin"
+        val playlist = kind == LibKind.Playlist
+        return cachedGroups("sg|$name|${kind.name}") {
+            val r = runCatching {
+                http.get(
+                    "${srv.serverUrl}/Users/${srv.userId}/Items?Recursive=true&IncludeItemTypes=${if (playlist) "Playlist" else "BoxSet"}&SortBy=SortName&Fields=ChildCount,MediaType&EnableImageTypes=Primary",
+                    mediaServers.headers(emby, a.deviceId, srv.token),
+                )
+            }.getOrNull()?.takeIf { it.ok } ?: return@cachedGroups emptyList()
+            r.body.array("Items").mapNotNull { j ->
+                val id = j.str("Id") ?: return@mapNotNull null
+                // Playlists of music are the Music page's.
+                if (playlist && j.str("MediaType").let { it != null && it != "Video" }) return@mapNotNull null
+                if ((j.int("ChildCount") ?: 1) == 0) return@mapNotNull null
+                MediaLibrary("${name.lowercase()}${if (playlist) "list" else "col"}:$id", j.str("Name") ?: return@mapNotNull null, name, id, null, kind,
+                    "${srv.serverUrl}/Items/$id/Images/Primary?maxHeight=360&quality=85&api_key=${enc(srv.token)}")
+            }
+        }
+    }
+
+    /** Every collection (or playlist) for [type] on all your servers. Jellyfin / Emby's mix films and shows: on Movies. */
+    private suspend fun allGroups(a: Accounts, type: MediaType, kind: LibKind): List<MediaLibrary> = coroutineScope {
+        val parts = buildList {
+            plexServers(a).forEach { p ->
+                add(async { runCatching { withTimeoutOrNull(12_000) { if (kind == LibKind.Collection) plexCollections(a, p, type) else if (type == MediaType.Movie) plexPlaylists(a, p) else emptyList() } }.getOrNull().orEmpty() })
+            }
+            if (type == MediaType.Movie) listOfNotNull(a.jellyfin?.let { it to false }, a.emby?.let { it to true }).forEach { (srv, emby) ->
+                add(async { runCatching { withTimeoutOrNull(12_000) { serverGroups(a, srv, emby, kind) } }.getOrNull().orEmpty() })
+            }
+        }
+        parts.awaitAll().flatten()
+    }
+
+    /** My Library's "Collections" and "Playlists" under each server that has some. */
+    private suspend fun groupEntries(a: Accounts, type: MediaType): List<MediaLibrary> {
+        val out = mutableListOf<MediaLibrary>()
+        for (kind in listOf(LibKind.Collection, LibKind.Playlist)) {
+            allGroups(a, type, kind).groupBy { it.source to it.server }.forEach { (src, list) ->
+                val (source, server) = src
+                val list_ = if (kind == LibKind.Collection) LibKind.Collections else LibKind.Playlists
+                out += MediaLibrary(
+                    "${list_.name.lowercase()}:${source.lowercase()}:${server.orEmpty()}:${type.name}",
+                    if (kind == LibKind.Collection) "Collections" else "Playlists", source, list.size.toString(), server, list_,
+                )
+            }
+        }
+        return out
+    }
+
+    /** A card for a collection / playlist (OK opens it). */
+    private fun groupCard(g: MediaLibrary, type: MediaType) = MediaItem(
+        key = "col:" + g.key, type = type, title = g.title, poster = g.poster, origin = g.source,
+        subtitle = if (g.kind == LibKind.Playlist) "Playlist" else "Collection",
+    )
+
+    /** What's in [g], in its own order, each with when it was added. Films and shows both (each its own type). */
+    private suspend fun groupMembers(a: Accounts, g: MediaLibrary): List<Pair<MediaItem, Long>> {
+        groupItemsCache[g.key]?.takeIf { System.currentTimeMillis() - it.first < 5 * 60_000L }?.let { return it.second }
+        val got: List<Pair<MediaItem, Long>> = if (g.server != null) {
+            val p = plexServers(a).firstOrNull { it.machineId == g.server } ?: return emptyList()
+            val path = if (g.kind == LibKind.Playlist) "/playlists/${g.id}/items?includeGuids=1" else "/library/collections/${g.id}/children?includeGuids=1"
+            runCatching { plexGet(a, p, path) }.getOrNull()?.array("Metadata").orEmpty().mapNotNull { j ->
+                val added = j.long("addedAt") ?: 0L
+                when (j.str("type")) {
+                    "movie" -> plexItem(p, j, MediaType.Movie)
+                    "show" -> plexItem(p, j, MediaType.Show)
+                    // A playlist's episode: its show.
+                    "episode" -> j.str("grandparentRatingKey")?.let { rk ->
+                        MediaItem(key = "plex:${plexRef(p, rk)}", type = MediaType.Show, title = j.str("grandparentTitle") ?: return@mapNotNull null,
+                            poster = plexImage(p, j.str("grandparentThumb"), 240, 360), backdrop = plexImage(p, j.str("grandparentArt") ?: j.str("art"), 960, 540),
+                            origin = if (isMainPlex(p)) "Plex" else "Plex · ${p.serverName}")
+                    }
+                    else -> null
+                }?.let { it to added }
+            }
+        } else {
+            val emby = g.source == "Emby"
+            val srv = (if (emby) a.emby else a.jellyfin) ?: return emptyList()
+            val fields = "Fields=ProviderIds,Overview,ProductionYear,DateCreated"
+            val url = if (g.kind == LibKind.Playlist) "${srv.serverUrl}/Playlists/${g.id}/Items?UserId=${srv.userId}&$fields"
+                else "${srv.serverUrl}/Users/${srv.userId}/Items?ParentId=${g.id}&$fields"
+            val r = runCatching { http.get(url, mediaServers.headers(emby, a.deviceId, srv.token)) }.getOrNull()?.takeIf { it.ok } ?: return emptyList()
+            r.body.array("Items").mapNotNull { j ->
+                val added = j.str("DateCreated")?.let { d -> runCatching { java.time.Instant.parse(d).epochSecond }.getOrNull() } ?: 0L
+                when (j.str("Type")) {
+                    "Movie" -> serverItem(srv, j, MediaType.Movie, g.source)
+                    "Series" -> serverItem(srv, j, MediaType.Show, g.source)
+                    "Episode" -> j.str("SeriesId")?.let { sid ->
+                        MediaItem(key = "${g.source.lowercase()}:$sid", type = MediaType.Show, title = j.str("SeriesName") ?: return@mapNotNull null,
+                            poster = "${srv.serverUrl}/Items/$sid/Images/Primary?maxHeight=360&quality=85&api_key=${enc(srv.token)}",
+                            backdrop = "${srv.serverUrl}/Items/$sid/Images/Backdrop?maxWidth=960&quality=80&api_key=${enc(srv.token)}", origin = g.source)
+                    }
+                    else -> null
+                }?.let { it to added }
+            }
+        }.distinctBy { it.first.key }
+        groupItemsCache[g.key] = System.currentTimeMillis() to got
+        return got
+    }
+
+    private fun groupOptions(lib: MediaLibrary): LibraryOptions {
+        val own = SortOption("order", when (lib.kind) { LibKind.Playlist -> "Playlist order"; LibKind.Collection -> "Collection order"; else -> "As on the server" }, false)
+        val sorts = if (lib.isGroup) listOf(own, SortOption("Title", "A–Z", false), SortOption("Added", "Date added"), SortOption("Released", "Release date"), SortOption("Rating", "Rating"))
+            else listOf(own, SortOption("Title", "A–Z", false))
+        return LibraryOptions(sorts = sorts, filters = emptyList(), letters = false, titleSort = "Title")
+    }
+
+    /** One page of a collection / playlist, or of the list of them (cards). Sorted and searched here: they're short. */
+    private suspend fun groupPage(a: Accounts, lib: MediaLibrary, type: MediaType, q: LibraryQuery, start: Int, size: Int): Pair<List<MediaItem>, Int> {
+        val text = q.query.trim()
+        val rows: List<Pair<MediaItem, Long>> = when (lib.kind) {
+            LibKind.Collections, LibKind.Playlists -> {
+                val kind = if (lib.kind == LibKind.Collections) LibKind.Collection else LibKind.Playlist
+                allGroups(a, type, kind).filter { it.source == lib.source && it.server == lib.server }.map { groupCard(it, type) to 0L }
+            }
+            else -> groupMembers(a, lib)
+        }
+        val found = rows.filter { text.isEmpty() || it.first.title.contains(text, ignoreCase = true) }
+        val sorted = when (q.sort) {
+            "Title" -> found.sortedBy { it.first.title.lowercase().removePrefix("the ") }
+            "Added" -> found.sortedBy { it.second }
+            "Released" -> found.sortedBy { it.first.year ?: 0 }
+            "Rating" -> found.sortedBy { it.first.rating ?: 0.0 }
+            else -> found
+        }.let { if (q.desc) it.reversed() else it }.map { it.first }
+        return sorted.drop(start).take(size) to sorted.size
+    }
+
+    /** Your collections and playlists as rows of cards, and each collection you've made a row of (hold OK on its card). */
+    private suspend fun groupRows(a: Accounts, type: MediaType): List<MediaRow> = coroutineScope {
+        val cols = async { allGroups(a, type, LibKind.Collection) }
+        val lists = async { if (type == MediaType.Movie) allGroups(a, type, LibKind.Playlist) else emptyList() }
+        val chosen = rowLayouts.layout(type).first().hidden.filter { it.startsWith("+col-") }.map { it.removePrefix("+col-") }
+        val c = cols.await(); val l = lists.await()
+        val own = chosen.mapNotNull { k -> (c + l).firstOrNull { it.key == k } }.map { g ->
+            async { MediaRow("col-${g.key}", g.title, runCatching { withTimeoutOrNull(15_000) { groupMembers(a, g) } }.getOrNull().orEmpty().map { it.first }) }
+        }
+        listOfNotNull(
+            c.takeIf { it.isNotEmpty() }?.let { MediaRow("groups-col-${type.name}", "Your collections", it.map { g -> groupCard(g, type) }) },
+            l.takeIf { it.isNotEmpty() }?.let { MediaRow("groups-list-${type.name}", "Your playlists", it.map { g -> groupCard(g, type) }) },
+        ) + own.awaitAll()
+    }
+
     // ------------------------------------------------------------------ Jellyfin / Emby
 
     private fun serverItem(s: MediaServerAuth, j: JsonElement?, type: MediaType, origin: String, idField: String = "Id"): MediaItem? {
@@ -1366,6 +1567,8 @@ class CatalogRepository @Inject constructor(
         addonRowSources[id]?.let { return it.addon.name }
         return when {
             id.startsWith("merged:") -> "Your servers"
+            id.startsWith("groups-") -> "Your servers"
+            id.startsWith("col-") -> when { id.startsWith("col-plex") -> "Plex"; id.startsWith("col-emby") -> "Emby"; else -> "Jellyfin" }
             id.startsWith("plex-") -> "Plex"
             id.startsWith("Jellyfin-") -> "Jellyfin"
             id.startsWith("Emby-") -> "Emby"
@@ -1472,7 +1675,7 @@ class CatalogRepository @Inject constructor(
         val a = store.current()
         val found = coroutineScope {
             val jobs = buildList {
-                plexServers(a).forEach { p -> add(async { runCatching { withTimeoutOrNull(15_000) { plexCopies(a, p, item) } }.getOrNull().orEmpty() }) }
+                plexServers(a).forEach { p -> add(async { runCatching { withTimeoutOrNull(15_000) { plexCopiesOf(a, p, item) } }.getOrNull().orEmpty() }) }
                 listOfNotNull(a.jellyfin?.let { it to false }, a.emby?.let { it to true }).forEach { (srv, emby) ->
                     add(async { runCatching { withTimeoutOrNull(15_000) { serverCopies(a, srv, emby, item) } }.getOrNull().orEmpty() })
                 }
@@ -1480,7 +1683,7 @@ class CatalogRepository @Inject constructor(
             }
             jobs.awaitAll().flatten()
         // One copy per source, but every Plex server's own: if one server's file has gone, another's can play.
-        }.distinctBy { it.source + "|" + (if (it.source == "Plex") it.ref?.substringAfter('@', "") else "") }
+        }.distinctBy { it.source + "|" + (if (it.source == "Plex") it.ref?.substringAfter('@', "") else "") + "|" + it.version?.plexMedia + "|" + it.version?.sourceId }
         copyCache[item.key] = System.currentTimeMillis() to found
         return found
     }
@@ -1500,19 +1703,60 @@ class CatalogRepository @Inject constructor(
         return listOf(title, plain, title.substringBefore(':').trim()).filter { it.length >= 2 }.distinct()
     }
 
-    private fun plexCopy(p: PlexAuth, j: JsonElement?): LibraryCopy {
-        val res = j.array("Media").firstOrNull()?.str("videoResolution")?.let { if (it.all(Char::isDigit)) "${it}p" else it.uppercase() }
-        val detail = listOfNotNull(res, p.serverName.takeIf { !isMainPlex(p) }).joinToString(" · ").ifEmpty { null }
-        return LibraryCopy("Plex", detail, j.str("ratingKey")?.let { plexRef(p, it) })
+    /**
+     * A Plex title's copies: one per version (Plex keeps a 4K and a 1080p file as two "Media" of one title), each with
+     * what it is (from the item's full details: resolution, HDR, sound, size).
+     */
+    private fun plexCopies(p: PlexAuth, j: JsonElement?): List<LibraryCopy> {
+        val ref = j.str("ratingKey")?.let { plexRef(p, it) }
+        val server = p.serverName.takeIf { !isMainPlex(p) }
+        val medias = j.array("Media")
+        if (medias.isEmpty()) return listOf(LibraryCopy("Plex", server, ref))
+        return medias.mapIndexed { i, m ->
+            val part = m.array("Part").firstOrNull()
+            val streams = part.array("Stream")
+            val video = streams.firstOrNull { it.int("streamType") == 1 }
+            val audios = streams.filter { it.int("streamType") == 2 }
+            val audio = audios.firstOrNull { it.str("selected") == "true" || it.int("selected") == 1 } ?: audios.firstOrNull()
+            val vTitle = listOfNotNull(video.str("displayTitle"), video.str("extendedDisplayTitle")).joinToString(" ")
+            val aTitle = listOfNotNull(audio.str("displayTitle"), audio.str("extendedDisplayTitle"), audio.str("title")).joinToString(" ")
+            val dv = video.str("DOVIPresent").let { it == "1" || it == "true" } || vTitle.contains("DoVi", true) || vTitle.contains("Dolby Vision", true)
+            val hdr = when {
+                dv -> "Dolby Vision"
+                vTitle.contains("HDR10+") -> "HDR10+"
+                video.str("colorTrc") == "smpte2084" || vTitle.contains("HDR") -> "HDR10"
+                video.str("colorTrc") == "arib-std-b67" || vTitle.contains("HLG") -> "HLG"
+                else -> null
+            }
+            val height = video.int("height") ?: m.int("height") ?: m.str("videoResolution")?.lowercase()?.let { r -> when (r) { "4k" -> 2160; "sd" -> 480; else -> r.toIntOrNull() } }
+            val atmos = aTitle.contains("Atmos", true)
+            val channels = audio.int("channels") ?: m.int("audioChannels")
+            val v = CopyVersion(
+                height = height, hdr = hdr, dvOnly = dv && video.int("DOVIProfile") == 5,
+                videoCodec = m.str("videoCodec") ?: video.str("codec"), container = m.str("container"),
+                audio = VersionPick.audioLabel(audio.str("codec") ?: m.str("audioCodec"), audio.str("profile"), channels, atmos),
+                audioChannels = channels, atmos = atmos,
+                kbps = m.int("bitrate"), sizeBytes = part.long("size"),
+                edition = j.str("editionTitle"), plexMedia = i,
+            )
+            LibraryCopy("Plex", listOfNotNull(v.resolution, server).joinToString(" · ").ifEmpty { null }, ref, v)
+        }
     }
 
-    private suspend fun plexCopies(a: Accounts, p: PlexAuth, item: MediaItem): List<LibraryCopy> {
+    /** A Plex item's full details (its versions' streams), else what was already found. */
+    private suspend fun plexFull(a: Accounts, p: PlexAuth, j: JsonElement?): JsonElement? {
+        if (j.array("Media").firstOrNull()?.array("Part")?.firstOrNull()?.array("Stream")?.isNotEmpty() == true) return j
+        val rk = j.str("ratingKey") ?: return j
+        return runCatching { plexGet(a, p, "/library/metadata/$rk") }.getOrNull()?.array("Metadata")?.firstOrNull() ?: j
+    }
+
+    private suspend fun plexCopiesOf(a: Accounts, p: PlexAuth, item: MediaItem): List<LibraryCopy> {
         // A title from a Plex row already knows where it is.
         if (item.key.startsWith("plex:")) {
             val (server, rk) = plexResolve(a, item.key.removePrefix("plex:")) ?: return emptyList()
             if (server.machineId != p.machineId) return emptyList()
             val m = plexGet(a, p, "/library/metadata/$rk")?.array("Metadata")?.firstOrNull() ?: return listOf(LibraryCopy("Plex", null, plexRef(p, rk)))
-            return listOf(plexCopy(p, m))
+            return if (item.type == MediaType.Movie) plexCopies(p, m) else listOf(plexCopies(p, m).first())
         }
         val sections = (plexSectionCache[p.machineId]?.takeIf { System.currentTimeMillis() - it.first < 30 * 60_000L }?.second
             ?: (plexGet(a, p, "/library/sections")?.array("Directory").orEmpty().also { plexSectionCache[p.machineId] = System.currentTimeMillis() to it }))
@@ -1528,7 +1772,7 @@ class CatalogRepository @Inject constructor(
                 }.awaitAll().flatten()
             }
             val match = hits.firstOrNull { j -> val (t, i) = guidIds(j); sameTitle(item, t, i, j.str("title"), j.int("year")) }
-            if (match != null) return listOf(plexCopy(p, match))
+            if (match != null) return if (item.type == MediaType.Movie) plexCopies(p, plexFull(a, p, match)) else listOf(plexCopies(p, match).first())
         }
         // Plex's own search is looser (accents, punctuation, alternative titles): last try, matched on the ids.
         val want = if (item.type == MediaType.Movie) "movie" else "show"
@@ -1543,13 +1787,13 @@ class CatalogRepository @Inject constructor(
             ?: return emptyList()
         // And only when it has a file to play.
         if (full.array("Media").firstOrNull()?.array("Part").isNullOrEmpty()) return emptyList()
-        return listOf(plexCopy(p, full))
+        return if (item.type == MediaType.Movie) plexCopies(p, full) else listOf(plexCopies(p, full).first())
     }
 
     private suspend fun serverCopies(a: Accounts, srv: MediaServerAuth, emby: Boolean, item: MediaItem): List<LibraryCopy> {
         val source = if (emby) "Emby" else "Jellyfin"
         val prefix = source.lowercase() + ":"
-        if (item.key.startsWith(prefix)) return listOf(LibraryCopy(source, null, item.key.removePrefix(prefix)))
+        if (item.key.startsWith(prefix)) return serverVersions(a, srv, emby, item, item.key.removePrefix(prefix))
         val kind = if (item.type == MediaType.Movie) "Movie" else "Series"
         for (name in searchNames(item.title)) {
             val r = runCatching {
@@ -1561,9 +1805,47 @@ class CatalogRepository @Inject constructor(
             val match = r.body.array("Items").firstOrNull { j ->
                 sameTitle(item, j.child("ProviderIds").str("Tmdb")?.toIntOrNull(), j.child("ProviderIds").str("Imdb"), j.str("Name"), j.int("ProductionYear"))
             }
-            if (match != null) return listOfNotNull(match.str("Id")?.let { LibraryCopy(source, null, it) })
+            if (match != null) return match.str("Id")?.let { serverVersions(a, srv, emby, item, it) }.orEmpty()
         }
         return emptyList()
+    }
+
+    /** A Jellyfin / Emby film's copies: one per media source (version), with what each is. Shows: just the one. */
+    private suspend fun serverVersions(a: Accounts, srv: MediaServerAuth, emby: Boolean, item: MediaItem, id: String): List<LibraryCopy> {
+        val source = if (emby) "Emby" else "Jellyfin"
+        if (item.type != MediaType.Movie) return listOf(LibraryCopy(source, null, id))
+        val info = runCatching { http.get("${srv.serverUrl}/Users/${srv.userId}/Items/$id?Fields=MediaSources", mediaServers.headers(emby, a.deviceId, srv.token)) }
+            .getOrNull()?.takeIf { it.ok }?.body
+        val sources = info.array("MediaSources")
+        if (sources.isEmpty()) return listOf(LibraryCopy(source, null, id))
+        return sources.map { ms ->
+            val streams = ms.array("MediaStreams")
+            val video = streams.firstOrNull { it.str("Type") == "Video" }
+            val audios = streams.filter { it.str("Type") == "Audio" }
+            val audio = audios.firstOrNull { it.str("IsDefault") == "true" } ?: audios.firstOrNull()
+            val range = video.str("VideoRangeType").orEmpty()
+            val hdr = when {
+                range.startsWith("DOVI") -> "Dolby Vision"
+                range == "HDR10Plus" -> "HDR10+"
+                range == "HDR10" || video.str("VideoRange") == "HDR" -> "HDR10"
+                range == "HLG" -> "HLG"
+                else -> null
+            }
+            val aText = listOfNotNull(audio.str("Profile"), audio.str("DisplayTitle")).joinToString(" ")
+            val atmos = aText.contains("Atmos", true)
+            val channels = audio.int("Channels")
+            val v = CopyVersion(
+                height = video.int("Height"), hdr = hdr, dvOnly = range == "DOVI",
+                videoCodec = video.str("Codec"), container = ms.str("Container"),
+                audio = VersionPick.audioLabel(audio.str("Codec"), audio.str("Profile"), channels, atmos),
+                audioChannels = channels, atmos = atmos,
+                kbps = ms.long("Bitrate")?.let { (it / 1000).toInt() }, sizeBytes = ms.long("Size"),
+                // Several versions: each one's own name ("… - Director's Cut").
+                edition = ms.str("Name")?.substringAfterLast(" - ", "")?.takeIf { sources.size > 1 && it.isNotBlank() },
+                sourceId = ms.str("Id"),
+            )
+            LibraryCopy(source, v.resolution, id, v)
+        }
     }
 
     /** The IPTV provider's films / series (one list, fetched every few hours and kept in memory). */
@@ -1598,7 +1880,7 @@ class CatalogRepository @Inject constructor(
      * A Plex item to play: the file itself when this TV can decode it, with Plex transcoding (HLS) as the fallback.
      * Files the TV can't handle at all (e.g. AVI, VC-1 on some boxes) go straight to transcoding.
      */
-    suspend fun plexStream(ref: String, watch: WatchTarget? = null): VodStream? {
+    suspend fun plexStream(ref: String, watch: WatchTarget? = null, mediaIndex: Int? = null): VodStream? {
         val a = store.current()
         val (p, ratingKey) = plexResolve(a, ref) ?: return null
         // checkFiles: Plex says whether the file is really there (a library entry can outlive its file).
@@ -1610,7 +1892,9 @@ class CatalogRepository @Inject constructor(
             val en = mk.long("endTimeOffset") ?: return@mapNotNull null
             SkipMarker(kind, st, en).takeIf { en > st }
         }
-        val media = m.array("Media").firstOrNull()
+        // The version asked for (4K or 1080p…), else the first.
+        val idx = mediaIndex?.takeIf { it in m.array("Media").indices } ?: 0
+        val media = m.array("Media").getOrNull(idx)
         val partObj = media?.array("Part")?.firstOrNull()
         val part = partObj?.str("key") ?: return null
         val exists = (partObj.child("exists") as? JsonPrimitive)?.content
@@ -1626,7 +1910,7 @@ class CatalogRepository @Inject constructor(
         val resume = m.long("viewOffset") ?: 0
         val target = (watch ?: WatchTarget(MediaType.Movie)).copy(plexRatingKey = ref)
         val quality = playbackStore.current().plexQuality
-        val transcode = VodStream(plexTranscodeUrl(a, p, ratingKey, quality.maxKbps ?: 20_000), "$title (converted by Plex)", headers, resume, watch = target, thumbs = thumbs, markers = markers, from = "Plex · ${p.serverName}")
+        val transcode = VodStream(plexTranscodeUrl(a, p, ratingKey, quality.maxKbps ?: 20_000, idx), "$title (converted by Plex)", headers, resume, watch = target, thumbs = thumbs, markers = markers, from = "Plex · ${p.serverName}")
         // Settings → Playback → Plex quality: anything but Original always converts at that bitrate.
         if (quality.maxKbps != null) return transcode
         val direct = VodStream("${p.serverUrl}$part?X-Plex-Token=${enc(p.token)}", title, headers, resume, fallback = transcode, watch = target, thumbs = thumbs, markers = markers, from = "Plex · ${p.serverName}")
@@ -1635,10 +1919,10 @@ class CatalogRepository @Inject constructor(
         return if (playable) direct else transcode
     }
 
-    private fun plexTranscodeUrl(a: Accounts, p: PlexAuth, ratingKey: String, maxKbps: Int): String {
+    private fun plexTranscodeUrl(a: Accounts, p: PlexAuth, ratingKey: String, maxKbps: Int, mediaIndex: Int = 0): String {
         val q = linkedMapOf(
             "path" to "/library/metadata/$ratingKey",
-            "mediaIndex" to "0", "partIndex" to "0",
+            "mediaIndex" to mediaIndex.toString(), "partIndex" to "0",
             "protocol" to "hls", "fastSeek" to "1",
             "directPlay" to "0", "directStream" to "1", "directStreamAudio" to "1",
             "videoQuality" to "100", "maxVideoBitrate" to maxKbps.toString(), "videoResolution" to "1920x1080",
@@ -1838,7 +2122,7 @@ class CatalogRepository @Inject constructor(
         return isHomeAddress(url)
     }
 
-    suspend fun serverStream(source: String, itemId: String, title: String, watch: WatchTarget?): VodStream? {
+    suspend fun serverStream(source: String, itemId: String, title: String, watch: WatchTarget?, sourceId: String? = null): VodStream? {
         val (s, emby) = serverFor(source) ?: return null
         val a = store.current()
         val info = runCatching { http.get("${s.serverUrl}/Users/${s.userId}/Items/$itemId", mediaServers.headers(emby, a.deviceId, s.token)) }
@@ -1848,7 +2132,8 @@ class CatalogRepository @Inject constructor(
             from = if (emby) "Emby" else "Jellyfin",
             markers = serverMarkers(s, emby, itemId, info),
             thumbs = serverThumbs(s, emby, itemId, info),
-            url = "${s.serverUrl}/Videos/$itemId/stream?static=true&api_key=${enc(s.token)}",
+            // (A chosen version: its media source; otherwise the server's default.)
+            url = "${s.serverUrl}/Videos/$itemId/stream?static=true" + (sourceId?.let { "&MediaSourceId=${enc(it)}" } ?: "") + "&api_key=${enc(s.token)}",
             title = title,
             resumeMs = resumeMs,
             watch = (watch ?: WatchTarget(MediaType.Movie)).copy(serverSource = source, serverItemId = itemId),

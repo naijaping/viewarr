@@ -362,7 +362,7 @@ private fun tourPages(): List<TourPage> = listOf(
     ) { pulse, _ ->
         Column(Modifier.align(Alignment.Center), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             listOf("OK" to "The controls (record, start over, audio & subtitles…)", "▲ ▼" to "Change channel", "Left" to "The channel list, or skip back (your choice)",
-                "Back" to "The guide, with the picture in the corner", "Down" to "Next episodes, when it's a show").forEach { (k, t) ->
+                "Back" to "Mini player (Back again: full screen)", "Hold Back" to "Close the player", "Down" to "Next episodes, when it's a show").forEach { (k, t) ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.width(120.dp), contentAlignment = Alignment.CenterEnd) { RemoteKey(k, pulse) }
                     Spacer(Modifier.width(18.dp))

@@ -38,8 +38,8 @@ class VodSource(
 
 /**
  * The one film / episode / recording player, above every page, so it can shrink to a corner (picture-in-picture)
- * and keep playing while you browse. Back in the player shrinks it; holding Back brings it back full screen; Stop
- * (the controls, or the remote's Stop) ends it. Starting a Live TV channel ends it too.
+ * and keep playing while you browse. A tap of Back switches between full screen and the corner (mini player); holding
+ * Back closes it, as does Stop (the controls, or the remote's Stop). Starting a Live TV channel ends it too.
  */
 object VodHost {
     var source by mutableStateOf<VodSource?>(null)
@@ -96,7 +96,11 @@ object VodHost {
     var gliding by mutableStateOf(false)
     /** Held Back brought it full screen: the player ignores the rest of that press (its release would shrink it again). */
     var eatBackRelease = false
-    fun expand() { mini = false; eatBackRelease = true }
+    // (Every way back to full screen now acts once its press is over (a tap's release, OK, a page's Back), so nothing
+    // is left of it to eat: setting eatBackRelease here swallowed the next Back, a press that did nothing.)
+    fun expand() { mini = false; eatBackRelease = false }
+    /** The player that's playing (set by it): Play / Pause on the remote reaches it with the film in the corner. */
+    var remote: VodRemote? = null
 
     /** For the players: true for the remaining events of the Back press that brought them full screen. */
     fun eatsBack(e: androidx.compose.ui.input.key.KeyEvent): Boolean {

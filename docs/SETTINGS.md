@@ -50,7 +50,7 @@ Everything to do with how Viewarr looks, in sections:
 | **Glass & transparency** | **Glass**, **Glass colour**, **Guide**, **Wallpaper dimming**, **Pop-up glass** and the info bar's **border**. |
 | **TV guide** | Channel numbers, logos, **Programme corners**, progress bars, episode numbers, catch-up icons and programme pictures. |
 | **Info bar & controls** | **Info bar style** (Glass, Square glass, Pill, Fade, Full-width bar or Minimal) and **corners**, **Info bar size** and **width**, **Preview cards**, **Rows under the info bar** (which rows each player shows when you press Down, and their order, with a preview), the channel number, episode numbers, picture-quality and frame-rate badges, and **Player controls size**. |
-| **Menu** | Headings, colour edge and tint, the icon column, hints, the TV and LIVE marks, and **Button hints**. |
+| **Menu** | Headings, colour edge and tint, hints, the TV and LIVE marks, and **Button hints**. |
 | **Posters** | **Library posters** size, **Where it's from** and **Progress bars**. |
 | **Title pages** | What a title page shows, and **Age ratings**. |
 | **Ratings** | Which ratings show, and their order. |
@@ -71,7 +71,6 @@ Every button on your remote, and what it does in the TV guide, on live TV, in fi
 | Section | Settings |
 |---|---|
 | **Start** | **App opens on**: live TV (**Last channel** plays the channel you watched last, full screen), the TV guide, or one of your libraries. |
-| **Menu** | **Menu opens on** (the current page's own list, or the main list). |
 | **What the menu lists** | Which entries the main menu shows (Live now, Sports, Movies, Shows, Music, Recordings, Search and your streaming services). |
 | **Poster rows** | **Moving between rows** and **Poster position**. |
 

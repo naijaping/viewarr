@@ -60,7 +60,22 @@ data class MediaRow(val id: String, val title: String, val items: List<MediaItem
  * A library of films or shows on Plex, Jellyfin or Emby. [key] is unique across servers; [server] is the Plex server's
  * id (several Plex servers), [id] the library's own id on its server.
  */
-data class MediaLibrary(val key: String, val title: String, val source: String, val id: String, val server: String? = null)
+data class MediaLibrary(
+    val key: String, val title: String, val source: String, val id: String, val server: String? = null,
+    /** What it is: a server library, or your own groupings on the server (see [LibKind]). */
+    val kind: LibKind = LibKind.Library,
+    val poster: String? = null,
+) {
+    /** One of your collections or playlists (its titles listed, not the server's whole library). */
+    val isGroup get() = kind == LibKind.Collection || kind == LibKind.Playlist
+}
+
+/**
+ * [Library]: a server's library. [Collections] / [Playlists]: the list of your collections / playlists on one server
+ * (each opens as a [Collection] / [Playlist]: the titles in it). Collections are the ones made on the server (by hand,
+ * or by its TMDB collection matching), playlists your video playlists.
+ */
+enum class LibKind { Library, Collections, Playlists, Collection, Playlist }
 
 /** How a whole library is listed when browsing it. */
 enum class LibrarySort(val label: String, val plex: String, val jellyfin: Pair<String, String>) {
@@ -84,7 +99,38 @@ data class PersonInfo(
     val loading: Boolean = false,
 )
 
-data class LibraryCopy(val source: String, val detail: String? = null, val ref: String? = null)
+data class LibraryCopy(val source: String, val detail: String? = null, val ref: String? = null, val version: CopyVersion? = null)
+
+/**
+ * One file (version) of a title on a server: what it looks and sounds like, to choose the best one this TV can show.
+ * [plexMedia]: which of a Plex item's versions; [sourceId]: a Jellyfin / Emby media source.
+ */
+data class CopyVersion(
+    val height: Int? = null,
+    /** "Dolby Vision", "HDR10+", "HDR10", "HLG" or null (SDR). */
+    val hdr: String? = null,
+    /** Dolby Vision with nothing to fall back on (profile 5): wrong colours where the TV / box can't do Dolby Vision. */
+    val dvOnly: Boolean = false,
+    val videoCodec: String? = null,
+    val container: String? = null,
+    /** e.g. "Atmos 7.1", "DTS-HD MA 5.1", "Stereo". */
+    val audio: String? = null,
+    val audioChannels: Int? = null,
+    val atmos: Boolean = false,
+    val kbps: Int? = null,
+    val sizeBytes: Long? = null,
+    val edition: String? = null,
+    val plexMedia: Int? = null,
+    val sourceId: String? = null,
+) {
+    val resolution: String? get() = height?.let { h -> when { h >= 2000 -> "4K"; h >= 1400 -> "1440p"; h >= 1000 -> "1080p"; h >= 700 -> "720p"; h >= 560 -> "576p"; else -> "SD" } }
+
+    /** "4K · Dolby Vision · Atmos 7.1 · 58 GB". */
+    fun label(): String = listOfNotNull(
+        edition, resolution, hdr, audio,
+        sizeBytes?.takeIf { it > 0 }?.let { b -> if (b >= 1_000_000_000L) "%.1f GB".format(b / 1e9) else "${b / 1_000_000} MB" },
+    ).joinToString(" · ")
+}
 
 /** Something the player can open. */
 data class VodStream(

@@ -184,10 +184,8 @@ private fun RowsEditor(type: MediaType, moving: String?, onMoving: (String?) -> 
                 val fr = focus.getOrPut(id) { FocusRequester() }
                 val carried = id == moving
                 fun move(by: Int) {
-                    val j = i + by
-                    if (j !in 0 until libsOn) return
-                    val keys = libs.map { it.first.key }.toMutableList()
-                    keys.add(j, keys.removeAt(i))
+                    // By its key in the latest order (a held key comes faster than the list redraws).
+                    val keys = io.github.petebutty.viewarr.ui.common.PendingOrder.move("libs:$type", libs.map { it.first.key }, lib.key, by, libsOn) ?: return
                     media.setLibraryOrder(keys)
                 }
                 OrderedToggle(
@@ -204,10 +202,7 @@ private fun RowsEditor(type: MediaType, moving: String?, onMoving: (String?) -> 
                 val fr = focus.getOrPut(row.id) { FocusRequester() }
                 val carried = row.id == moving
                 fun move(by: Int) {
-                    val j = i + by
-                    if (j !in 0 until rowsOn) return
-                    val ids = rows.map { it.first.id }.toMutableList()
-                    ids.add(j, ids.removeAt(i))
+                    val ids = io.github.petebutty.viewarr.ui.common.PendingOrder.move("rows:$type", rows.map { it.first.id }, row.id, by, rowsOn) ?: return
                     media.setRowOrder(ids)
                 }
                 OrderedToggle(

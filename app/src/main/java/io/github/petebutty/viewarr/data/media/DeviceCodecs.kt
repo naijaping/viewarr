@@ -15,14 +15,19 @@ object DeviceCodecs {
     private val plexToMime = mapOf(
         "h264" to "video/avc", "hevc" to "video/hevc", "h265" to "video/hevc",
         "mpeg2video" to "video/mpeg2", "mpeg4" to "video/mp4v-es", "vc1" to "video/wvc1",
-        "vp9" to "video/x-vnd.on2.vp9", "vp8" to "video/x-vnd.on2.vp8", "av1" to "video/av01",
+        "vp9" to "video/x-vnd.on2.vp9", "avc" to "video/avc", "vp8" to "video/x-vnd.on2.vp8", "av1" to "video/av01",
     )
 
     /** Containers the built-in player can open. */
     private val containers = setOf("mkv", "mp4", "m4v", "mov", "ts", "mpegts", "webm", "m2ts")
 
+    /** Whether the box has a decoder for [mime] (e.g. "video/dolby-vision"). */
+    fun has(mime: String) = mime in decoders
+
     fun canPlay(plexVideoCodec: String?, container: String?): Boolean {
-        if (container != null && container.lowercase() !in containers) return false
+        // (Jellyfin lists a container's family: "mov,mp4,m4a"; the first is enough.)
+        val c = container?.substringBefore(',')?.trim()?.lowercase()
+        if (c != null && c.isNotEmpty() && c !in containers) return false
         val mime = plexToMime[plexVideoCodec?.lowercase() ?: return true] ?: return false
         return mime in decoders
     }

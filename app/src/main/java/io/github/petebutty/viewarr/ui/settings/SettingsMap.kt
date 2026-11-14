@@ -81,7 +81,7 @@ object SettingsMap {
         )),
         Page(NAVIGATION, "Menu & navigation", listOf(
             Section("Start", "What you see when Viewarr opens.", all(N, "Start")),
-            Section("Menu", "Opening the side menu and going into its lists.", r(N, "Menu", "Menu opens on")),
+            Section("Menu", "Opening the side menu and going into its lists.", r(N, "Menu", "Button hints")),
             Section("What the menu lists", "What's listed in the menu on the left. Live TV and Settings are always there; streaming services appear once your addons' rows have loaded.",
                 all(A, "Main menu")),
             Section("Poster rows", "Moving around the rows of posters on Movies, Shows and title pages.", all(N, "Poster rows")),

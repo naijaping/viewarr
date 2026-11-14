@@ -280,6 +280,14 @@ interface GuideDao {
     @Insert
     suspend fun insertPrograms(programs: List<ProgramEntity>)
 
+    /** Which guide (tvg id) a programme row belongs to: the guide grid's programmes don't carry it. */
+    @Query("SELECT tvgId FROM programs WHERE rowId = :rowId")
+    suspend fun tvgIdOf(rowId: Long): String?
+
+    /** Keeps a programme's picture once it's been looked up (the guide grid sends none). */
+    @Query("UPDATE programs SET image = :image WHERE rowId = :rowId")
+    suspend fun setImage(rowId: Long, image: String)
+
     @Query("DELETE FROM programs WHERE tvgId = :tvgId AND startTime >= :from AND startTime < :to AND endTime <= :endLimit")
     suspend fun deletePastChunk(tvgId: String, from: Long, to: Long, endLimit: Long)
 

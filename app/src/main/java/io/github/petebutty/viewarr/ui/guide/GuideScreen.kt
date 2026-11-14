@@ -144,6 +144,9 @@ fun GuideScreen(
         }
     }
 
+    // Left in the guide, as TiviMate (since 0.28.3, one way for everyone): a tap goes back a programme, or on what's on
+    // now opens the channel groups (Left again: the main menu); holding Left goes back into catch-up.
+    val guideLeft = GuideLeft.NowMenu
     Column(
         Modifier
             .fillMaxSize()
@@ -151,7 +154,7 @@ fun GuideScreen(
             .focusRequester(focusRequester)
             .focusable(enabled = focusEnabled)
             .onPreviewKeyEvent { e ->
-                if (e.key == Key.DirectionLeft && remote.guideLeft == GuideLeft.EdgeMenu) {
+                if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.EdgeMenu) {
                     // Back through the programmes and into catch-up; holding Left scrolls fast and stops at the
                     // start (a scroll can't overshoot into the menu). A fresh press at the start opens the menu.
                     // A tap that can't go further only because the earlier programmes are still being fetched
@@ -160,7 +163,7 @@ fun GuideScreen(
                     if (e.type == KeyEventType.KeyDown && !vm.moveLeft() && e.nativeKeyEvent.repeatCount == 0 && !vm.loadingPast) onOpenMenu()
                     return@onPreviewKeyEvent true
                 }
-                if (e.key == Key.DirectionLeft && remote.guideLeft == GuideLeft.NowMenu) {
+                if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.NowMenu) {
                     // Tap: back one programme, or the menu when already on what's on now. Hold: back into catch-up.
                     when {
                         e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 -> leftPending.value = true
@@ -170,16 +173,17 @@ fun GuideScreen(
                         }
                         e.type == KeyEventType.KeyUp && leftPending.value -> {
                             leftPending.value = false
-                            if (vm.isAtNow()) onOpenMenu() else vm.moveLeft()
+                            // (Also when it can't go back any further: no guide data, or the start of catch-up. It did nothing.)
+                            if (vm.isAtNow() || (!vm.moveLeft() && !vm.loadingPast)) onOpenMenu()
                         }
                     }
                     return@onPreviewKeyEvent true
                 }
-                if (e.key == Key.DirectionLeft && remote.guideLeft == GuideLeft.AlwaysPast) {
+                if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.AlwaysPast) {
                     if (e.type == KeyEventType.KeyDown) vm.moveLeft()
                     return@onPreviewKeyEvent true
                 }
-                if (e.key == Key.DirectionLeft && remote.guideLeft == GuideLeft.MenuTapPastHold) {
+                if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.MenuTapPastHold) {
                     // Tap opens the menu; holding Left browses back through the guide.
                     when {
                         e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 -> leftPending.value = true
@@ -253,7 +257,8 @@ fun GuideScreen(
             focused?.image?.let { value = it; return@produceState }
             val t = focused?.title ?: run { value = null; return@produceState }
             kotlinx.coroutines.delay(350)
-            value = vm.artFor(t)
+            // Dispatcharr's own picture for it (the grid the guide syncs from leaves pictures out), else TMDB by title.
+            value = focused?.let { vm.pictureFor(it) } ?: vm.artFor(t)
         }
         // "What's selected" wallpaper: the highlighted programme's picture.
         androidx.compose.runtime.LaunchedEffect(art) { art?.let { io.github.petebutty.viewarr.ui.theme.Wallpaper.selected = it } }

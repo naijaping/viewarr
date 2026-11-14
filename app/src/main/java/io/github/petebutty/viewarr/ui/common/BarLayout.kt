@@ -53,12 +53,16 @@ object BarLayout {
     /**
      * The shared order with [id] moved past its neighbour in this bar ([ids]: the bar's buttons as arranged; [dir] -1
      * left, 1 right). Buttons the other bar has in between keep their places. Null at an end.
+     * [ids] is put in the latest order first: a held Left / Right can arrive before the bar has redrawn, and moving
+     * from the drawn (old) order swapped the wrong neighbours and scrambled the bar.
      */
     fun moved(ids: List<String>, id: String, dir: Int): List<String>? {
-        val i = ids.indexOf(id); val j = i + dir
-        if (i < 0 || j !in ids.indices) return null
-        val full = (order() + ids.filter { it !in order() }).toMutableList()
-        val a = full.indexOf(id); val b = full.indexOf(ids[j])
+        val o = order()
+        val bar = ids.sortedBy { o.indexOf(it).let { k -> if (k < 0) o.size + ids.indexOf(it) else k } }
+        val i = bar.indexOf(id); val j = i + dir
+        if (i < 0 || j !in bar.indices) return null
+        val full = (o + bar.filter { it !in o }).toMutableList()
+        val a = full.indexOf(id); val b = full.indexOf(bar[j])
         java.util.Collections.swap(full, a, b)
         PendingOrder.set("bar", full)
         return full

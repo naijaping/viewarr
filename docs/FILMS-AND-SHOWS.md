@@ -147,10 +147,9 @@ All are in **Settings → Playback → Episodes**.
 ### The mini player
 
 - **Back** from a film or episode keeps it playing in the window at the top left while you browse.
-- **Back** on that page brings it full screen again.
-- **Stop** ends it. Your place is saved.
+- **Back** on the mini player brings it full screen again.
+- **Hold Back**, full screen or mini, closes the player. So does **Stop**. Your place is saved.
 - The film controls' **Settings** button keeps it playing in the window while you change things.
-- **Hold Back** anywhere to choose **Full screen** or **Close**.
 
 **Settings → Playback → After a film or episode** chooses what happens when it ends or you press Stop: stay where you were, or back to live TV.
 

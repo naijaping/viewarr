@@ -162,6 +162,7 @@ internal fun AlphabetRail(
 internal fun SidePanel(title: String, onClose: () -> Unit, onBack: () -> Unit = onClose, content: androidx.compose.foundation.lazy.LazyListScope.(first: FocusRequester) -> Unit) {
     val first = remember(title) { FocusRequester() }
     androidx.activity.compose.BackHandler { onBack() }
+    io.github.petebutty.viewarr.ui.common.BackLayer()
     LaunchedEffect(title) { awaitFrame(); awaitFrame(); runCatching { first.requestFocus() } }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
         Column(

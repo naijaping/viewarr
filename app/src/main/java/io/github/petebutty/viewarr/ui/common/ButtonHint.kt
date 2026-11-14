@@ -27,7 +27,7 @@ import io.github.petebutty.viewarr.ui.theme.UiOpts
  * the first few times on each screen (counted on this TV), always, or off.
  */
 @Composable
-fun ButtonHint(screen: String, text: String, modifier: Modifier = Modifier) {
+fun ButtonHint(screen: String, text: String, modifier: Modifier = Modifier, top: Boolean = false) {
     val mode = AppColors.palette.opt(UiOpts.BUTTON_HINTS)
     if (mode == 2 || text.isBlank()) return
     val ctx = LocalContext.current
@@ -48,11 +48,11 @@ fun ButtonHint(screen: String, text: String, modifier: Modifier = Modifier) {
         kotlinx.coroutines.delay(8_000)
         shown = false
     }
-    Box(modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+    Box(modifier.fillMaxSize(), contentAlignment = if (top) Alignment.TopCenter else Alignment.BottomCenter) {
         AnimatedVisibility(shown, enter = EnterTransition.None, exit = ExitTransition.None) {
             Text(
                 text, fontSize = 13.sp, color = AppColors.TextPrimary, maxLines = 1,
-                modifier = Modifier.padding(bottom = 18.dp)
+                modifier = Modifier.padding(top = if (top) 18.dp else 0.dp, bottom = if (top) 0.dp else 18.dp)
                     .glass(16.dp)
                     .padding(horizontal = 16.dp, vertical = 6.dp),
             )

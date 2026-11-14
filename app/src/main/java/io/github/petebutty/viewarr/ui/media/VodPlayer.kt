@@ -318,15 +318,19 @@ fun VodPlayer(
     val hubOn = true
     fun backStep() {
         when {
-            // The next episode's countdown: Back keeps watching this one.
-            skip.cancelNext() -> Unit
             tracksOpen -> tracksOpen = false
             scrub.active -> { scrub.cancel(); showOsd() }
             detailsOn -> detailsOn = false
             // Editing the buttons: Back puts a picked-up one down, then finishes.
             menu.open && menu.editing -> { if (menu.carrying) menu.carrying = false else menu.editing = false }
+            // On the rows under the controls: back up to the buttons (one level), not the whole controls closing.
+            menu.open && menu.onRows && !menu.episodesOnly -> menu.onRows = false
             menu.open -> { menu.open = false; osdUntil = 0L }
-            System.currentTimeMillis() < osdUntil && player.isPlaying -> osdUntil = 0L
+            // The next episode's countdown: Back keeps watching this one. (After what's open over it: with the
+            // controls up it cancelled the hidden countdown and nothing visible happened.)
+            skip.cancelNext() -> Unit
+            // (The info bar showing by itself, after the start or a skip, doesn't take a Back: Back shrinks the film
+            // straight away, as Peter's rule says.)
             // Back again: into the corner, still playing (hold Back to bring it back).
             // (Settings → Remote → Picture-in-picture: or stop.)
             // Back again: stops (resume point saved). Picture-in-picture for films is off for now (VodHost keeps it).
@@ -405,6 +409,8 @@ fun VodPlayer(
     val remoteSettings = io.github.petebutty.viewarr.data.settings.LocalRemote.current
     // The remote: shared with the mpv player (VodKeys).
     val keys = remember { VodKeys(scrub, menu) }
+    // The remote's Play / Pause with the film in the corner (HomeState): this player while it's the one playing.
+    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { if (VodHost.remote != null) VodHost.remote = null } }
     val remote = object : VodRemote {
         override val positionMs get() = player.currentPosition
         override val durationMs get() = player.duration.coerceAtLeast(0)
@@ -413,6 +419,7 @@ fun VodPlayer(
         override fun togglePause() { player.playWhenReady = !player.playWhenReady }
         override fun pause() { player.playWhenReady = false }
     }
+    androidx.compose.runtime.SideEffect { VodHost.remote = remote }
     val hooks = VodHooks(
         buttons = buttons, press = ::press,
         toggleButton = { b -> io.github.petebutty.viewarr.ui.common.BarLayout.filmId(b.name).let { id -> io.github.petebutty.viewarr.ui.common.BarLayout.setShown(id, !io.github.petebutty.viewarr.ui.common.BarLayout.shown(id), barAppearance::setTitlePart) } },
@@ -420,7 +427,8 @@ fun VodPlayer(
         openTracks = { subs -> subs?.let { tracksSubs = it }; tracksOpen = true },
         toggleDetails = { detailsOn = !detailsOn }, showDetails = { detailsOn = true }, stop = onClose,
         // Back makes it the mini player (its last step below); Stop ends it.
-        backMode = 0,
+        // Back: the corner (its last step); hold Back: stop (as live TV).
+        backMode = 3,
         atTop = { !(tracksOpen || transOpen || syncOpen || tvOpen) && !scrub.active && !detailsOn && !menu.open && !(System.currentTimeMillis() < osdUntil && player.isPlaying) },
         minimise = { VodHost.minimise(); if (!VodHost.active) onClose() },
         stepBack = ::backStep,
@@ -532,7 +540,7 @@ fun VodPlayer(
                 val o = b.osd(paused, menu.infoOn, "mpv")
                 if (!menu.editing) o else {
                     val hidden = !io.github.petebutty.viewarr.ui.common.BarLayout.shown(io.github.petebutty.viewarr.ui.common.BarLayout.filmId(b.name))
-                    val focused = buttons.indexOf(b) == menu.button
+                    val focused = buttons.indexOf(b) == menu.focusIndex(buttons)
                     OsdButton(o.icon, when {
                         focused && menu.carrying -> "◀  ${o.label}  ▶"
                         io.github.petebutty.viewarr.ui.common.BarLayout.filmId(b.name) in io.github.petebutty.viewarr.ui.common.BarLayout.fixed -> "${o.label} (always shown)"
@@ -542,7 +550,7 @@ fun VodPlayer(
                 }
             } else null,
             editingButtons = menu.open && menu.editing,
-            buttonFocus = if (menu.open && !menu.onBar && !menu.onShortcuts && !menu.onEpisodes) menu.button else -1,
+            buttonFocus = if (menu.open && !menu.onBar && !menu.onShortcuts && !menu.onEpisodes) menu.focusIndex(buttons) else -1,
             barFocused = menu.open && menu.onBar,
             shortcuts = if (menu.open && menu.onShortcuts) io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge.items.map { it.first } else null,
             shortcutFocus = menu.shortcut, shortcutMoving = menu.scMoving,

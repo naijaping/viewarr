@@ -212,8 +212,10 @@ fun SettingsPage(
                             .focusRequester(catFocus[i])
                             .focusProperties { canFocus = choosing == null }
                             .onFocusChanged { if (it.isFocused) categoryName = categories[i].name }
-                            // Right: the category's first setting (not the one nearest on screen).
+                            // Right: the category's first setting (not the one nearest on screen). Left: back to the
+                            // Settings list (it did nothing: the page keeps the remote inside it).
                             .onPreviewKeyEvent { e ->
+                                if (e.key == Key.DirectionLeft) { if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) onBack(); return@onPreviewKeyEvent true }
                                 if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight) {
                                     val first = categories[i].items.firstOrNull()?.title ?: return@onPreviewKeyEvent false
                                     pageScope.launch {
@@ -288,7 +290,8 @@ fun SettingsPage(
                         ) {
                             if (moving == item.title) moving = null
                             else if (item.locked != null) Unit
-                            else if (item.slider) Unit
+                            // A slider: OK steps it up one (round to the start after the last), so OK does something.
+                            else if (item.slider) item.choices.indexOf(item.current).coerceAtLeast(0).let { i -> item.onSelect(item.choices[(i + 1) % item.choices.size]) }
                             else if (item.action != null) item.action.invoke()
                             else if (item.isToggle) {
                                 item.onSelect(item.choices.first { it != item.current })

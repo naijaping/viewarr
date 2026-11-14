@@ -15,8 +15,9 @@ A TiviMate-style guide with channel logos, categories, and programmes going back
 - **OK** on a programme still to come: its details.
 - **Hold OK**: more options for that programme (see [Hold OK in the guide](#hold-ok-in-the-guide)).
 - **Number keys**: type a channel number.
-- **Back** jumps to what's on now, then asks to exit (press Back again).
-- **Hold Back** opens the menu on the channel groups. Left again brings the main menu.
+- **Left** goes back a programme. On what's on now it opens the channel groups; Left again brings the main menu. **Hold Left** goes back into catch-up.
+- With a channel in the preview window: **Back** takes it full screen, **Hold Back** closes the player.
+- With nothing playing: **Back** jumps to what's on now, then asks to exit (press Back again); **Hold Back** opens the menu on the channel groups.
 - The remote's **Stop** button stops the channel in the preview and leaves you on the guide.
 
 What the guide shows:
@@ -34,7 +35,7 @@ All of these are in **Settings → Appearance → TV guide**.
 
 ![The TV guide with its channel groups](screenshots/guide.png)
 
-Press **Left** from the start of the guide (or **Hold Back**) to see your channel groups. Moving through them changes the guide behind as you go. **OK** picks one and takes you back into the guide. **Left** again brings the main menu.
+Press **Left** on what's on now to see your channel groups. Moving through them changes the guide behind as you go. **OK** picks one and takes you back into the guide. **Left** again brings the main menu.
 
 **Hold OK** on a group for **↕ Move** (then Up / Down, and OK or Back to put it down) or **✕ Hide from this list**; ★ Favourites and All channels can be hidden the same way. Hidden groups gather at the end under **Hidden groups**; OK on one shows it again. Hiding only takes it out of the list: its channels stay in All channels, by number and in links. Your order and hidden groups are kept for each Live TV source. *(0.28.1 and later.)*
 
@@ -78,7 +79,8 @@ The guide shows **3 days** ahead by default. Change it in **Settings → Live TV
 - **Right** on a channel in the list shows its programmes, earlier and coming up. Earlier ones play from catch-up.
 - **Channel + / −** changes channel.
 - **Number keys** type a channel number.
-- **Back** glides the channel into the guide's preview. **Back twice quickly** always exits.
+- **Back**: the mini player. The channel glides into the guide's preview window and keeps playing; **Back** there brings it full screen again.
+- **Hold Back** closes the player.
 - **Stop** stops the channel and leaves you on the guide.
 
 ### The info bar

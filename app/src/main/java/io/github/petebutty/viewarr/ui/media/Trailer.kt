@@ -141,6 +141,7 @@ fun TrailerPlayer(item: MediaItem, trailers: TrailerRepository, onClose: () -> U
     val focus = remember { FocusRequester() }
     val seekMs = io.github.petebutty.viewarr.data.settings.LocalRemote.current.seek.ms
     BackHandler(onBack = onClose)
+    io.github.petebutty.viewarr.ui.common.BackLayer()
     DisposableEffect(Unit) {
         FullTrailer.active = true
         onDispose { FullTrailer.active = false }

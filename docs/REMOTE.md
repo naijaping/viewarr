@@ -10,12 +10,16 @@ These are the **Viewarr** buttons (the default). Where the **TiviMate** preset d
 |---|---|---|
 | TV guide | OK | Watch live, or replay a past programme. On a programme still to come: show its details. |
 | TV guide | Hold OK | Record options (this programme, or the series), and more |
-| TV guide | Left (tap / hold) | Earlier programmes and catch-up / scroll fast. TiviMate: back to now, then the channel groups. |
-| TV guide | Hold Back | The menu, on the channel groups (Left again: the main menu) |
-| TV guide | Back | Jumps to now, then asks to exit (press Back again). TiviMate: back to the player. |
+| TV guide | Left | Back a programme. On what's on now: the channel groups (Left again: the main menu). |
+| TV guide | Hold Left | Back into catch-up |
+| TV guide, a channel in the window | Back | Full screen |
+| TV guide, a channel in the window | Hold Back | Close the player |
+| TV guide, nothing playing | Back | Jumps to now, then asks to exit (press Back again) |
+| TV guide, nothing playing | Hold Back | The menu, on the channel groups (Left again: the main menu) |
 | TV guide | Stop | Stop the channel in the preview |
 | TV guide | Number keys | Type a channel number |
-| Watching live TV | Back | The guide, the channel gliding into its preview (twice quickly: exit) |
+| Watching live TV | Back | The mini player: the guide, with the channel in its window |
+| Watching live TV | Hold Back | Close the player |
 | Watching live TV | Up / Down | Channel list (Left from there: channel groups). TiviMate: change channel. |
 | Watching live TV | Left / Right | Rewind ("Rewind?" first) / skip ahead. TiviMate: channel list / the channel watched before. |
 | Watching live TV | Stop | Stop, back to the guide |
@@ -26,7 +30,12 @@ These are the **Viewarr** buttons (the default). Where the **TiviMate** preset d
 | Film player | OK | The info bar with the controls. Left from the first button: the menu, over the film. |
 | Film player | Down, then Left / Right, OK | Seek bar with previews: move, then jump there |
 | Film player | Down from the buttons | The rows under the info bar: next episodes (shows) and the rows you choose; Down / Up between them |
-| Film player | Back | Close what's open (controls, details), then keep playing in the window top left while you browse |
+| Film player | Back | Close what's open (controls, details), then the mini player: it keeps playing top left while you browse |
+| Film player | Hold Back | Close the player (your place is saved) |
+| Mini player (live TV or a film) | Back | Full screen |
+| Mini player (live TV or a film) | Hold Back | Close the player |
+| Menu | Left / Right | Left on an entry: its own list (Left again: the main list). Right or OK: into it. |
+| Menu | Back | Close the menu |
 | Film player | Stop (or the Stop button) | Stop (your place is saved) |
 | Film player | Info | The poster, episode and synopsis |
 | Music | Hold Back | Bring Now Playing back |
@@ -43,8 +52,8 @@ Remotes with **Guide** and **Record** buttons open the TV guide and record what'
 
 At the top, a preset sets every button at once. You can then change any you like.
 
-- **Use Viewarr buttons**: live TV: Up / Down the channel list, OK the controls, Left / Right rewind and skip. The guide: Left goes into catch-up and opens the menu at the start; Back jumps to now, then asks to exit.
-- **Use TiviMate buttons**: as TiviMate comes. Live TV: Up / Down change channel, OK the controls, Left the channel list, Right the channel before, Menu the main menu. The guide: Left back to now, then the menu; Back back to the player.
+- **Use Viewarr buttons**: live TV: Up / Down the channel list, OK the controls, Left / Right rewind and skip. The guide: Back jumps to now, then asks to exit.
+- **Use TiviMate buttons**: as TiviMate comes. Live TV: Up / Down change channel, OK the controls, Left the channel list, Right the channel before, Menu the main menu. The guide: Back back to the player.
 
 ### Every button, in every part of Viewarr
 

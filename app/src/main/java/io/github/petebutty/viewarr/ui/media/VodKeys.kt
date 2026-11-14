@@ -34,7 +34,7 @@ class VodHooks(
     val toggleDetails: () -> Unit,
     val showDetails: () -> Unit,
     val stop: () -> Unit,
-    /** Settings → Remote → Picture-in-picture: 0 corner, 1 stop, 2 stop (hold Back: corner). */
+    /** How Back works: 0 its steps then the corner, 2 hold: corner, 3 its steps then the corner, hold: stop (both players). */
     val backMode: Int = 0,
     /** Nothing open on the player (no controls, details, seek marker): Back's last step is next. */
     val atTop: () -> Boolean = { false },
@@ -95,6 +95,21 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
                 !down && backDown -> { backDown = false; h.stepBack() }
                 // The release of a hold that already sent the film to the corner can still land here (the player
                 // hadn't let go of the remote yet): that press is over, so the root mustn't swallow the next one.
+                !down -> VodHost.swallowBack = false
+            }
+            return true
+        }
+        if (a == RemoteAction.Back && h.backMode == 3) {
+            // Since 0.28.3, the same for films and live TV: a tap takes Back's step (what's open closes, then the
+            // corner); a hold closes the player.
+            when {
+                down && repeat == 0 -> backDown = true
+                down && backDown -> {
+                    backDown = false
+                    VodHost.swallowBack = true
+                    h.stop()
+                }
+                !down && backDown -> { backDown = false; h.stepBack() }
                 !down -> VodHost.swallowBack = false
             }
             return true

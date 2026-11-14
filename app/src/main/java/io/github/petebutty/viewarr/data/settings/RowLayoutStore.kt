@@ -38,7 +38,13 @@ data class RowLayout(
         return result
     }
 
-    fun visible(rows: List<MediaRow>) = ordered(rows).filter { it.id !in hidden }
+    /**
+     * Whether the row [id] is left off the page. A collection's own row ("col-…") is only there once you add it, so
+     * it's marked "+col-…" when on; every other row is marked when off.
+     */
+    fun off(id: String) = if (id.startsWith("col-")) "+$id" !in hidden else id in hidden
+
+    fun visible(rows: List<MediaRow>) = ordered(rows).filter { !off(it.id) }
 
     /** Any list in this order (by [id]); ones never placed keep their own order after the placed ones. */
     fun <T> orderedBy(list: List<T>, id: (T) -> String): List<T> {
@@ -68,7 +74,7 @@ class RowLayoutStore @Inject constructor(@ApplicationContext private val context
     suspend fun setHidden(type: MediaType, id: String, hidden: Boolean) {
         context.rowLayoutStore.edit { p ->
             val now = p[hiddenKey(type)].orEmpty()
-            p[hiddenKey(type)] = if (hidden) now + id else now - id
+            p[hiddenKey(type)] = if (id.startsWith("col-")) (if (hidden) now - "+$id" else now + "+$id") else if (hidden) now + id else now - id
         }
     }
 

@@ -106,7 +106,8 @@ object ButtonMap {
      */
     val presses: Map<BtnScreen, List<BtnPress>> = mapOf(
         BtnScreen.Guide to listOf(BtnPress.Ok, BtnPress.OkHold, BtnPress.BackHold, BtnPress.ChannelUp, BtnPress.ChannelDown, BtnPress.Menu, BtnPress.MenuHold) + media + colours,
-        BtnScreen.Live to listOf(BtnPress.Ok, BtnPress.OkHold, BtnPress.Back, BtnPress.BackHold, BtnPress.Left, BtnPress.LeftHold, BtnPress.Right, BtnPress.RightHold,
+        // (No Long Back: on live TV it always stops the channel, as for films, since 0.28.3.)
+        BtnScreen.Live to listOf(BtnPress.Ok, BtnPress.OkHold, BtnPress.Back, BtnPress.Left, BtnPress.LeftHold, BtnPress.Right, BtnPress.RightHold,
             BtnPress.Up, BtnPress.UpHold, BtnPress.Down, BtnPress.DownHold, BtnPress.ChannelUp, BtnPress.ChannelDown, BtnPress.Menu, BtnPress.MenuHold) + media + colours,
         BtnScreen.Film to listOf(BtnPress.Ok, BtnPress.OkHold, BtnPress.Left, BtnPress.Right, BtnPress.Up, BtnPress.Down, BtnPress.Menu,
             BtnPress.PlayPause, BtnPress.Stop, BtnPress.Rewind, BtnPress.FastForward, BtnPress.Info) + colours,

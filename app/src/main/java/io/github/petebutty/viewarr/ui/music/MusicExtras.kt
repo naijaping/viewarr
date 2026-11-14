@@ -129,6 +129,7 @@ fun LyricsPanel(lyrics: Lyrics, position: Long, duration: Long, modifier: Modifi
 @Composable
 fun QueuePanel(onClose: () -> Unit) {
     BackHandler { onClose() }
+    io.github.petebutty.viewarr.ui.common.BackLayer()
     var picked by remember { mutableStateOf<Int?>(null) }
     val list = rememberLazyListState(initialFirstVisibleItemIndex = (MusicPlayer.index - 2).coerceAtLeast(0))
     val nowFocus = remember { FocusRequester() }

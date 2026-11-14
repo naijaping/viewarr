@@ -148,6 +148,7 @@ internal fun ChoicePanel(
 ) {
     val first = remember { FocusRequester() }
     BackHandler(onBack = onClose)
+    io.github.petebutty.viewarr.ui.common.BackLayer()
     LaunchedEffect(Unit) {
         awaitFrame()
         runCatching { first.requestFocus() }
@@ -377,10 +378,14 @@ fun RecordingsScreen(
         add(DvrRow.Header("Series recordings (${rules.size})")); rules.forEach { add(DvrRow.Rule(it)) }
     }
     val firstItem = rows.indexOfFirst { it !is DvrRow.Header }
+    // The row you were on (its options closing, or coming back to the page): the highlight goes back there, not the top.
+    val rowFocus = remember { HashMap<Int, FocusRequester>() }
+    var lastRow by remember { androidx.compose.runtime.mutableIntStateOf(-1) }
+    fun focusBack() { if (runCatching { rowFocus[lastRow]!!.requestFocus() }.isFailure) runCatching { focusRequester.requestFocus() } }
     LaunchedEffect(firstItem >= 0, focusEnabled, picked == null) {
         if (!focusEnabled || picked != null || firstItem < 0) return@LaunchedEffect
         awaitFrame()
-        runCatching { focusRequester.requestFocus() }
+        focusBack()
     }
 
     Box(Modifier.fillMaxSize().appBackground()) {
@@ -430,7 +435,8 @@ fun RecordingsScreen(
                                 title = row.rec.title + episodeTag(row.rec.season, row.rec.episode) + if (row.rec.state == DvrState.Failed) "  (failed)" else "",
                                 detail = "${channels[row.rec.channelId]?.name ?: "Channel"}  ·  ${span(row.rec.start, row.rec.end)}",
                                 live = row.rec.state == DvrState.Recording,
-                                modifier = (if (i == firstItem) Modifier.focusRequester(focusRequester) else Modifier).onFocusChanged {
+                                modifier = (if (i == firstItem) Modifier.focusRequester(focusRequester) else Modifier).focusRequester(rowFocus.getOrPut(i) { FocusRequester() }).onFocusChanged {
+                                    if (it.hasFocus) lastRow = i
                                     if (it.hasFocus) hover = (row.rec.title + episodeTag(row.rec.season, row.rec.episode)) to "${channels[row.rec.channelId]?.name ?: "Channel"}  ·  ${span(row.rec.start, row.rec.end)}"
                                 },
                                 // Hold OK: the options (stop, cancel, delete…).
@@ -445,7 +451,8 @@ fun RecordingsScreen(
                                 detail = (if (row.rule.mode == "new") "New episodes" else "Every episode") +
                                     (row.rule.tvgId.takeIf { it.isNotEmpty() }?.let { "  ·  $it" } ?: "  ·  Any channel"),
                                 live = false,
-                                modifier = (if (i == firstItem) Modifier.focusRequester(focusRequester) else Modifier).onFocusChanged {
+                                modifier = (if (i == firstItem) Modifier.focusRequester(focusRequester) else Modifier).focusRequester(rowFocus.getOrPut(i) { FocusRequester() }).onFocusChanged {
+                                    if (it.hasFocus) lastRow = i
                                     if (it.hasFocus) hover = row.rule.label to (if (row.rule.mode == "new") "Series recording · new episodes" else "Series recording · every episode")
                                 },
                             ) { picked = row; vm.clearMessage() }
@@ -458,7 +465,7 @@ fun RecordingsScreen(
         when (val p = picked) {
             is DvrRow.Rec -> {
                 val r = p.rec
-                val close = { picked = null; runCatching { focusRequester.requestFocus() }; Unit }
+                val close = { picked = null; focusBack(); Unit }
                 LaunchedEffect(message) {
                     if (message != null && message != "Working…") { delay(1_400); picked = null }
                 }

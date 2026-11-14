@@ -21,6 +21,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -243,6 +246,39 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
         5 -> modifier.fillMaxWidth(w)
             .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.45f)))
             .padding(start = 64.dp, end = 64.dp, top = 28.dp, bottom = 30.dp)
+        // Faded glass: the Glass panel (inset, rounded, its width), solid along the bottom and fading to clear at the
+        // top, its edge fading with it, so no hard line crosses the picture. (Fade spans the whole screen; this doesn't.)
+        6 -> {
+            val shape = androidx.compose.foundation.shape.RoundedCornerShape(r)
+            modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp)
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to bg.copy(alpha = 0f), 0.35f to bg.copy(alpha = glassAlpha * 0.55f), 1f to bg.copy(alpha = glassAlpha)), shape)
+                .then(if (p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_BORDER) == 0)
+                    Modifier.border(1.dp, androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.White.copy(alpha = 0f), 1f to Color.White.copy(alpha = 0.28f)), shape) else Modifier)
+                .padding(start = 24.dp, end = 24.dp, top = 30.dp, bottom = 18.dp)
+        }
+        // Feathered glass: glass with no edge anywhere, melting into the picture on every side.
+        7 -> modifier.fillMaxWidth(w).padding(start = 20.dp, end = 20.dp, bottom = 12.dp)
+            .drawBehind { featheredGlass(bg.copy(alpha = glassAlpha)) }
+            .padding(start = 60.dp, end = 60.dp, top = 34.dp, bottom = 28.dp)
+        // Side fade: dark behind the text on the left, fading to clear by two thirds across, and up from the bottom;
+        // the text and buttons keep to the left part.
+        8 -> modifier.fillMaxWidth()
+            .background(androidx.compose.ui.graphics.Brush.horizontalGradient(0f to bg.copy(alpha = minOf(1f, glassAlpha + 0.2f)), 0.35f to bg.copy(alpha = glassAlpha * 0.7f), 0.68f to bg.copy(alpha = 0f)))
+            .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, 1f to bg.copy(alpha = glassAlpha * 0.5f)))
+            .padding(start = 64.dp, top = 56.dp, bottom = 34.dp)
+            .wrapContentWidth(Alignment.Start).fillMaxWidth(0.62f)
+        // Outline: almost clear glass with a fine edge in the highlight colour.
+        9 -> {
+            val shape = androidx.compose.foundation.shape.RoundedCornerShape(r)
+            modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp)
+                .background(bg.copy(alpha = glassAlpha * 0.35f), shape)
+                .border(1.dp, AppColors.Accent.copy(alpha = 0.75f), shape)
+                .padding(horizontal = 24.dp, vertical = 18.dp)
+        }
+        // Corner card: a smaller glass panel in the bottom left, leaving most of the picture clear.
+        10 -> modifier.fillMaxWidth().padding(start = 40.dp, bottom = 32.dp)
+            .wrapContentWidth(Alignment.Start).fillMaxWidth(0.58f)
+            .glass(radius = r).padding(horizontal = 22.dp, vertical = 16.dp)
         // Glass (the Viewarr look): the panel inset from the edges, everything inside it.
         else -> modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp).glass(radius = r).padding(horizontal = 24.dp, vertical = 18.dp)
     }
@@ -254,6 +290,18 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
         androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(d.density * k, d.fontScale),
     ) {
         Column(outer, verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    }
+}
+
+/** Feathered glass's panel: the glass colour, faded out towards all four edges (drawn on its own layer so only the
+ *  panel fades, not what's drawn over it). */
+private fun androidx.compose.ui.graphics.drawscope.DrawScope.featheredGlass(c: Color) {
+    drawIntoCanvas { canvas ->
+        canvas.saveLayer(androidx.compose.ui.geometry.Rect(androidx.compose.ui.geometry.Offset.Zero, size), androidx.compose.ui.graphics.Paint())
+        drawRect(c)
+        drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(0f to Color.Transparent, 0.07f to Color.Black, 0.93f to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+        drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, 0.3f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+        canvas.restore()
     }
 }
 

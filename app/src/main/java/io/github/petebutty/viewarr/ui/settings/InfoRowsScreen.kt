@@ -84,11 +84,15 @@ fun InfoRowsScreen(start: String, onClose: () -> Unit) {
     LaunchedEffect(Unit) { kotlinx.coroutines.android.awaitFrame(); runCatching { focus.requestFocus() } }
     LaunchedEffect(index, player) { if (index in kinds.indices) runCatching { list.animateScrollToItem((index - 2).coerceAtLeast(0)) } }
 
+    // The row picked up, followed by itself: a held Up / Down outruns the redraw, and going by place moved whichever
+    // row was there in the old order.
+    var carried by remember { mutableStateOf<InfoRows.Kind?>(null) }
+    LaunchedEffect(moving) { carried = if (moving) kinds.getOrNull(index) else null }
     fun move(dir: Int) {
-        val k = kinds.getOrNull(index) ?: return
+        val k = carried ?: kinds.getOrNull(index) ?: return
         val ids = InfoRows.moved(player, k, dir) ?: return
         appearance.setBarOrder("rows_$player", ids)
-        index += dir
+        index = ids.filter { id -> InfoRows.kinds(player).any { it.id == id } }.indexOf(k.id).coerceAtLeast(0)
     }
 
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {

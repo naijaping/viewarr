@@ -624,7 +624,8 @@ private fun MusicHomePage(
             Row(Modifier.padding(horizontal = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Music", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
                 Spacer(Modifier.width(28.dp))
-                Pill("Shuffle my library", Modifier.focusRequester(focusRequester).leftOpens(onOpenMenu)) { vm.shuffleLibrary() }
+                // (Coming in from the menu lands on the first row's first card once there are rows; it landed here.)
+                Pill("Shuffle my library", (if (home.rows.isEmpty()) Modifier.focusRequester(focusRequester) else Modifier).leftOpens(onOpenMenu)) { vm.shuffleLibrary() }
                 if (MusicPlayer.active) {
                     Spacer(Modifier.width(12.dp))
                     Pill("♪  Now playing") { MusicPlayer.nowPlayingOpen = true }
@@ -637,7 +638,7 @@ private fun MusicHomePage(
             Text("Loading your music…", fontSize = 16.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(horizontal = 48.dp))
         }
         home.error?.let { e -> item { Text(e, fontSize = 16.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(horizontal = 48.dp)) } }
-        home.rows.forEach { row ->
+        home.rows.forEachIndexed { ri, row ->
             item(key = row.title) {
                 Column {
                     Text(row.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary, modifier = Modifier.padding(start = 48.dp, bottom = 8.dp))
@@ -645,7 +646,8 @@ private fun MusicHomePage(
                         itemsIndexed(row.cards, key = { _, c -> c.key }) { i, c ->
                             MusicCardView(
                                 c, 118.dp,
-                                Modifier.remembered(mem, page, "home|${row.title}|${c.key}").then(if (i == 0) Modifier.leftOpens(onOpenMenu) else Modifier),
+                                Modifier.then(if (ri == 0 && i == 0) Modifier.focusRequester(focusRequester) else Modifier)
+                                    .remembered(mem, page, "home|${row.title}|${c.key}").then(if (i == 0) Modifier.leftOpens(onOpenMenu) else Modifier),
                             ) { vm.open(c) }
                         }
                     }
@@ -735,11 +737,7 @@ private fun MusicBrowsePage(b: MusicBrowse, vm: MusicViewModel, page: String, me
                         val m = Modifier.remembered(mem, page, "$page|${c.key}")
                             .then(if (i == 0) Modifier.focusRequester(focusRequester) else Modifier)
                             .onPreviewKeyEvent { e ->
-                                // Back in an album grid: up to Sort / Filter, keeping your place.
-                                if (albums && e.key == Key.Back) {
-                                    if (e.type == KeyEventType.KeyUp) runCatching { toolbar.requestFocus() }
-                                    return@onPreviewKeyEvent true
-                                }
+                                // (Back leaves the album grid in one press: it went up to Sort / Filter first.)
                                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 when {
                                     e.key == Key.DirectionLeft && i % cols == 0 -> { onOpenMenu(); true }

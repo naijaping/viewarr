@@ -37,6 +37,7 @@ import androidx.compose.ui.focus.FocusRequester
 import io.github.petebutty.viewarr.ui.common.ignoreHeldOk
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import io.github.petebutty.viewarr.ui.common.trapFocus
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -135,6 +136,17 @@ fun PlayerOsd(
     var tvOpen by remember { mutableStateOf(false) }
     var note by remember { mutableStateOf<String?>(null) }
     val firstFocus = remember { FocusRequester() }
+    // The button that opened a pop-up (Audio, Subtitles, Aspect, Source, Sync): the highlight goes back to it when the
+    // pop-up closes (it was lost).
+    val btnFocus = remember { HashMap<String, FocusRequester>() }
+    var popupFrom by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(popup == null) {
+        if (popup != null) return@LaunchedEffect
+        val from = popupFrom ?: return@LaunchedEffect
+        awaitFrame(); awaitFrame()
+        runCatching { btnFocus[from]?.requestFocus() }
+        popupFrom = null
+    }
     // The progress bar: Left on it while live rewinds (catch-up channels); it stays focused as it turns into the
     // catch-up seek bar, so you can keep scrubbing.
     val barFocus = remember { FocusRequester() }
@@ -332,6 +344,8 @@ fun PlayerOsd(
                             else -> b.label
                         },
                         (if (b.id == "guide" && catchup == null) Modifier.focusRequester(firstFocus) else Modifier)
+                            .focusRequester(btnFocus.getOrPut(b.id) { FocusRequester() })
+                            .onFocusChanged { if (it.isFocused && popup == null) popupFrom = b.id }
                             .alpha(if (editing && hidden) 0.4f else 1f)
                             .onPreviewKeyEvent { e ->
                                 // Picked up: Left / Right move it along.
@@ -966,6 +980,8 @@ private fun OptionPopup(
     Column(
         Modifier
             .width(if (wide) 560.dp else 300.dp)
+            // (Down past the last choice stayed in it: it went onto the buttons with the pop-up still open.)
+            .trapFocus()
             .background(AppColors.Panel, RoundedCornerShape(10.dp))
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),

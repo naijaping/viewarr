@@ -81,6 +81,7 @@ class GuideRepository @Inject constructor(
         if (session.isDirect) return@withPermit Result.success(Unit)
         runCatching {
             val api = apiFactory.create(session.serverUrl, session.apiKey)
+            imageBase = session.serverUrl
             val syncedFrom = syncedFrom()
             val rows = ArrayList<ProgramEntity>()
             var page = api.searchPrograms(
@@ -234,6 +235,7 @@ class GuideRepository @Inject constructor(
         if (session.isDirect) return dao.searchPast(q, from, now, 60).map { null to it }
         return runCatching {
             val api = apiFactory.create(session.serverUrl, session.apiKey)
+            imageBase = session.serverUrl
             api.searchPast(title = q, startAfter = Instant.ofEpochMilli(from).toString(), endBefore = Instant.ofEpochMilli(now).toString())
                 .results.mapNotNull { p ->
                     val start = parseTime(p.start) ?: return@mapNotNull null
@@ -281,6 +283,7 @@ class GuideRepository @Inject constructor(
         try {
             _sync.value = SyncState.Running("Updating channels…")
             val api = apiFactory.create(session.serverUrl, session.apiKey)
+            imageBase = session.serverUrl
             val (channels, groups) = coroutineScope {
                 val c = async { api.channels() }
                 val g = async { api.groups() }
@@ -353,6 +356,8 @@ class GuideRepository @Inject constructor(
             try {
                 _sync.value = SyncState.Running("Updating channels…")
                 val api = apiFactory.create(session.serverUrl, session.apiKey)
+                imageBase = session.serverUrl
+            imageBase = session.serverUrl
                 val (channels, groups) = coroutineScope {
                     val c = async { api.channels() }
                     val g = async { api.groups() }
@@ -636,6 +641,34 @@ class GuideRepository @Inject constructor(
         return usableImage(icon) ?: usableImage(first)
     }
 
+    /** Programmes already asked about that Dispatcharr has no picture for (not asked again this session). */
+    private val noImage = java.util.Collections.synchronizedSet(HashSet<Long>())
+
+    /**
+     * The highlighted programme's own picture from Dispatcharr. The guide grid (api/epg/grid/) leaves out
+     * custom_properties, so programmes synced from it have no picture: this asks the programme search for just that
+     * one programme (a few ms) and keeps the answer in the guide database, so it's asked once.
+     */
+    suspend fun lookupImage(session: Session, p: io.github.petebutty.viewarr.data.local.GuideProgram): String? {
+        if (session.isDirect || p.rowId in noImage) return null
+        return runCatching {
+            val tvgId = dao.tvgIdOf(p.rowId) ?: return null
+            val api = apiFactory.create(session.serverUrl, session.apiKey)
+            imageBase = session.serverUrl
+            val page = kotlinx.coroutines.withTimeoutOrNull(5_000) {
+                api.searchPrograms(
+                    tvgId = tvgId,
+                    startAfter = Instant.ofEpochMilli(p.startTime - 60_000).toString(),
+                    startBefore = Instant.ofEpochMilli(p.startTime + 60_000).toString(),
+                    pageSize = 5,
+                )
+            } ?: return null
+            val image = page.results.firstOrNull { parseTime(it.start) == p.startTime }?.let { programImage(it.props) }
+            if (image != null) dao.setImage(p.rowId, image) else noImage += p.rowId
+            image
+        }.getOrNull()
+    }
+
     private fun programImage(props: JsonObject?): String? {
         props ?: return null
         val icon = (props["icon"] as? JsonPrimitive)?.contentOrNull
@@ -644,9 +677,24 @@ class GuideRepository @Inject constructor(
         return usableImage(icon) ?: usableImage(first)
     }
 
-    /** Web addresses only, and not ones inside the server's own Docker network (the TV can't reach those). */
+    /** The Dispatcharr server the guide is coming from: pictures given as a path on it are fetched from there. */
+    @Volatile private var imageBase: String? = null
+
+    /**
+     * Web addresses only, and not ones inside the server's own Docker network (the TV can't reach those). Some guides
+     * give a picture as "//host/path" (no http) or as a path on the server: those are made into full addresses
+     * (they were skipped, so some Dispatcharr guides, e.g. from a .xml.gz, showed no programme pictures).
+     */
     private fun usableImage(url: String?): String? {
-        val u = url?.trim()?.takeIf { it.startsWith("http://") || it.startsWith("https://") } ?: return null
+        val raw = url?.trim()?.takeIf { it.isNotEmpty() && !it.startsWith("data:") } ?: return null
+        val base = imageBase?.trimEnd('/')
+        val full = when {
+            raw.startsWith("http://") || raw.startsWith("https://") -> raw
+            raw.startsWith("//") -> "https:$raw"
+            raw.startsWith("/") && base != null -> base + raw
+            else -> null
+        }
+        val u = full ?: return null
         val host = u.substringAfter("://").substringBefore('/').substringBefore(':')
         val octets = host.split('.').mapNotNull { it.toIntOrNull() }
         val dockerNet = octets.size == 4 && octets[0] == 172 && octets[1] in 16..31

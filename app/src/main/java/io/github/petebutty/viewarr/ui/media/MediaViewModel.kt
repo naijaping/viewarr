@@ -255,9 +255,9 @@ class MediaViewModel @Inject constructor(
     val rows: kotlinx.coroutines.flow.StateFlow<RowsState> = kotlinx.coroutines.flow.combine(shownWithSet, layout, _searchFilter, openedFromMenu, _searchFocus) { (r, set), l, f, extra, focus ->
         // A service's page: its shows and films rows together in one fixed order (New shows, New films, Originals, Popular,
         // Top rated: RowSets.kindRank), this page's type before the other's within each kind.
-        if (set != null && l != null) r.copy(rows = (l.ordered(r.rows).filter { io.github.petebutty.viewarr.ui.player.RowSets.matches(set, it) && it.id !in l.hidden }.map { it to 0 } +
+        if (set != null && l != null) r.copy(rows = (l.ordered(r.rows).filter { io.github.petebutty.viewarr.ui.player.RowSets.matches(set, it) && !l.off(it.id) }.map { it to 0 } +
             rowSetExtra.value.map { it to 1 }).sortedWith(compareBy({ io.github.petebutty.viewarr.ui.player.RowSets.kindRank(it.first) }, { it.second })).map { it.first })
-        else if (l != null) r.copy(rows = l.ordered(r.rows).filter { it.id !in l.hidden || it.id == extra }) else r.copy(rows = focusFirst(orderSearch(f.apply(r.rows)), focus))
+        else if (l != null) r.copy(rows = l.ordered(r.rows).filter { !l.off(it.id) || it.id == extra }) else r.copy(rows = focusFirst(orderSearch(f.apply(r.rows)), focus))
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, RowsState(emptyList(), done = false))
     /**
      * The page's own home rows (as the page opens normally), for the live TV shortcuts' previews (Movies / Shows):
@@ -266,7 +266,7 @@ class MediaViewModel @Inject constructor(
     val homeRows: kotlinx.coroutines.flow.StateFlow<RowsState> = kotlinx.coroutines.flow.combine(shownRows, layout, setRowsHome) { r, l, home ->
         val grouped = if (home) emptySet() else io.github.petebutty.viewarr.ui.player.RowSets.sets(r.rows).filter { it.startsWith("name:") }.toSet()
         val own = r.rows.filter { row -> io.github.petebutty.viewarr.ui.player.RowSets.name(row)?.let { "name:$it" !in grouped } ?: true }
-        r.copy(rows = if (l != null) l.ordered(own).filter { it.id !in l.hidden } else own)
+        r.copy(rows = if (l != null) l.ordered(own).filter { !l.off(it.id) } else own)
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, RowsState(emptyList(), done = false))
 
     /** Every row in the chosen order with whether it's hidden, for Settings → Home rows. */
@@ -276,7 +276,7 @@ class MediaViewModel @Inject constructor(
             // Network rows that are kept off the home page (their shortcuts open them) aren't listed here either.
             val grouped = if (home) emptySet() else io.github.petebutty.viewarr.ui.player.RowSets.sets(r.rows).filter { it.startsWith("name:") }.toSet()
             lay.ordered(r.rows).filter { row -> io.github.petebutty.viewarr.ui.player.RowSets.name(row)?.let { "name:$it" !in grouped } ?: true }
-                .map { it to (it.id in lay.hidden) } to r.done
+                .map { it to lay.off(it.id) } to r.done
         }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList<Pair<io.github.petebutty.viewarr.data.media.MediaRow, Boolean>>() to false)
 
     /** The menu's Catalogues list (Movies / Shows → Right): in the page's order, with its own on / off. */
@@ -288,7 +288,7 @@ class MediaViewModel @Inject constructor(
     /** The menu's "Jump to a row": exactly the rows on the page, in its order (one on / off for both). */
     val jumpRows: kotlinx.coroutines.flow.StateFlow<RowsState> = kotlinx.coroutines.flow.combine(shownWithSet, layout) { (r, _), l ->
         val lay = l ?: io.github.petebutty.viewarr.data.settings.RowLayout()
-        r.copy(rows = lay.ordered(r.rows).filter { it.id !in lay.hidden })
+        r.copy(rows = lay.ordered(r.rows).filter { !lay.off(it.id) })
     }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, RowsState(emptyList(), done = false))
     /** Every row with whether it's left out of the menu, for Settings → Menu list. */
     val editableMenuRows: kotlinx.coroutines.flow.StateFlow<List<Pair<io.github.petebutty.viewarr.data.media.MediaRow, Boolean>>> =
@@ -314,7 +314,7 @@ class MediaViewModel @Inject constructor(
     val orderedRows: kotlinx.coroutines.flow.StateFlow<Pair<List<io.github.petebutty.viewarr.data.media.MediaRow>, Set<String>>> =
         kotlinx.coroutines.flow.combine(shownRows, layout) { r, l ->
             val lay = l ?: io.github.petebutty.viewarr.data.settings.RowLayout()
-            lay.ordered(r.rows) to lay.hidden
+            lay.ordered(r.rows).let { o -> o to o.filter { lay.off(it.id) }.map { it.id }.toSet() }
         }.stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList<io.github.petebutty.viewarr.data.media.MediaRow>() to emptySet())
 
     /** Moves a row one place up (-1) or down (1) among the rows matching [among] (a service's), keeping the rest. */
@@ -470,6 +470,8 @@ class MediaViewModel @Inject constructor(
         // Leave every title page (not back to the title before it): the person's page takes over.
         detailStack.clear()
         close()
+        // (From a title opened in a library: the library closes too, or the person's page was hidden behind it.)
+        _browse.value = null
         open(MediaItem(key = "person:$id", type = MediaType.Movie, title = c.name, poster = c.photo, origin = "TMDB"))
     }
 
@@ -791,8 +793,34 @@ class MediaViewModel @Inject constructor(
         openLibrary(library, type)
     }
 
-    fun openLibrary(library: io.github.petebutty.viewarr.data.media.MediaLibrary?, type: MediaType) {
+    /** The list of collections / playlists a collection was opened from (Back goes there, not out of the library). */
+    private var browseParent: io.github.petebutty.viewarr.data.media.MediaLibrary? = null
+    /** The list entry a collection was opened from (e.g. "Collections"), for the menu to land on. */
+    val browseParentKey: String? get() = browseParent?.key
+
+    /** Back from a collection opened from your list of them: that list again (true); otherwise false. */
+    fun libraryBack(type: MediaType): Boolean {
+        val up = browseParent ?: return false
+        openLibrary(up, type)
+        return true
+    }
+
+    /** A collection's own row on this page (hold OK on its card): whether it's there, and adding / removing it. */
+    fun hasCollectionRow(item: MediaItem): Boolean {
+        val id = "col-" + item.key.removePrefix("col:")
+        return orderedRows.value.first.any { it.id == id } && id !in orderedRows.value.second
+    }
+    fun setCollectionRow(item: MediaItem, on: Boolean) {
+        val t = layoutType.value ?: return
+        viewModelScope.launch {
+            rowLayouts.setHidden(t, "col-" + item.key.removePrefix("col:"), !on)
+            load(t, force = true)
+        }
+    }
+
+    fun openLibrary(library: io.github.petebutty.viewarr.data.media.MediaLibrary?, type: MediaType, parent: io.github.petebutty.viewarr.data.media.MediaLibrary? = null) {
         browseJob?.cancel(); queryJob?.cancel(); pageJobs.values.forEach { it.cancel() }; pageJobs.clear()
+        browseParent = parent?.takeIf { library != null && it.key != library.key }
         if (library == null) { _browse.value = null; return }
         val saved = libraryViews.load(library.key)
         val start = LibraryBrowse(library, type, saved ?: io.github.petebutty.viewarr.data.media.LibraryQuery("", true), version = nextVersion())
@@ -803,7 +831,8 @@ class MediaViewModel @Inject constructor(
             val ids = options.sorts.map { it.id }
             // A saved sort this library no longer has (or none yet): newest releases first, as before.
             val q = saved?.takeIf { it.sort in ids } ?: run {
-                val def = options.sorts.firstOrNull { it.id in setOf("originallyAvailableAt", "PremiereDate", "Released") } ?: options.sorts.firstOrNull()
+                // (Collections and playlists: in their own order.)
+                val def = (if (library.kind != io.github.petebutty.viewarr.data.media.LibKind.Library) null else options.sorts.firstOrNull { it.id in setOf("originallyAvailableAt", "PremiereDate", "Released") }) ?: options.sorts.firstOrNull()
                 // (Keeping any filters saved with it, e.g. a category picked in the menu before the first visit.)
                 io.github.petebutty.viewarr.data.media.LibraryQuery(def?.id ?: "", def?.descFirst ?: true, filters = saved?.filters.orEmpty(), toggles = saved?.toggles.orEmpty())
             }
@@ -976,6 +1005,11 @@ class MediaViewModel @Inject constructor(
 
     fun open(item: MediaItem) {
         if (item.key.startsWith("person:")) return openPerson(item)
+        // A collection / playlist card: its titles, like a library (Back returns to the list it was picked from).
+        if (item.key.startsWith("col:")) {
+            repo.groupFor(item.key)?.let { g -> openLibrary(g, libType.value ?: layoutType.value ?: item.type, parent = _browse.value?.library) }
+            return
+        }
         _detail.value?.detail?.item?.takeIf { it.key != item.key }?.let { detailStack.add(it) }
         showDetail(item)
     }
@@ -1328,13 +1362,14 @@ class MediaViewModel @Inject constructor(
         val d = _detail.value ?: return
         if (d.detail.item.type == MediaType.Show) return openEpisodes()
         // Every Plex server that has it, in turn: one server's file can be missing while another's is fine.
-        val refs = d.copies?.filter { it.source == "Plex" }?.mapNotNull { it.ref }.orEmpty()
+        val refs = d.copies?.filter { it.source == "Plex" }?.mapNotNull { it.ref }.orEmpty().distinct()
         if (refs.isEmpty()) return
         viewModelScope.launch {
             _detail.update { it?.copy(message = "Opening on Plex…") }
             var stream: io.github.petebutty.viewarr.data.media.VodStream? = null
-            for (ref in refs) {
-                stream = runCatching { repo.plexStream(ref, watchTarget(d.detail.item, null, null)) }.getOrNull()
+            // Each Plex copy, best version for this TV first.
+            for (c in rankedCopies(d.copies.orEmpty()).map { it.copy }.filter { it.source == "Plex" }) {
+                stream = runCatching { streamFor(c, d.detail.item) }.getOrNull()
                 if (stream != null) break
             }
             if (stream == null) _detail.update { it?.copy(message = "Couldn't open this on Plex: the file seems to be missing on your Plex server${if (refs.size > 1) "s" else ""}.") }
@@ -1361,9 +1396,9 @@ class MediaViewModel @Inject constructor(
         val item = d.detail.item
         viewModelScope.launch {
             val copies = d.copies.orEmpty()
-            val servers = copies.filter { it.ref != null && (it.source == "Plex" || it.source == "Jellyfin" || it.source == "Emby") }
-            val home = servers.filter { runCatching { repo.isHomeCopy(it) }.getOrDefault(false) }
-            for (c in home + (servers - home.toSet())) {
+            // Your servers' copies, the best this TV can show first (a home server's before a far one's when they match).
+            val servers = rankedCopies(copies).map { it.copy }.filter { it.source != io.github.petebutty.viewarr.data.media.PROVIDER }
+            for (c in servers) {
                 _detail.update { it?.copy(message = "Opening on ${copyLabel(c)}…") }
                 val stream = kotlinx.coroutines.withTimeoutOrNull(20_000) { runCatching { streamFor(c, item) }.getOrNull() }
                 if (stream != null) { _detail.update { it?.copy(message = null) }; _playing.value = stream; return@launch }
@@ -1390,10 +1425,37 @@ class MediaViewModel @Inject constructor(
 
     /** A copy on one of your servers, ready to play (null when it can't be: e.g. Plex says the file has gone). */
     private suspend fun streamFor(c: io.github.petebutty.viewarr.data.media.LibraryCopy, item: io.github.petebutty.viewarr.data.media.MediaItem) =
-        if (c.source == "Plex") repo.plexStream(c.ref!!, watchTarget(item, null, null))
-        else repo.serverStream(c.source, c.ref!!, item.title, watchTarget(item, null, null))
+        if (c.source == "Plex") repo.plexStream(c.ref!!, watchTarget(item, null, null), c.version?.plexMedia)
+        else repo.serverStream(c.source, c.ref!!, item.title, watchTarget(item, null, null), c.version?.sourceId)
 
-    fun copyLabel(c: io.github.petebutty.viewarr.data.media.LibraryCopy) = listOfNotNull(c.source, c.detail).joinToString(" · ")
+    fun copyLabel(c: io.github.petebutty.viewarr.data.media.LibraryCopy): String {
+        val server = c.detail?.substringAfter(" · ", "")?.takeIf { c.source == "Plex" && it.isNotEmpty() }
+        return listOfNotNull(if (server != null) "Plex · $server" else c.source, c.version?.label()?.ifEmpty { null } ?: c.detail.takeIf { server == null })
+            .joinToString(" · ")
+    }
+
+    /** One copy in the Play from list: [best] is the one Play picks; [note] why another might not suit (above 4K…). */
+    data class RankedCopy(val copy: io.github.petebutty.viewarr.data.media.LibraryCopy, val best: Boolean, val note: String?)
+
+    /**
+     * Every playable copy, best for this TV first (Settings → Playback → Best quality allowed; Match the TV on a box
+     * with little memory means 1080p). IPTV last: it says nothing about its quality.
+     */
+    suspend fun rankedCopies(copies: List<io.github.petebutty.viewarr.data.media.LibraryCopy>): List<RankedCopy> {
+        val set = playbackStore.current().maxResolution.height
+        val weak = io.github.petebutty.viewarr.ui.theme.AppColors.palette.lowMemory ||
+            (appContext.getSystemService(android.app.ActivityManager::class.java)?.isLowRamDevice == true)
+        val maxH = set ?: if (weak) 1080 else io.github.petebutty.viewarr.playback.FrameRateMatcher.maxHeight(appContext)
+        val screen = io.github.petebutty.viewarr.data.media.VersionPick.screen(appContext, maxH)
+        val playable = copies.filter { it.ref != null || it.source == io.github.petebutty.viewarr.data.media.PROVIDER }
+        val (iptv, servers) = playable.partition { it.source == io.github.petebutty.viewarr.data.media.PROVIDER }
+        val scored = servers.map { c ->
+            val home = runCatching { repo.isHomeCopy(c) }.getOrDefault(false)
+            c to io.github.petebutty.viewarr.data.media.VersionPick.score(c.version, screen, home)
+        }.sortedByDescending { it.second }.map { it.first }
+        return scored.mapIndexed { i, c -> RankedCopy(c, i == 0 && scored.size > 1, io.github.petebutty.viewarr.data.media.VersionPick.note(c.version, screen, c.source == "Plex")) } +
+            iptv.map { RankedCopy(it, false, null) }
+    }
 
     /** Other sources → one particular copy. */
     fun playCopy(c: io.github.petebutty.viewarr.data.media.LibraryCopy) {

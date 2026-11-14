@@ -79,11 +79,30 @@ object ReportSender {
         c.responseCode
     }
 
-    /** Viewarr's own log (this app's lines only), the most recent few thousand. */
+    /**
+     * Viewarr's own log (this app's lines only), the most recent few thousand, without the TV maker's chatter. Some
+     * TVs (TCL) write a line for every button press, frame and buffer into the app's log; a report from one was 95%
+     * that, and Viewarr's own lines had been pushed out. Those tags are silenced in the read (and any left after it),
+     * and the vendor's "perf" buffer isn't read at all.
+     */
     private fun recentLog(): String = runCatching {
-        val p = Runtime.getRuntime().exec(arrayOf("logcat", "-d", "-v", "time", "-t", "4000", "--pid=${android.os.Process.myPid()}"))
-        p.inputStream.bufferedReader().readText().also { p.waitFor() }
+        val silenced = NOISY_TAGS.map { "$it:S" }
+        val p = Runtime.getRuntime().exec(
+            arrayOf("logcat", "-d", "-v", "time", "-b", "main,system,crash", "-t", "4000", "--pid=${android.os.Process.myPid()}") +
+                silenced + "*:V",
+        )
+        p.inputStream.bufferedReader().useLines { lines ->
+            lines.filterNot { l -> NOISY_LINE.containsMatchIn(l) }.joinToString("\n")
+        }.also { p.waitFor() }
     }.getOrElse { "(the log couldn't be read: ${it.message})" }
+
+    /** The TV makers' tags that fill an app's log with nothing about the app (TCL, Amlogic, MediaTek, Android's own). */
+    private val NOISY_TAGS = listOf(
+        "Quality", "Looper", "ViewRootImpl", "GraphicBufferAllocator", "BufferPoolAccessor2.0", "MessageMonitor_reportData",
+        "TclFrameworkFactory", "BufferQueueProducer", "BLASTBufferQueue", "Gralloc3", "Gralloc4", "chatty", "WindowOnBackDispatcher",
+    )
+    /** Lines from those (or tags with brackets, which logcat can't silence by name) that still came through. */
+    private val NOISY_LINE = Regex("""^\S+ \S+ [A-Z]/(Quality|Looper|ViewRootImpl|VRI\[[^\]]*\]|GraphicBufferAllocator|BufferPoolAccessor2\.0|MessageMonitor_reportData|TclFrameworkFactory)\s*\(""")
 
     /** Passwords, keys, tokens, addresses, IPs, emails and long secrets out. */
     fun clean(text: String): String {

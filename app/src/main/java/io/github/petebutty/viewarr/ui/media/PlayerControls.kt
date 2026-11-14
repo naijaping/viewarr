@@ -159,6 +159,13 @@ class PlayerMenu {
     /** Editing the buttons (hold OK on one): OK shows / hides, hold OK picks one up ([carrying]) to move with Left / Right. */
     var editing by mutableStateOf(false)
     var carrying by mutableStateOf(false)
+    /**
+     * The button picked up, followed by itself rather than by its place: a held Left / Right comes faster than the bar
+     * redraws, and going by place moved (and highlighted) whichever button was there in the old order.
+     */
+    var carried by mutableStateOf<PlayerButton?>(null)
+    /** Where the highlight is among [buttons]: on the picked-up button while there is one. */
+    fun focusIndex(buttons: List<PlayerButton>): Int = carried?.let { c -> buttons.indexOf(c).takeIf { it >= 0 } } ?: button
     // An OK pressed on a button, not yet let go: a tap presses it on release, a hold edits.
     private var btnOkDown = false
     /** Where Play / Pause is among the buttons (after the TV guide button, when it's there). */
@@ -169,7 +176,7 @@ class PlayerMenu {
      * Opens on the TV guide button, as live TV's controls do (no TV guide button: on the seek bar, with Play / Pause
      * highlighted below it); not the button used last time.
      */
-    fun show() { editing = false; carrying = false; btnOkDown = false; onEpisodes = false; episodesOnly = false; downRow = 0; withNext = false; cardOkDown = false; scOkDown = false; open = true; onBar = guideAt < 0; button = if (guideAt >= 0) guideAt else home; onShortcuts = false; onRows = false; scMoving = false; scOptions = null; scRows = null; touch() }
+    fun show() { editing = false; carrying = false; carried = null; btnOkDown = false; onEpisodes = false; episodesOnly = false; downRow = 0; withNext = false; cardOkDown = false; scOkDown = false; open = true; onBar = guideAt < 0; button = if (guideAt >= 0) guideAt else home; onShortcuts = false; onRows = false; scMoving = false; scOptions = null; scRows = null; touch() }
     fun touch() { lastKey = System.currentTimeMillis() }
 
     /**
@@ -193,6 +200,8 @@ class PlayerMenu {
         pickDown: (Int, Int) -> Unit = { _, _ -> },
     ): Boolean {
         val down = e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
+        // The picked-up button's place in the bar as now drawn; once put down, the highlight stays on it.
+        carried?.let { c -> buttons.indexOf(c).takeIf { it >= 0 }?.let { button = it }; if (!carrying) carried = null }
         val a = io.github.petebutty.viewarr.ui.common.RemoteKeys.action(e)
         val repeat = e.nativeKeyEvent.repeatCount
         if (down) touch()
@@ -273,11 +282,13 @@ class PlayerMenu {
             onBar && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Down -> if (down && buttons.isNotEmpty()) onBar = false
             // Up from the seek bar: pause, with what's playing (its synopsis) on screen.
             onBar && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Up -> if (down && repeat == 0) upFromBar()
-            onBar && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Ok -> Unit
+            // OK on the seek bar: down onto the buttons (Play / Pause is there), rather than nothing happening.
+            onBar && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Ok -> if (down && repeat == 0 && buttons.isNotEmpty()) onBar = false
             // Editing: a picked-up button moves with Left / Right; Up / Down stay on the buttons.
             !onBar && editing && carrying && (a == io.github.petebutty.viewarr.ui.common.RemoteAction.Left || a == io.github.petebutty.viewarr.ui.common.RemoteAction.Right) -> if (down) {
                 val dir = if (a == io.github.petebutty.viewarr.ui.common.RemoteAction.Left) -1 else 1
-                if (button + dir in buttons.indices) { buttons.getOrNull(button)?.let { moveButton(it, dir) }; button += dir }
+                // Moved by itself in the latest order (BarLayout.moved); the highlight follows it on the next redraw.
+                (carried ?: buttons.getOrNull(button))?.let { carried = it; moveButton(it, dir) }
             }
             !onBar && editing && (a == io.github.petebutty.viewarr.ui.common.RemoteAction.Up || a == io.github.petebutty.viewarr.ui.common.RemoteAction.Down) -> Unit
             !onBar && editing && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Left -> if (down) button = (button - 1).coerceAtLeast(0)
@@ -291,7 +302,7 @@ class PlayerMenu {
             // A tap presses the button (on release); a hold starts editing, or while editing picks it up / puts it down.
             !onBar && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Ok -> when {
                 down && repeat == 0 -> btnOkDown = true
-                down && btnOkDown -> { btnOkDown = false; if (!editing) editing = true else carrying = !carrying }
+                down && btnOkDown -> { btnOkDown = false; if (!editing) editing = true else { carrying = !carrying; if (carrying) carried = buttons.getOrNull(button) } }
                 !down && btnOkDown -> {
                     btnOkDown = false
                     buttons.getOrNull(button)?.let { b -> if (!editing) press(b) else if (carrying) carrying = false else toggleButton(b) }

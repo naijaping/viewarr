@@ -38,6 +38,16 @@ Viewarr doesn't provide any content. It plays only what your own servers and acc
 - **Profiles** for everyone in the house, sharing with friends in another house, and your setup saved on Dispatcharr.
 - **Easy setup** from your phone with a QR code, and **Search settings** to find any option by name.
 
+## The remote in a nutshell
+
+- **Back** while watching (live TV or a film): the **mini player**. The picture keeps playing in the window at the top left while you browse.
+- **Back** on the mini player: **full screen** again.
+- **Hold Back** on either: **close the player**.
+- **Left** opens the menu from any page. In the TV guide, Left goes back a programme; on what's on now it opens the channel groups, and Left again the main menu. **Hold Left** goes back into catch-up.
+- **Back** in the menu closes it.
+
+Hints at the bottom of the screen remind you the first few times. Every button can be changed: see **[Remote control](docs/REMOTE.md)**.
+
 ## What you need
 
 - An **Android TV** device (Android 8 or newer): Google TV, Nvidia Shield, Formuler, Chromecast with Google TV, Fire TV and so on.

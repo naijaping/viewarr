@@ -213,12 +213,13 @@ fun RemoteSettingsScreen(onBack: () -> Unit, part: RemotePart = RemotePart.Butto
                 when {
                     // Back and Left step through the guide and pages first, so they have their own choices there.
                     screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Guide && press == io.github.petebutty.viewarr.data.settings.BtnPress.Back -> add(item(place, "Back first jumps to what's on now. On now: back to full screen, ask to exit, or the menu.", k.GUIDE_BACK, all<GuideBack>(), s.guideBack))
-                    screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Guide && press == io.github.petebutty.viewarr.data.settings.BtnPress.Left -> add(item(place, "Along the programmes, and how it reaches the menu.", k.GUIDE_LEFT, all<GuideLeft>(), s.guideLeft))
+                    // (Left in the guide and on the first poster work one way since 0.28.3: no choice to make.)
+                    screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Guide && press == io.github.petebutty.viewarr.data.settings.BtnPress.Left -> Unit
                     screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Pages && press == io.github.petebutty.viewarr.data.settings.BtnPress.Back -> {
                         add(item(place, "Ask to exit, open the menu, or go to the TV guide.", k.MEDIA_BACK, all<MediaBack>(), s.mediaBack))
                         add(item("In the menu", "Press twice to exit, or close the menu.", k.MENU_BACK, all<MenuBack>(), s.menuBack))
                     }
-                    screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Pages && press == io.github.petebutty.viewarr.data.settings.BtnPress.Left -> add(item("$place (first poster)", "Open the menu, or do nothing.", k.ROW_LEFT, all<RowLeft>(), s.rowLeft))
+                    screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Pages && press == io.github.petebutty.viewarr.data.settings.BtnPress.Left -> Unit
                     press in bm.presses[screen].orEmpty() -> add(placeRow(screen, press, place))
                 }
             }
@@ -390,9 +391,8 @@ fun navigationCategories(vm: RemoteViewModel = hiltViewModel(), opts: UiOptsView
             ),
         ),
         SettingCategory(
-            "Menu", "The side menu (Left on the first poster, or hold Back). Going into a list slides the one before it away to the left; Left or Back brings it back, one level at a time, then Back closes the menu.",
+            "Menu", "The side menu: Left from any page opens it on that page. On an entry, Right goes into its page and Left opens its own list (channel groups, libraries, albums…); Left or Back steps back out, then Back closes the menu.",
             listOf(
-                item("Menu opens on", "Open on the current page's own list (channel groups, catalogues), or on the main list.", k.MENU_OPENS_ON, all<MenuOpensOn>(), s.menuOpensOn),
                 optItem(opts, "Button hints", "A small pill at the bottom of the screen saying what the buttons do there: the first few times on each screen, always, or off.", io.github.petebutty.viewarr.ui.theme.UiOpts.BUTTON_HINTS),
             ),
         ),

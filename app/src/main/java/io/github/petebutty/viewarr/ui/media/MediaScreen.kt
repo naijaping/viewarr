@@ -201,6 +201,8 @@ fun MediaScreen(
     BackHandler(enabled = focusEnabled && detail == null && quick == null && quickTrailer == null) {
         // In a library: Back returns to the page's rows.
         if (browse != null) {
+            // From a collection picked in your list of them: back to that list.
+            if (vm.libraryBack(type)) return@BackHandler
             vm.openLibrary(null, type)
             scope.launch { awaitFrame(); awaitFrame(); runCatching { focusRequester.requestFocus() } }
             return@BackHandler
@@ -213,7 +215,9 @@ fun MediaScreen(
             return@BackHandler
         }
         val top = rows.firstOrNull()
-        if (searchHeader == null && hasFocus && top != null && (focusedRow > 0 || focusedIndex > 0)) {
+        // (Not with a channel playing small top left: Back enlarges it in one press, it doesn't scroll to the top first.)
+        val playingSmall = io.github.petebutty.viewarr.ui.common.LiveBehind.preview
+        if (searchHeader == null && hasFocus && top != null && (focusedRow > 0 || focusedIndex > 0) && !playingSmall) {
             rowPos[top.id] = 0
             top.items.firstOrNull()?.let { lastCard = cardId(top, it) }
             scope.launch {
@@ -382,7 +386,8 @@ fun MediaScreen(
                                 vm.setCurrentRow(row.id)
                             },
                             onLongOpen = { if (!it.key.startsWith("person:")) quick = it },
-                            onLeftEdge = if (remote.rowLeft == RowLeft.Menu) onOpenMenu else null,
+                            // (Left on the first poster: always the menu.)
+                            onLeftEdge = onOpenMenu,
                             // Only the row that has it gets it: given to every row, each move rebuilt them all.
                             entryCard = entryCard?.takeIf { it.startsWith(row.id + "|") },
                             entryFocus = focusRequester,
@@ -410,6 +415,7 @@ fun MediaScreen(
                 onPickStream = vm::playStream,
                 onCloseStreams = vm::closeStreams,
                 onWatchlist = vm::toggleWatchlist,
+                onLeftEdge = onOpenMenu,
                 onClose = {
                     vm.close()
                     // Back to the title it was opened from (More like this) keeps focus on that page.
@@ -577,7 +583,7 @@ private val GRID_POSTER_DP get() = io.github.petebutty.viewarr.ui.theme.AppColor
  * choices along the top. The last card goes to the next page, the first (after page 1) to the previous one.
  */
 @Composable
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 private fun LibraryGrid(
     b: MediaViewModel.LibraryBrowse,
     vm: MediaViewModel,
@@ -605,6 +611,9 @@ private fun LibraryGrid(
     fun cell(i: Int) = cells.getOrPut(i) { FocusRequester() }
     var panel by remember { mutableStateOf<String?>(null) }
     val railFocus = remember { FocusRequester() }
+    // The Sort button (Up from the A–Z strip). The page's own focus target is the grid: coming into a library lands on
+    // a poster (it landed on the toolbar's mic).
+    val sortFocus = remember { FocusRequester() }
     var railOn by remember { mutableStateOf(false) }
     var railLetter by remember { mutableStateOf('A') }
     val count = b.total.coerceAtLeast(0)
@@ -621,6 +630,17 @@ private fun LibraryGrid(
         if (gridState.layoutInfo.visibleItemsInfo.none { it.index == idx }) runCatching { gridState.scrollToItem(idx - idx % gridColumns) }
         awaitFrame(); awaitFrame()
         runCatching { cell(idx).requestFocus() }
+    }
+    // Where the highlight goes coming into the grid: the poster you were on if it's drawn, else the first one on screen,
+    // else (nothing loaded yet) Sort. Only drawn posters can take the highlight: the grid draws what's on screen and a
+    // little either side, and sending it to one that isn't drawn could lose it or close the app. (The effect below
+    // still scrolls to the one you were on and moves the highlight there once it's drawn.)
+    fun gridEntry(): FocusRequester {
+        if (count == 0) return sortFocus
+        val shown = gridState.layoutInfo.visibleItemsInfo.map { it.index }
+        if (shown.isEmpty()) return sortFocus
+        val want = (vm.lastIndexFor(b.version) ?: 0).coerceIn(0, count - 1)
+        return cell(if (want in shown) want else shown.first())
     }
     // A new list (opened, re-sorted, filtered): its first title. Back from a title, a panel or the menu: the one you were on.
     LaunchedEffect(b.version, count > 0, focusEnabled, panel == null) {
@@ -668,11 +688,11 @@ private fun LibraryGrid(
                 }
                 // Keyed by library: another library starts with an empty box.
                 androidx.compose.runtime.key(b.library.key) {
-                    LibrarySearchBox(b.query.query, vm::setLibraryQuery, onSearchFocus, onDone = { runCatching { cell(vm.lastIndexFor(b.version) ?: 0).requestFocus() } })
+                    LibrarySearchBox(b.query.query, vm::setLibraryQuery, onSearchFocus, onDone = { runCatching { cell(vm.lastIndexFor(b.version) ?: 0).requestFocus() } }, onLeft = onLeftEdge)
                 }
                 ToolButton(
                     "Sort" + (b.options?.sorts?.firstOrNull { it.id == b.query.sort }?.let { ": ${it.label}" } ?: ""),
-                    active = false, modifier = Modifier.focusRequester(focusRequester),
+                    active = false, modifier = Modifier.focusRequester(sortFocus),
                 ) { if (b.options != null) panel = "sort" }
                 if (b.options?.filters?.isNotEmpty() == true) ToolButton(
                     if (b.query.active > 0) "Filter · ${b.query.active}" else "Filter",
@@ -725,7 +745,13 @@ private fun LibraryGrid(
                 androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                     columns = androidx.compose.foundation.lazy.grid.GridCells.Fixed(gridColumns),
                     state = gridState,
-                    modifier = Modifier.weight(1f).fillMaxHeight().onFocusChanged { onHasFocus(it.hasFocus) },
+                    // Into the grid (from the menu, from the toolbar, back from a title): the poster you were on, else the
+                    // first (Down from the toolbar landed on whichever was nearest; from the menu, on the toolbar).
+                    modifier = Modifier.weight(1f).fillMaxHeight()
+                        .focusRequester(focusRequester)
+                        .focusProperties { enter = { gridEntry() } }
+                        .focusGroup()
+                        .onFocusChanged { onHasFocus(it.hasFocus) },
                     contentPadding = PaddingValues(start = 48.dp, end = if (b.canLetters) 12.dp else 48.dp, top = 4.dp, bottom = 60.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -736,12 +762,7 @@ private fun LibraryGrid(
                         val m = Modifier.focusRequester(cell(i))
                             .onFocusChanged { if (it.isFocused) { vm.setLastIndex(b.version, i); onFocusRow(i / gridColumns); item?.let(onFocus) } }
                             .onPreviewKeyEvent { e ->
-                                // Back in the grid: up to the toolbar (sort, filter, search), keeping your place; Back
-                                // again from there leaves the library.
-                                if (e.key == Key.Back) {
-                                    if (e.type == KeyEventType.KeyUp) runCatching { focusRequester.requestFocus() }
-                                    return@onPreviewKeyEvent true
-                                }
+                                // (Back leaves the library in one press: it used to go up to the toolbar first.)
                                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 when {
                                     // Left on the first column: the menu (pick another library).
@@ -765,7 +786,7 @@ private fun LibraryGrid(
                     onMove = { railLetter = it },
                     onLetter = { vm.jumpToLetter(it) },
                     onPick = { vm.jumpToLetter(it); railOn = false },
-                    onUp = { runCatching { focusRequester.requestFocus() } },
+                    onUp = { runCatching { sortFocus.requestFocus() } },
                     onLeft = {
                         val first = gridState.layoutInfo.visibleItemsInfo.firstOrNull()?.index ?: 0
                         val target = (first + gridColumns - 1).coerceAtMost(count - 1)
@@ -834,7 +855,7 @@ private fun FilterPill(text: String, active: Boolean, modifier: Modifier = Modif
  * Done or Down returns to the titles.
  */
 @Composable
-internal fun LibrarySearchBox(query: String, onQuery: (String) -> Unit, onFocus: (Boolean) -> Unit, onDone: () -> Unit) {
+internal fun LibrarySearchBox(query: String, onQuery: (String) -> Unit, onFocus: (Boolean) -> Unit, onDone: () -> Unit, onLeft: (() -> Unit)? = null) {
     var text by remember { mutableStateOf(query) }
     var editing by remember { mutableStateOf(false) }
     var focusedBox by remember { mutableStateOf(false) }
@@ -855,7 +876,9 @@ internal fun LibrarySearchBox(query: String, onQuery: (String) -> Unit, onFocus:
     run {
         Surface(
             onClick = { voice.toggle() },
-            modifier = Modifier.padding(end = 8.dp).size(36.dp).instantFocusScale(1.08f),
+            // Left on the mic (the first thing in the row): the menu, as Left on the first poster does (it did nothing).
+            modifier = Modifier.padding(end = 8.dp).size(36.dp).instantFocusScale(1.08f)
+                .onPreviewKeyEvent { e -> if (onLeft != null && e.key == Key.DirectionLeft) { if (e.type == KeyEventType.KeyDown) onLeft(); true } else false },
             shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.CircleShape),
             scale = io.github.petebutty.viewarr.ui.common.focusScale(1.08f),
             colors = ClickableSurfaceDefaults.colors(
@@ -1085,10 +1108,13 @@ private fun DetailScreen(
     onCloseStreams: () -> Unit,
     onWatchlist: () -> Unit,
     onClose: () -> Unit,
+    /** Left on the first button (Play): the menu, as Left at the edge of any page. */
+    onLeftEdge: () -> Unit = {},
 ) {
     val d = ui.detail
     val item = d.item
     val playFocus = remember { FocusRequester() }
+    var playFocused by remember { mutableStateOf(false) }
     val onPlex = ui.copies?.any { it.source == "Plex" && it.ref != null } == true
     val onProvider = ui.copies?.any { it.source == io.github.petebutty.viewarr.data.media.PROVIDER } == true
     val serverName = ui.copies?.firstOrNull { (it.source == "Jellyfin" || it.source == "Emby") && it.ref != null }?.source
@@ -1109,8 +1135,19 @@ private fun DetailScreen(
         awaitFrame(); awaitFrame()
         runCatching { playFocus.requestFocus() }
     }
+    // The "Play from" choice closed: the highlight back on Play (it was made unpickable while open and left nowhere).
+    var sourcesWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(sourcesOpen) {
+        if (sourcesOpen) { sourcesWasOpen = true; return@LaunchedEffect }
+        if (!sourcesWasOpen) return@LaunchedEffect
+        sourcesWasOpen = false
+        awaitFrame(); awaitFrame()
+        runCatching { playFocus.requestFocus() }
+    }
     if (sourcesOpen) SourcesDialog(ui, vm, onSearch = { sourcesOpen = false; onSearch() }, onDone = { sourcesOpen = false })
     val trailerFocus = remember { FocusRequester() }
+    // (The stream list, an episode's actions and the old episodes list are pop-ups over the title page.)
+    io.github.petebutty.viewarr.ui.common.BackLayer(ui.streams != null || ui.episode != null || ui.episodesOpen)
     BackHandler(enabled = !trailerOpen) {
         when {
             ui.streams != null -> if (ui.episode != null) vm.closeEpisodeStreams() else onCloseStreams()
@@ -1154,6 +1191,15 @@ private fun DetailScreen(
         val sectionsFree = !ui.episodesOpen && ui.streams == null && !trailerOpen
         // Shows: the seasons and episodes come between the header and the tabs, so the page scrolls (focus leads it).
         val episodesEntry = remember { FocusRequester() }
+        // An episode's actions closed (hold OK on an episode): the highlight back on the episodes (it was left nowhere).
+        var episodeWasOpen by remember { mutableStateOf(false) }
+        LaunchedEffect(ui.episode == null) {
+            if (ui.episode != null) { episodeWasOpen = true; return@LaunchedEffect }
+            if (!episodeWasOpen) return@LaunchedEffect
+            episodeWasOpen = false
+            awaitFrame(); awaitFrame()
+            if (runCatching { episodesEntry.requestFocus() }.isFailure) runCatching { playFocus.requestFocus() }
+        }
         val inlineEpisodes = show && ui.seasons.isNotEmpty() && parts.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.EPISODES)
         // The header (logo, details, buttons) stays put; only what's under it scrolls (the logo was cut off the top as
         // the page scrolled down to the episodes).
@@ -1187,7 +1233,11 @@ private fun DetailScreen(
                         d.directors.takeIf { it.isNotEmpty() }?.let { (if (show) "Created by " else "Directed by ") + it.take(2).joinToString(", ") },
                         when (val copies = ui.copies) {
                             null -> "Checking your library…"
-                            else -> if (copies.isEmpty()) "Not in your library" else "In your library: " + copies.joinToString(" · ") { c -> c.detail?.let { "${c.source} ($it)" } ?: c.source }
+                            // One entry per source, its versions together: "Plex (4K DV, 1080p) · Jellyfin (1080p)".
+                            else -> if (copies.isEmpty()) "Not in your library" else "In your library: " + copies.groupBy { it.source }.entries.joinToString(" · ") { (src, cs) ->
+                                val vs = cs.mapNotNull { c -> c.version?.let { v -> listOfNotNull(v.resolution, v.hdr?.let { h -> if (h == "Dolby Vision") "DV" else h }).joinToString(" ").ifEmpty { null } } ?: c.detail }.distinct()
+                                if (vs.isEmpty()) src else "$src (${vs.joinToString(", ")})"
+                            }
                         },
                     ).joinToString("   ·   "),
                     fontSize = 13.sp,
@@ -1201,6 +1251,8 @@ private fun DetailScreen(
                 // The buttons may run past the text column into the free space on the right, rather than squash.
                 // Down from any of them goes to the selected tab below (not just the nearest one).
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top, modifier = Modifier.wrapContentWidth(Alignment.Start, unbounded = true).onFocusChanged { buttonsFocused = it.hasFocus }.onPreviewKeyEvent { e ->
+                    // Left on the first button: the menu (it did nothing, or went onto the picture in the corner).
+                    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && playFocused && buttonsFree) { onLeftEdge(); return@onPreviewKeyEvent true }
                     if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown && buttonsFree) runCatching { (if (inlineEpisodes && ui.episodes != null) episodesEntry else tabFocus).requestFocus() }.isSuccess else false
                 }) {
                     if (show) {
@@ -1222,7 +1274,7 @@ private fun DetailScreen(
                                 else -> upDate.format(io.github.petebutty.viewarr.ui.theme.Dates.day)
                             }
                             // OK: the episodes (that one shows "Not out yet"), not a play that can only fail.
-                            Button(onClick = vm::openEpisodes, modifier = (Modifier.focusRequester(playFocus)).free()) {
+                            Button(onClick = vm::openEpisodes, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) {
                                 androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Clock, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current)
                                 Text("S${next.first} · E${next.second} out $whenOut")
                             }
@@ -1234,21 +1286,27 @@ private fun DetailScreen(
                             }
                             // Holding OK: the sources found for that episode, to pick from (as a film's Play). The seasons and
                             // episodes are on the page itself (below).
-                            Button(onClick = vm::playNextUp, onLongClick = vm::pickNextUp, modifier = (Modifier.focusRequester(playFocus)).free()) { androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Play, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current); Text(if (ui.searching) "Looking…" else label) }
+                            Button(onClick = vm::playNextUp, onLongClick = vm::pickNextUp, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) { androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Play, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current); Text(if (ui.searching) "Looking…" else label) }
                             // Part-way through that episode: or start it again.
                             if (next?.third == true) IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Replay, "Start over", vm::playFromStart, Modifier.free())
                         } else {
-                            Button(onClick = vm::openEpisodes, modifier = (Modifier.focusRequester(playFocus)).free()) { Text("Episodes") }
+                            Button(onClick = vm::openEpisodes, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) { Text("Episodes") }
                         }
                     } else if (onPlex || onServer || onProvider || ui.hasAddons) {
                         // One Play: home servers, then away, then addons, then IPTV (MediaViewModel.playBest).
                         // OK plays from the best source; holding OK lists every source to pick from.
-                        Button(onClick = vm::playBest, onLongClick = { sourcesOpen = true }, modifier = (Modifier.focusRequester(playFocus)).free()) {
+                        Button(onClick = vm::playBest, onLongClick = { sourcesOpen = true }, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) {
                             androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Play, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current)
                             Text(if (ui.searching) "Looking…" else if (item.progress != null) "Resume" else "Play")
                         }
                         // Part-way through: or watch it again from the beginning.
                         if (item.progress != null) IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Replay, "Start over", vm::playFromStart, Modifier.free())
+                    } else {
+                        // Still checking your servers (or nowhere to play it): a button to land on, so the page has a
+                        // highlight and Left reaches the menu (there was none until the check finished).
+                        Button(onClick = { if (ui.copies != null) onSearch() }, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) {
+                            Text(if (ui.copies == null || ui.searching) "Looking…" else "Find a source")
+                        }
                     }
                     // Films on your own server: pick the soundtrack and subtitles before Play (this play only).
                     if (!show && ui.tracks != null) {
@@ -1260,7 +1318,7 @@ private fun DetailScreen(
                         IconAction(if (ui.watched) io.github.petebutty.viewarr.ui.common.AppIcons.CheckCircle else io.github.petebutty.viewarr.ui.common.AppIcons.Check, if (ui.watched) "Watched (OK to undo)" else "Mark watched", vm::toggleWatched, Modifier.free(), on = ui.watched)
                     }
                     if (!show && !onPlex && !onProvider && !onServer && !ui.hasAddons && ui.copies != null) {
-                        IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Back, "Back", onClose, Modifier.focusRequester(playFocus).free())
+                        IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Back, "Back", onClose, Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }.free())
                     }
                     if (trailerId != null) {
                         IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Movie, "Trailer", { trailerOpen = true }, Modifier.focusRequester(trailerFocus).free())
@@ -1296,7 +1354,7 @@ private fun DetailScreen(
             runCatching { episodesEntry.requestFocus() }
         }
         Spacer(Modifier.height(16.dp))
-        DetailTabs(d, show, sectionsFree && ui.episode == null, tabFocus, onPerson = { c -> vm.openCastMember(c) }, onReview = { reading = it }, onSimilar = { vm.open(it) }, onHover = { m -> hover = m?.let { it.title to it.overview } })
+        DetailTabs(d, show, sectionsFree && ui.episode == null, tabFocus, onPerson = { c -> vm.openCastMember(c) }, onReview = { reading = it }, onSimilar = { vm.open(it) }, onHover = { m -> hover = m?.let { it.title to it.overview } }, onLeftEdge = onLeftEdge)
                 }
 }
         reading?.let { r -> ReviewDialog(r) { reading = null } }
@@ -1489,6 +1547,7 @@ private fun TracksDialog(
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
     BackHandler { onDone() }
+    io.github.petebutty.viewarr.ui.common.BackLayer()
     // What the server would pick by itself, when you haven't picked.
     val a = audio ?: t.audio.firstOrNull { it.default }?.ordinal ?: 0
     val sub = subtitle ?: t.subtitles.firstOrNull { it.default }?.ordinal
@@ -1803,8 +1862,29 @@ private fun QuickOptions(item: MediaItem, vm: MediaViewModel, onTrailer: () -> U
     // Seerr set up: request the title to keep (or see that it's already requested / available).
     val seerrStatus by produceState<io.github.petebutty.viewarr.data.remote.services.SeerrService.Status?>(null, item.key) { value = vm.seerrStatus(item) }
     BackHandler(onBack = onClose)
+    io.github.petebutty.viewarr.ui.common.BackLayer()
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
     val show = item.type == MediaType.Show
+    // A collection / playlist card: open it, or give it its own row on this page.
+    if (item.key.startsWith("col:")) {
+        val hasRow = remember(item.key) { vm.hasCollectionRow(item) }
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.width(420.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(20.dp).trapFocus().then(Modifier.ignoreHeldOk()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(item.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(listOfNotNull(item.subtitle, item.origin).joinToString("  ·  "), fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp))
+                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Open", selected = false, modifier = Modifier.focusRequester(first), onClick = { onClose(); vm.open(item) })
+                io.github.petebutty.viewarr.ui.common.MenuItem(
+                    text = if (hasRow) "Remove its row from this page" else "Show as a row on this page", selected = false,
+                    onClick = { onClose(); vm.setCollectionRow(item, !hasRow) },
+                )
+                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Cancel", selected = false, onClick = onClose)
+            }
+        }
+        return
+    }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
         Column(
             Modifier.width(420.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(20.dp).trapFocus()
@@ -1954,7 +2034,16 @@ private fun DetailTabs(
     onSimilar: (MediaItem) -> Unit,
     /** A title highlighted in More like this / the collection (null: off them, onto the tabs). */
     onHover: (MediaItem?) -> Unit = {},
+    /** Left at the start of the tabs or a row: the menu (it did nothing). */
+    onLeftEdge: () -> Unit = {},
 ) {
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    // Left with nothing further left in the tabs or a row: the menu, as Left at the edge of any page.
+    val leftOpensMenu = Modifier.onPreviewKeyEvent { e ->
+        if (e.key != Key.DirectionLeft || e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        if (!focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Left)) onLeftEdge()
+        true
+    }
     val facts = listOfNotNull(
         d.released?.let { (if (show) "First aired" else "Released") to it },
         d.runtimeMin?.takeIf { it > 0 }?.let { "Runtime" to (if (it >= 60) "${it / 60}h ${it % 60}m" else "${it}m") },
@@ -1978,10 +2067,11 @@ private fun DetailTabs(
     var tab by remember(d.item.key) { mutableStateOf(tabs.first()) }
     if (tab !in tabs) tab = tabs.first()
     // Right past the last tab stays put (it used to jump up to the Play button).
-    Row(Modifier.stopAtRight(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(Modifier.stopAtRight().then(leftOpensMenu), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         tabs.forEach { t ->
             Surface(
-                onClick = { tab = t },
+                // OK: into the tab's row (it only re-picked the tab already showing).
+                onClick = { tab = t; focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) },
                 modifier = (if (t == tab) Modifier.focusRequester(tabFocus) else Modifier).onFocusChanged { if (it.isFocused) { tab = t; onHover(null) } }.focusProperties { canFocus = free },
                 scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
                 shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
@@ -1996,13 +2086,13 @@ private fun DetailTabs(
     Spacer(Modifier.height(12.dp))
     val rowPadding = PaddingValues(end = 40.dp)
     when (tab) {
-        DetailTab.Cast -> androidx.compose.foundation.lazy.LazyRow(contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        DetailTab.Cast -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(d.cast, key = { "${it.id}-${it.name}" }) { c -> CastCard(c, free) { onPerson(c) } }
         }
-        DetailTab.Reviews -> androidx.compose.foundation.lazy.LazyRow(contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        DetailTab.Reviews -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(d.reviews.size) { i -> ReviewCard(d.reviews[i], free) { onReview(d.reviews[i]) } }
         }
-        DetailTab.Similar, DetailTab.Collection -> androidx.compose.foundation.lazy.LazyRow(contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        DetailTab.Similar, DetailTab.Collection -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             // The film you're on stays out of its own collection row.
             items(if (tab == DetailTab.Collection) d.collection.filter { it.tmdbId != d.item.tmdbId } else d.similar, key = { it.key }) { m ->
                 Column(Modifier.width(86.dp)) {
@@ -2114,22 +2204,31 @@ private fun ReviewDialog(r: io.github.petebutty.viewarr.data.media.Review, onClo
     }
 }
 
-/** Other sources: play from one particular place instead of the automatic choice. */
+/**
+ * Other sources: play from one particular place instead of the automatic choice. Each version on your servers is
+ * listed with what it is (4K · Dolby Vision · Atmos 7.1 · 58 GB), the best for this TV first and marked.
+ */
 @Composable
 private fun SourcesDialog(ui: DetailUi, vm: MediaViewModel, onSearch: () -> Unit, onDone: () -> Unit) {
     val first = remember { FocusRequester() }
-    LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
+    val ranked by produceState<List<MediaViewModel.RankedCopy>?>(null, ui.copies) { value = vm.rankedCopies(ui.copies.orEmpty()) }
+    LaunchedEffect(ranked != null) { if (ranked != null) { awaitFrame(); runCatching { first.requestFocus() } } }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDone) {
         Column(
             // Opened by holding OK: letting go of that OK mustn't pick the first source.
-            Modifier.width(560.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp).ignoreHeldOk(),
+            Modifier.width(680.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp).ignoreHeldOk(),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text("Play from", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 8.dp))
             var firstUsed = false
             fun mod(): Modifier = if (!firstUsed) { firstUsed = true; Modifier.focusRequester(first) } else Modifier
-            ui.copies.orEmpty().filter { it.ref != null || it.source == io.github.petebutty.viewarr.data.media.PROVIDER }.forEach { c ->
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = vm.copyLabel(c), selected = false, onClick = { onDone(); vm.playCopy(c) }, modifier = mod())
+            if (ranked == null) Text("Checking your copies…", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 6.dp))
+            ranked.orEmpty().forEach { r ->
+                io.github.petebutty.viewarr.ui.common.MenuItem(
+                    text = (if (r.best) "★ " else "") + vm.copyLabel(r.copy), selected = false,
+                    trailing = if (r.best) "Best for this TV" else r.note, dim = r.note != null && !r.best,
+                    onClick = { onDone(); vm.playCopy(r.copy) }, modifier = mod(),
+                )
             }
             if (ui.hasAddons) io.github.petebutty.viewarr.ui.common.MenuItem(text = "Search addons", selected = false, onClick = onSearch, modifier = mod())
             io.github.petebutty.viewarr.ui.common.MenuItem(text = "Cancel", selected = false, onClick = onDone, modifier = mod())

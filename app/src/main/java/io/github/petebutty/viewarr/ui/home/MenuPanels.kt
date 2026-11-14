@@ -238,9 +238,9 @@ internal fun MenuListEditor(media: MediaViewModel, type: MediaType, startAt: Str
         itemsIndexed(libs, key = { _, it -> "l-" + it.first.key }) { i, (lib, hidden) ->
             val carried = carrying == lib.key
             fun move(by: Int) {
-                val j = i + by
-                if (j !in on.indices) return
-                media.setLibraryOrder(on.toMutableList().apply { add(j, removeAt(i)) } + off)
+                // By its key in the latest order (a held key comes faster than the list redraws).
+                val keys = io.github.petebutty.viewarr.ui.common.PendingOrder.move("libs:$type", on + off, lib.key, by, on.size) ?: return
+                media.setLibraryOrder(keys)
                 follow = lib.key
             }
             MenuItem(
@@ -317,16 +317,28 @@ internal fun LibraryMenuPanel(
     onHover: (MediaType, io.github.petebutty.viewarr.data.media.MediaLibrary) -> Unit,
     onOpen: (MediaType, io.github.petebutty.viewarr.data.media.MediaLibrary) -> Unit,
     onMusic: () -> Unit,
+    /** The library open on the page (Left from it lands here, on it); null: the first. */
+    current: String? = null,
 ) {
     val scope = androidx.compose.runtime.rememberCoroutineScope()
     var hoverJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    val target = current?.takeIf { k -> libraries.any { it.second.key == k } }
     fun hover(t: MediaType, lib: io.github.petebutty.viewarr.data.media.MediaLibrary) {
         hoverJob?.cancel(); hoverJob = scope.launch { kotlinx.coroutines.delay(450); onHover(t, lib) }
     }
     val byServer = libraries.groupBy { it.second.source }
+    // The highlight on "Loading your libraries…" when they arrive: onto the first one (the row it was on goes, and the
+    // highlight went with it, so the next press only brought it back).
+    var onLoading by remember { mutableStateOf(false) }
+    val loaded = libraries.isNotEmpty() || musicSources.isNotEmpty()
+    // (Read as the list changes, before the row is removed and its focus with it.)
+    val refocus = remember(loaded) { loaded && onLoading }
+    androidx.compose.runtime.LaunchedEffect(refocus) {
+        if (refocus) { androidx.compose.runtime.withFrameNanos { }; runCatching { focusRequester.requestFocus() } }
+    }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(1.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-        if (libraries.isEmpty() && musicSources.isEmpty()) item(key = "none") {
-            MenuItem(text = "Loading your libraries…", selected = false, dim = true, onClick = {}, modifier = Modifier.focusRequester(focusRequester))
+        if (!loaded) item(key = "none") {
+            MenuItem(text = "Loading your libraries…", selected = false, dim = true, onClick = {}, modifier = Modifier.focusRequester(focusRequester).onFocusChanged { onLoading = it.isFocused })
         }
         var firstDone = false
         byServer.entries.forEachIndexed { gi, (server, ls) ->
@@ -336,8 +348,9 @@ internal fun LibraryMenuPanel(
                 val (t, lib) = sorted[i]
                 val go = { hoverJob?.cancel(); onOpen(t, lib) }
                 MenuItem(
-                    text = lib.title, trailing = if (t == MediaType.Movie) "Films" else "Shows", selected = false, onClick = go,
-                    modifier = (if (gi == 0 && i == 0) Modifier.focusRequester(focusRequester) else Modifier)
+                    // (Playlists hold films and shows together.)
+                    text = lib.title, trailing = if (lib.kind == io.github.petebutty.viewarr.data.media.LibKind.Playlists) null else if (t == MediaType.Movie) "Films" else "Shows", selected = false, onClick = go,
+                    modifier = (if ((target == null && gi == 0 && i == 0) || lib.key == target) Modifier.focusRequester(focusRequester) else Modifier)
                         .onFocusChanged { if (it.isFocused) hover(t, lib) }.rightDoes(go),
                 )
             }
@@ -366,10 +379,16 @@ internal fun MusicMenuPanel(focusRequester: FocusRequester, onOpenPage: () -> Un
     val detail by music.detail.collectAsStateWithLifecycle()
     // Entering the list lands on the page you're on (Favourites, Artists…), else Music home.
     val onKind = browse?.kind?.takeIf { detail == null }
+    // The highlight on "Connect music" while it's still checking: onto Music home once it's connected (the row goes).
+    var onSetup by remember { mutableStateOf(false) }
+    val refocus = remember(connected) { connected == true && onSetup }
+    androidx.compose.runtime.LaunchedEffect(refocus) {
+        if (refocus) { androidx.compose.runtime.withFrameNanos { }; runCatching { focusRequester.requestFocus() } }
+    }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(1.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
         if (connected != true) {
             item(key = "setup") {
-                MenuItem(text = "Connect music", selected = false, onClick = onOpenPage, modifier = Modifier.focusRequester(focusRequester).rightDoes(onOpenPage))
+                MenuItem(text = "Connect music", selected = false, onClick = onOpenPage, modifier = Modifier.focusRequester(focusRequester).onFocusChanged { onSetup = it.isFocused }.rightDoes(onOpenPage))
             }
             item(key = "setup-text") {
                 Text("Navidrome, or Plex, Jellyfin or Emby with a music library (Settings → Accounts & sources).", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(12.dp))
@@ -424,7 +443,11 @@ internal fun RecordingsPanel(focusRequester: FocusRequester, channelName: (Int) 
     val time = java.time.format.DateTimeFormatter.ofPattern("EEE ", java.util.Locale.UK).let { w -> java.time.format.DateTimeFormatterBuilder().append(w).append(io.github.petebutty.viewarr.ui.theme.Dates.time).toFormatter(java.util.Locale.UK) }
     fun at(ms: Long, f: java.time.format.DateTimeFormatter) = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).format(f)
     if (recorded.isEmpty() && upcoming.isEmpty()) {
-        Text("Press OK to see what's recorded and scheduled on your Dispatcharr server.", fontSize = 15.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(12.dp))
+        // (Something to land on: Left on the Recordings entry had nowhere to go and did nothing.)
+        Column {
+            MenuItem(text = "All recordings", selected = false, onClick = onOpenPage, modifier = Modifier.focusRequester(focusRequester).rightDoes(onOpenPage))
+            Text("Nothing recorded or scheduled yet. Record from the TV guide or the info bar.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(12.dp))
+        }
         return
     }
     // Two lines each: the whole title (no date squeezing it), then when, which channel and how long.
@@ -535,8 +558,10 @@ internal fun SearchMenuPanel(onSearch: (String?) -> Unit, onVoice: () -> Unit, f
     val ctx = androidx.compose.ui.platform.LocalContext.current
     LaunchedEffect(Unit) { io.github.petebutty.viewarr.ui.common.RecentSearches.load(ctx) }
     val recent = io.github.petebutty.viewarr.ui.common.RecentSearches.items
-    Column(Modifier.focusRequester(focus).focusGroup(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        MenuItem(text = "Search…", selected = false, onClick = { onSearch(null) },
+    // (The highlight's target is the first item, not the column: a request on a group failed while the list was still
+    // folded away, so Right on Search opened the search page instead of this list.)
+    Column(Modifier.focusGroup(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        MenuItem(text = "Search…", selected = false, onClick = { onSearch(null) }, modifier = Modifier.focusRequester(focus),
             leading = { androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Search, null, modifier = Modifier.size(18.dp), tint = androidx.tv.material3.LocalContentColor.current) })
         MenuItem(text = "Voice search", selected = false, onClick = onVoice,
             leading = { androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Mic, null, modifier = Modifier.size(18.dp), tint = androidx.tv.material3.LocalContentColor.current) })
@@ -547,7 +572,8 @@ internal fun SearchMenuPanel(onSearch: (String?) -> Unit, onVoice: () -> Unit, f
         if (recent.isNotEmpty()) {
             MenuGroupLabel("Recent searches")
             recent.toList().forEach { q -> MenuItem(text = q, selected = false, onClick = { onSearch(q) }) }
-            MenuItem(text = "Clear recent searches", selected = false, dim = true, onClick = { io.github.petebutty.viewarr.ui.common.RecentSearches.clear(ctx) })
+            // (Its row goes with the list: the highlight back on Search… rather than lost.)
+            MenuItem(text = "Clear recent searches", selected = false, dim = true, onClick = { io.github.petebutty.viewarr.ui.common.RecentSearches.clear(ctx); runCatching { focus.requestFocus() } })
         }
     }
 }

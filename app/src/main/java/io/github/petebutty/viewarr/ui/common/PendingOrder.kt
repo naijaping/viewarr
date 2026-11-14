@@ -16,4 +16,17 @@ object PendingOrder {
     }
 
     fun set(key: String, ids: List<String>) { map[key] = ids to System.currentTimeMillis() }
+
+    /**
+     * [id] moved [by] places, from the latest order of [current] (the list as drawn, which a held key can outrun),
+     * staying within the first [limit] entries (the ones switched on). Null if it can't go further.
+     */
+    fun move(key: String, current: List<String>, id: String, by: Int, limit: Int = current.size): List<String>? {
+        val ids = get(key, current).takeIf { it.size == current.size && it.toSet() == current.toSet() }.orEmpty().ifEmpty { current }.toMutableList()
+        val i = ids.indexOf(id); val j = i + by
+        if (i < 0 || i >= limit || j !in 0 until limit) return null
+        ids.add(j, ids.removeAt(i))
+        set(key, ids)
+        return ids
+    }
 }

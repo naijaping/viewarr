@@ -232,8 +232,6 @@ object UiOpts {
     const val MENU_EDGE = "menu_edge"
     /** A menu list's glass faintly tinted in its section's colour. */
     const val MENU_TINT = "menu_tint"
-    /** In a section's list, the main list kept as a narrow column of icons (the section you're in lit). */
-    const val MENU_RAIL = "menu_rail"
     /** A red "● LIVE" on the channel groups' All channels. */
     const val MENU_LIVE_MARK = "menu_live_mark"
     /** Live TV's channel groups: the "All channels" group shown, or hidden (the guide then opens on the first group). */
@@ -345,13 +343,12 @@ object UiOpts {
         MENU_HEADINGS to listOf("Heading", "Off", "Path (Live TV › Channel groups)"),
         MENU_EDGE to listOf("Off", "On"),
         MENU_TINT to listOf("Off", "On"),
-        MENU_RAIL to listOf("Off", "On"),
         MENU_LIVE_MARK to listOf("Off", "On"),
         GROUP_ALL to listOf("Shown", "Hidden"),
         LIST_SCROLL to listOf("Instant", "Smooth"),
         INFOBAR_RECENT to listOf("On", "Off"),
         FILM_TIME_RIGHT to listOf("Time left (15:05 left)", "Ends at (ends at 21:43)", "Both (15:05 left · ends 21:43)"),
-        INFOBAR_STYLE to listOf("Glass", "Square glass", "Pill", "Fade", "Full-width bar", "Minimal"),
+        INFOBAR_STYLE to listOf("Glass", "Square glass", "Pill", "Fade", "Full-width bar", "Minimal", "Faded glass", "Feathered glass", "Side fade", "Outline", "Corner card"),
         INFOBAR_CORNERS to listOf("Medium", "Small", "Large"),
         LIVE_UPDOWN to listOf("Change channel", "Browse in the info bar, OK changes", "Browse in the info bar, changes when you stop"),
         MENU_HEAD_SOURCE to listOf("On", "Off"),

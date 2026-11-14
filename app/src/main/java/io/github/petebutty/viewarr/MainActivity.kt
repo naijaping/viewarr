@@ -31,17 +31,8 @@ class MainActivity : ComponentActivity() {
                 if (event.action == android.view.KeyEvent.ACTION_UP) host.swallowBack = false
                 return true
             }
-            if (pipHold) {
-                if (event.action == android.view.KeyEvent.ACTION_UP) pipHold = false
-                return true
-            }
-            if (host.mini && event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount > 0) {
-                pipHold = true
-                host.expand()
-                // This press is swallowed here, so the player mustn't also eat the next Back.
-                host.eatBackRelease = false
-                return true
-            }
+            // (Holding Back with the film in the corner used to bring it full screen here. Since 0.28.3 a hold closes it
+            // and a tap enlarges it, timed in HomeState.onRootKey: this fought that, flashing it full screen first.)
         }
         return super.dispatchKeyEvent(event)
     }

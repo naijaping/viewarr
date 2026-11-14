@@ -86,8 +86,10 @@ internal fun MenuOverlay(
     onBackOut: () -> Unit = onClose,
     /** Reopened after Accounts & sources: straight back on Settings, on its first item. */
     onSettings: Boolean = false,
-    /** Open on the main list (Live TV, Movies…), whatever "Menu opens on" says. */
+    /** Open on the main list (Live TV, Movies…). (It always does now, unless [onGroups].) */
     onMain: Boolean = false,
+    /** Open on Live TV's channel groups (the remote's "Channel groups menu" button). */
+    onGroups: Boolean = false,
     /** Open with My Library highlighted (Left from a library's page). */
     onLibrary: Boolean = false,
     /** Search panel: search for this (null: an empty search), or by voice. */
@@ -204,8 +206,10 @@ internal fun MenuOverlay(
         // (From the full-screen channel list: the channel groups alone beside it, whichever page is behind; Left again
         // brings the main list.)
         // (From the guide: always the channel groups first, whatever "Menu opens on" says; Left again: the main list.)
-        mutableStateOf(onMain || onSettings || channelsPanel == null && !((page == Page.Tv && session != null) || (remote.menuOpensOn == MenuOpensOn.PageList &&
-            (page == Page.Movies || page == Page.Shows || page == Page.Music))))
+        // (Since 0.28.3 every page opens the menu on the main list, on that page's entry, except the guide: its channel
+        // groups first, Left again the main list. Left on an entry opens its own list. "Menu opens on" is gone.)
+        // (Left from a library opened from My Library: My Library's list, on that library.)
+        mutableStateOf(!onLibrary && (onMain || onSettings || channelsPanel == null && !((onGroups || page == Page.Tv) && session != null)))
     }
     // Back from Users & profiles / the PIN dialog (drawn over the menu): Settings stays the open list, so the row
     // they came from can take focus again (focus otherwise fell to the top of the menu).
@@ -251,33 +255,60 @@ internal fun MenuOverlay(
         runCatching {
             when {
                 onSettings -> { showMain = true; awaitFrame(); settingsFirst.requestFocus() }
-                onMain -> navFocus.getValue(section).requestFocus()
+                // Left from a library opened from My Library: My Library's list, on that library (it went to the main list).
+                onLibrary -> if (runCatching { recentFocus.requestFocus() }.isFailure) {
+                    awaitFrame(); awaitFrame()
+                    if (runCatching { recentFocus.requestFocus() }.isFailure) { showMain = true; awaitFrame(); navFocus.getValue(Section.Library).requestFocus() }
+                }
+                // (The page's own entry switched off in the menu: Live TV, never nothing highlighted.)
+                onMain -> if (runCatching { navFocus.getValue(section).requestFocus() }.isFailure) navFocus.getValue(Section.Tv).requestFocus()
                 channelsPanel != null -> groupsFocus.requestFocus()
-                // From the guide: the channel groups (on the group being shown) whatever "Menu opens on" says; Left
-                // again reaches the main list.
-                // (The group shown may be one hidden from the list, which then has no highlight to take: the main list.)
-                page == Page.Tv && session != null -> if (runCatching { groupsFocus.requestFocus() }.isFailure) revealMain()
-                remote.menuOpensOn != MenuOpensOn.PageList -> navFocus.getValue(section).requestFocus()
-                // Music, Movies, Shows, Recordings: that page's own list beside the main one (Left again reaches it).
-                page == Page.Music || page == Page.Movies || page == Page.Shows || (page == Page.Recordings && recordingsCount > 0) ->
-                    if (runCatching { recentFocus.requestFocus() }.isFailure) { awaitFrame(); awaitFrame(); runCatching { recentFocus.requestFocus() }.onFailure { revealMain() } }
-                else -> navFocus.getValue(section).requestFocus()
+                // The guide (and the remote's "Channel groups menu"): the channel groups; Left again, the main list.
+                (onGroups || page == Page.Tv) && session != null -> if (runCatching { groupsFocus.requestFocus() }.isFailure) revealMain()
+                // Every other page: the main list, on its entry (Left there opens that entry's own list).
+                else -> if (runCatching { navFocus.getValue(section).requestFocus() }.isFailure) navFocus.getValue(Section.Tv).requestFocus()
             }
         }
     }
+    val moviesMedia: io.github.petebutty.viewarr.ui.media.MediaViewModel = androidx.hilt.navigation.compose.hiltViewModel(key = "media-Movie")
+    val showsMedia: io.github.petebutty.viewarr.ui.media.MediaViewModel = androidx.hilt.navigation.compose.hiltViewModel(key = "media-Show")
     fun enter(s: Section) {
         when (s) {
             // Into the channel groups: on the guide the main list slides back out (Left brings it again).
             Section.Tv -> runCatching { groupsFocus.requestFocus() }
             Section.Settings -> runCatching { settingsFirst.requestFocus() }
-            Section.Movies -> onOpenPage(Page.Movies)
-            Section.Shows -> onOpenPage(Page.Shows)
+            // Movies / Shows themselves: their own rows, not a library left open from My Library (or a service).
+            Section.Movies -> { moviesMedia.openLibrary(null, MediaType.Movie); moviesMedia.jumpTo(null); onOpenPage(Page.Movies) }
+            Section.Shows -> { showsMedia.openLibrary(null, MediaType.Show); showsMedia.jumpTo(null); onOpenPage(Page.Shows) }
             // My Library: into its list of libraries (moving through them shows each behind).
             Section.Library -> runCatching { recentFocus.requestFocus() }
             Section.Recordings -> onOpenPage(Page.Recordings)
             Section.Music -> onOpenPage(Page.Music)
             Section.Search -> onOpenPage(Page.Search)
             else -> Unit
+        }
+    }
+    /** Right / OK on a main entry: into its page's rows (Live TV: the guide). My Library and Settings, which have no
+     *  page of their own: their list. */
+    fun openEntryPage(s: Section) {
+        hoverJob?.cancel()
+        when (s) {
+            Section.Tv -> onOpenPage(Page.Tv)
+            Section.Music -> onOpenPage(Page.Music)
+            else -> enter(s)
+        }
+    }
+    /** Left on a main entry: its own list beside the menu. */
+    fun intoList(s: Section) {
+        val target = when (s) {
+            Section.Tv -> groupsFocus
+            Section.Settings -> settingsFirst
+            Section.Movies, Section.Shows, Section.Library, Section.Music, Section.Recordings, Section.Search -> recentFocus
+            else -> return
+        }
+        if (runCatching { target.requestFocus() }.isFailure) {
+            // (The list not drawn yet, e.g. just switched to: a frame or two later.)
+            menuScope.launch { awaitFrame(); awaitFrame(); runCatching { target.requestFocus() } }
         }
     }
     // Back steps out one level: from the right-hand list to the main list, then closes the menu.
@@ -291,8 +322,6 @@ internal fun MenuOverlay(
     // guide's channel groups always did, so the menu doesn't cover half the screen. Left brings it back.
     // (Not Settings: its pages open from the Settings entry in the main list.)
     LaunchedEffect(subListFocused) { forceMain = false; if (subListFocused && section != Section.Settings) showMain = false }
-    val moviesMedia: io.github.petebutty.viewarr.ui.media.MediaViewModel = androidx.hilt.navigation.compose.hiltViewModel(key = "media-Movie")
-    val showsMedia: io.github.petebutty.viewarr.ui.media.MediaViewModel = androidx.hilt.navigation.compose.hiltViewModel(key = "media-Show")
     // Every library on your servers, films and shows (Left on a library in Movies' / Shows' list lists them all).
     LaunchedEffect(Unit) { moviesMedia.loadLibraries(MediaType.Movie); showsMedia.loadLibraries(MediaType.Show) }
     val movieLibs by moviesMedia.libraries.collectAsStateWithLifecycle()
@@ -308,6 +337,8 @@ internal fun MenuOverlay(
         menuScope.launch { awaitFrame(); awaitFrame(); runCatching { navFocus.getValue(Section.Tv).requestFocus() } }
     }
     BackHandler {
+        // (A page switch still waiting from the highlight resting on an entry mustn't land after Back.)
+        hoverJob?.cancel()
         when {
             carryingRow != null -> carryingRow = null
             editingMain -> endEditMain()
@@ -318,11 +349,9 @@ internal fun MenuOverlay(
             channelsPanel != null -> onClose()
             // Opened by Back in the guide (as TiviMate): Back from the groups asks to exit.
             backOut && section == Section.Tv -> onBackOut()
-            // A section's list: the main list slides back in.
-            subListFocused -> revealMain()
-            // Further down the main list: Back goes to Live TV first (not the very top: Edit menus stays tucked away
-            // above it); Back again closes the menu.
-            !liveTvFocused && runCatching { navFocus.getValue(Section.Tv).requestFocus() }.isSuccess -> Unit
+            // (A section's list: Back closes the menu too, in one press; Left is the way back to the main list.)
+            // The main list: Back closes the menu, on the page you're on. (It used to go to Live TV first, which also
+            // switched the page behind to the guide: two presses, and the wrong page.)
             else -> if (backOut) onBackOut() else onClose()
         }
     }
@@ -339,10 +368,17 @@ internal fun MenuOverlay(
         hoverJob?.cancel()
         hoverJob = menuScope.launch { delay(300); onService(name, null, false) }
     }
-    fun hoverPage(s: Section) {
+    fun hoverPage(s: Section, fresh: Boolean = false) {
         val p = when (s) { Section.Tv -> Page.Tv; Section.Movies -> Page.Movies; Section.Shows -> Page.Shows; Section.Music -> Page.Music; Section.Recordings -> Page.Recordings; else -> null }
         hoverJob?.cancel()
-        if (p != null) hoverJob = menuScope.launch { delay(300); onHoverPage(p) }
+        if (p != null) hoverJob = menuScope.launch {
+            delay(300)
+            // Arriving on Movies / Shows from another entry (e.g. My Library): their own rows, not a library left
+            // open there. (Coming back Left from their own list keeps the library you were in.)
+            if (fresh && s == Section.Movies && moviesMedia.browse.value != null) { moviesMedia.openLibrary(null, MediaType.Movie); moviesMedia.jumpTo(null) }
+            if (fresh && s == Section.Shows && showsMedia.browse.value != null) { showsMedia.openLibrary(null, MediaType.Show); showsMedia.jumpTo(null) }
+            onHoverPage(p)
+        }
     }
     // (The guide behind follows too, as TiviMate: moving through the groups shows each one's channels there.)
     // Only once you've stopped on a group: each switch loads that group's channels and programmes, and doing it for
@@ -376,34 +412,6 @@ internal fun MenuOverlay(
         // (Settings too: highlighting it no longer pulls its list out; OK or Right opens it.)
         val single = !editingMain && channelsPanel == null
         val mainShown = showMain && (forceMain || !(subListFocused && single))
-        // Icon column: in a section's list the main menu stays as a narrow column of icons (not focusable), the one
-        // you're in lit, so it's always clear which section's list this is.
-        if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MENU_RAIL) == 1 && single && !mainShown && !fullPage) {
-            Column(
-                Modifier.width(52.dp).fillMaxHeight().padding(top = 92.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                val railSections = buildList {
-                    add(Section.Tv)
-                    if (!AppColors.palette.hideMedia && AppColors.palette.shows("menu:Movies")) add(Section.Movies)
-                    if (!AppColors.palette.hideMedia && AppColors.palette.shows("menu:Shows")) add(Section.Shows)
-                    if (!AppColors.palette.hideMedia && AppColors.palette.shows("menu:Library")) add(Section.Library)
-                    if (musicMenuOn && AppColors.palette.shows("menu:Music")) add(Section.Music)
-                    if (AppColors.palette.shows("menu:Recordings")) add(Section.Recordings)
-                    if (AppColors.palette.shows("menu:Search")) add(Section.Search)
-                    add(Section.Settings)
-                }
-                railSections.forEach { rs ->
-                    val on = rs == section
-                    Box(
-                        Modifier.size(38.dp).background(if (on) sectionColour(rs).copy(alpha = 0.85f) else Color.Transparent, androidx.compose.foundation.shape.RoundedCornerShape(10.dp)),
-                        contentAlignment = Alignment.Center,
-                    ) { Text(sectionIcon(rs), fontSize = 18.sp, color = if (on) Color.White else AppColors.TextSecondary) }
-                }
-            }
-            Box(Modifier.width(1.dp).fillMaxHeight().background(divider))
-        }
         io.github.petebutty.viewarr.ui.common.GrowFromLeftToggle(mainShown, 230.dp) { Box(Modifier.width(230.dp).fillMaxHeight()) { Column(
             Modifier
                 .width(230.dp)
@@ -430,7 +438,7 @@ internal fun MenuOverlay(
             val rightHint = when {
                 serviceOn != null -> "Right ›  go into " + serviceOn
                 else -> when (section) {
-                    Section.Tv -> "Right ›  channel groups"
+                    Section.Tv -> "Right ›  TV guide  ·  ‹ channel groups"
                     Section.Movies -> "Right ›  go into Movies"
                     Section.Shows -> "Right ›  go into Shows"
                     Section.Library -> "Right ›  your libraries"
@@ -472,17 +480,20 @@ internal fun MenuOverlay(
                         dim = !s.available,
                         onClick = {
                             section = s
-                            enter(s)
+                            openEntryPage(s)
                         },
                         // Hold OK: edit the menu here (not Live TV or Settings, which always stay).
                         onLongClick = if (s == Section.Tv || s == Section.Settings) null else ({ editingMain = true; carryingMain = null; mainFollow = s.name }),
                         modifier = Modifier
                             .focusRequester(navFocus.getValue(s))
-                            // Up from Live TV: Edit menus (the folded-away channel groups were nearer and took it).
+                            // Up from Live TV: the gear (Settings) beside Edit menus (the folded-away channel groups were
+                            // nearer and took it); Edit menus when the gear isn't there (while editing).
                             .onPreviewKeyEvent { e ->
-                                if (s == Section.Tv && e.type == KeyEventType.KeyDown && e.key == Key.DirectionUp) runCatching { editMenusFocus.requestFocus() }.isSuccess else false
+                                if (s == Section.Tv && e.type == KeyEventType.KeyDown && e.key == Key.DirectionUp)
+                                    runCatching { gearFocus.requestFocus() }.isSuccess || runCatching { editMenusFocus.requestFocus() }.isSuccess
+                                else false
                             }
-                            .onFocusChanged { if (s == Section.Tv) liveTvFocused = it.isFocused; if (it.isFocused && returnTo == null) { section = s; serviceOn = null; hoverPage(s) } }
+                            .onFocusChanged { if (s == Section.Tv) liveTvFocused = it.isFocused; if (it.isFocused && returnTo == null) { val fresh = section != s; section = s; serviceOn = null; hoverPage(s, fresh) } }
                             .onPreviewKeyEvent { e ->
                                 // Right does the same as OK: open what's inside this entry.
                                 if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight && !(s == Section.Settings && (showAppearance || showRemote || showNavigation || showSports || showPlayback || showAddons || showUpdates || showAbout || showHomeRows || showPlugins || showLive || showTrouble || showSearchSettings))) {
@@ -491,12 +502,12 @@ internal fun MenuOverlay(
                                     // (Movies / Shows always have their list: home, libraries, catalogues.)
                                     // Movies, Shows, Recordings: straight into the page, as a service does (their lists are where
                                     // Left from that page lands). Music and Search: into their list.
-                                    if (s == Section.Music || s == Section.Search) {
-                                        if (runCatching { recentFocus.requestFocus() }.isFailure) {
-                                            // (Its list not there to go into, e.g. still loading: its page instead, never nothing.)
-                                            menuScope.launch { awaitFrame(); awaitFrame(); if (runCatching { recentFocus.requestFocus() }.isFailure) enter(s) }
-                                        }
-                                    } else enter(s)
+                                    openEntryPage(s)
+                                    true
+                                } else if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && !editingMain) {
+                                    // Left: this entry's own list (channel groups, Movies' rows and libraries, Music's
+                                    // albums and artists, recordings, Settings' pages).
+                                    intoList(s)
                                     true
                                 } else false
                             },
@@ -514,14 +525,15 @@ internal fun MenuOverlay(
                             section = Section.Settings; serviceOn = null; settingsFromGear = true
                             menuScope.launch { awaitFrame(); awaitFrame(); runCatching { settingsFirst.requestFocus() } }
                         },
-                        modifier = Modifier.focusRequester(gearFocus),
+                        modifier = Modifier.focusRequester(gearFocus).onPreviewKeyEvent { e -> e.key == Key.DirectionUp },
                     )
                 }
                 MenuItem(
                     text = if (editingMain) "✓  Done editing" else "✎  Edit menus",
                     selected = editingMain, dim = !editingMain,
                     onClick = { if (editingMain) endEditMain() else { editingMain = true; carryingMain = null; mainFollow = null } },
-                    modifier = Modifier.weight(1f).focusRequester(editMenusFocus),
+                    // (Up from the top of the menu stays here: it fell into the folded-away channel groups.)
+                    modifier = Modifier.weight(1f).focusRequester(editMenusFocus).onPreviewKeyEvent { e -> e.key == Key.DirectionUp },
                 )
             }
             sectionItem(Section.Tv)
@@ -561,7 +573,9 @@ internal fun MenuOverlay(
                                         true
                                     }
                                     carryingMain == id && (e.key == Key.DirectionUp || e.key == Key.DirectionDown) -> {
-                                        val list = ordered.toMutableList()
+                                        // From the latest order, not the one last drawn (a held Up / Down outruns the redraw).
+                                        val fresh = io.github.petebutty.viewarr.ui.common.PendingOrder.get("menu", AppColors.palette.menuOrder)
+                                        val list = movable.withIndex().sortedBy { (k, m) -> fresh.indexOf(m).let { if (it < 0) fresh.size + k else it } }.map { it.value }.toMutableList()
                                         val i = list.indexOf(id); val j = i + if (e.key == Key.DirectionUp) -1 else 1
                                         if (j in list.indices) {
                                             list[i] = list[j]; list[j] = id; io.github.petebutty.viewarr.ui.common.PendingOrder.set("menu", list); appearanceVm.setMenuOrder(list); mainFollow = null; mainFollow = id
@@ -720,11 +734,13 @@ internal fun MenuOverlay(
                                     if (carryingRow == row.id) carryingRow = null
                                     else { media.setRowHidden(row.id, !off); menuScope.launch { delay(150); onService(svc.first, null, false) } }
                                 },
+                                // Hold OK (or Right): pick the row up to move it with Up / Down (rows could never be moved).
+                                onLongClick = { carryingRow = if (carryingRow == row.id) null else row.id },
                                 modifier = (if (i == 0) Modifier.focusRequester(serviceRowsFocus) else Modifier)
                                     .onPreviewKeyEvent { e ->
                                         when {
                                             e.type != KeyEventType.KeyDown -> false
-                                            e.key == Key.DirectionRight -> true
+                                            e.key == Key.DirectionRight -> { carryingRow = if (carryingRow == row.id) null else row.id; true }
                                             carryingRow == row.id && (e.key == Key.DirectionUp || e.key == Key.DirectionDown) -> {
                                                 media.moveRowAmong(row.id, if (e.key == Key.DirectionUp) -1 else 1) { io.github.petebutty.viewarr.ui.player.RowSets.matches(key, it) }
                                                 menuScope.launch { delay(150); onService(svc.first, null, false) }
@@ -737,7 +753,7 @@ internal fun MenuOverlay(
                             )
                         }
                     }
-                    Text("OK: show or hide  ·  Always: New, Originals, Popular, Top rated", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, top = 10.dp))
+                    Text("OK: show or hide  ·  Hold OK: move  ·  Always: New, Originals, Popular, Top rated", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, top = 10.dp))
                 }
                 }
             } else when (section) {
@@ -838,8 +854,13 @@ internal fun MenuOverlay(
                     focusRequester = recentFocus,
                     libraries = allLibs,
                     musicSources = libMusicSources,
+                    current = (moviesMedia.browse.value ?: showsMedia.browse.value)?.let { b ->
+                        (if (b.type == MediaType.Movie) moviesMedia else showsMedia).browseParentKey ?: b.library.key
+                    },
                     onHover = { t, lib ->
-                        (if (t == MediaType.Movie) moviesMedia else showsMedia).openLibrary(lib, t)
+                        // (The library already open: left as it is, scrolled where you were, rather than reloaded.)
+                        val m = if (t == MediaType.Movie) moviesMedia else showsMedia
+                        if (m.browse.value?.library?.key != lib.key) m.openLibrary(lib, t)
                         onHoverPage(if (t == MediaType.Movie) Page.Movies else Page.Shows)
                     },
                     onOpen = { t, lib ->
@@ -1017,11 +1038,30 @@ internal fun GroupList(sourcesVm: io.github.petebutty.viewarr.ui.settings.LiveSo
     }
     val state = rememberLazyListState(initialFirstVisibleItemIndex = maxOf(0, selectedIndex - 3))
     val selectedFocus = focusRequester
+    // The group shown may have no row here (hidden, Favourites emptied, All channels hidden): the highlight then lands
+    // on the first group instead of nowhere (OK / Right on Live TV did nothing).
+    val selectedShown = when (selectedId) {
+        null -> !hideAll
+        io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES -> favRow == 1
+        else -> shownGroups.any { it.id == selectedId }
+    }
+    val firstRow = when { selectedShown -> null; favRow == 1 -> "fav"; !hideAll -> "all"; else -> shownGroups.firstOrNull()?.id?.toString() }
     var moving by remember { mutableStateOf<Int?>(null) }
     // Hold OK on a group: its options (Move, Hide) open under it; the hidden ones gather at the end, folded.
     var optionsFor by remember { mutableStateOf<Int?>(null) }
     var showHidden by remember { mutableStateOf(false) }
-    androidx.activity.compose.BackHandler(enabled = moving != null || optionsFor != null) { moving = null; optionsFor = null }
+    // After Move / Hide / Show / a source switch the row that had the highlight changes or goes: the highlight is put
+    // back (on that group, else the group shown) instead of being lost.
+    val rowFocus = remember { HashMap<Int, FocusRequester>() }
+    fun rf(id: Int) = rowFocus.getOrPut(id) { FocusRequester() }
+    var refocus by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(refocus) {
+        val id = refocus ?: return@LaunchedEffect
+        awaitFrame(); awaitFrame()
+        if (id == REFOCUS_SHOWN || runCatching { rf(id).requestFocus() }.isFailure) runCatching { selectedFocus.requestFocus() }
+        refocus = null
+    }
+    androidx.activity.compose.BackHandler(enabled = moving != null || optionsFor != null) { refocus = optionsFor ?: moving; moving = null; optionsFor = null }
     // A picked-up group moving past the top or bottom: the list follows it (the highlight stays on the same group as
     // it moves, which doesn't scroll by itself, so it went off screen).
     LaunchedEffect(shownGroups.map { it.id }, moving) {
@@ -1047,7 +1087,7 @@ internal fun GroupList(sourcesVm: io.github.petebutty.viewarr.ui.settings.LiveSo
             if (sourcesOpen) items(saved.filter { it.id != active?.id }, key = { "src:" + it.id }) { s ->
                 MenuItem(
                     text = "   " + s.label, selected = false, dim = true,
-                    onClick = { sourcesOpen = false; sourcesVm.switchTo(s); onSelect(null) },
+                    onClick = { sourcesOpen = false; sourcesVm.switchTo(s); onSelect(null); refocus = REFOCUS_SHOWN },
                 )
             }
         }
@@ -1057,7 +1097,7 @@ internal fun GroupList(sourcesVm: io.github.petebutty.viewarr.ui.settings.LiveSo
                 name = "★  Favourites",
                 count = favouriteCount,
                 selected = selectedId == io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES,
-                modifier = (if (selectedId == io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES) Modifier.focusRequester(selectedFocus) else Modifier).onFocusChanged { if (it.isFocused) onHover(io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES) },
+                modifier = (if (selectedId == io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES || firstRow == "fav") Modifier.focusRequester(selectedFocus) else Modifier).onFocusChanged { if (it.isFocused) onHover(io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES) },
                 onLongClick = if (onHide != null) ({ optionsFor = if (optionsFor == io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES) null else io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES }) else null,
                 onClick = { onSelect(io.github.petebutty.viewarr.ui.guide.GuideViewModel.FAVOURITES) },
             )
@@ -1071,7 +1111,7 @@ internal fun GroupList(sourcesVm: io.github.petebutty.viewarr.ui.settings.LiveSo
                 name = "All channels" + if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MENU_LIVE_MARK) == 1) "  🔴 LIVE" else "",
                 count = allCount,
                 selected = selectedId == null,
-                modifier = (if (selectedId == null) Modifier.focusRequester(selectedFocus) else Modifier).onFocusChanged { if (it.isFocused) onHover(null) },
+                modifier = (if (selectedId == null || firstRow == "all") Modifier.focusRequester(selectedFocus) else Modifier).onFocusChanged { if (it.isFocused) onHover(null) },
                 onLongClick = if (onHide != null) ({ optionsFor = if (optionsFor == ALL_ID) null else ALL_ID }) else null,
                 onClick = { onSelect(null) },
             )
@@ -1086,7 +1126,8 @@ internal fun GroupList(sourcesVm: io.github.petebutty.viewarr.ui.settings.LiveSo
                 count = g.channelCount,
                 selected = g.id == selectedId || carried,
                 trailing = if (carried) "Moving" else null,
-                modifier = (if (g.id == selectedId) Modifier.focusRequester(selectedFocus) else Modifier)
+                modifier = (if (g.id == selectedId || firstRow == g.id.toString()) Modifier.focusRequester(selectedFocus) else Modifier)
+                    .focusRequester(rf(g.id))
                     .onFocusChanged { if (it.isFocused && moving == null) onHover(g.id) }
                     .onPreviewKeyEvent { e ->
                         if (!carried) return@onPreviewKeyEvent false
@@ -1105,9 +1146,9 @@ internal fun GroupList(sourcesVm: io.github.petebutty.viewarr.ui.settings.LiveSo
                 val moveFocus = remember { FocusRequester() }
                 LaunchedEffect(Unit) { awaitFrame(); runCatching { moveFocus.requestFocus() } }
                 if (onMove != null) MenuItem(text = "      ↕  Move", selected = false, compact = true, dim = true,
-                    onClick = { optionsFor = null; moving = g.id }, modifier = Modifier.focusRequester(moveFocus).rightIgnored())
+                    onClick = { optionsFor = null; moving = g.id; refocus = g.id }, modifier = Modifier.focusRequester(moveFocus).rightIgnored())
                 if (onHide != null) MenuItem(text = "      ✕  Hide from this list", selected = false, compact = true, dim = true,
-                    onClick = { optionsFor = null; onHide(g.name, true) }, modifier = (if (onMove == null) Modifier.focusRequester(moveFocus) else Modifier).rightIgnored())
+                    onClick = { optionsFor = null; onHide(g.name, true); refocus = REFOCUS_SHOWN }, modifier = (if (onMove == null) Modifier.focusRequester(moveFocus) else Modifier).rightIgnored())
             }
             }
         }
@@ -1126,11 +1167,14 @@ internal fun GroupList(sourcesVm: io.github.petebutty.viewarr.ui.settings.LiveSo
             }
             if (showHidden) items(hiddenGroups, key = { "hid-" + it.id }) { g ->
                 MenuItem(text = "      " + g.name, trailing = "Show", selected = false, dim = true, compact = true,
-                    onClick = { onHide(g.name, false) }, modifier = Modifier.rightIgnored())
+                    onClick = { onHide(g.name, false); refocus = g.id }, modifier = Modifier.rightIgnored())
             }
         }
     }
 }
+
+/** [GroupList]'s refocus: the group being shown (or the first), not one particular group. */
+private const val REFOCUS_SHOWN = Int.MIN_VALUE
 
 @Composable
 internal fun GroupItem(name: String, count: Int?, selected: Boolean, modifier: Modifier, trailing: String? = null, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {

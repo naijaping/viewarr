@@ -8,14 +8,15 @@ Viewarr has one menu, on the left, made of glass. Whatever is playing keeps goin
 
 The menu is see-through on every page. It slides the page and the picture aside rather than covering them.
 
-- **Left** opens the menu. In the TV guide, Left first moves back through the programmes, and opens the menu once you reach the start.
+- **Left** opens the menu from the first poster of any page. In the TV guide, Left goes back a programme; on what's on now it opens the channel groups, and Left again the main menu. **Hold Left** goes back into catch-up.
 - **Up / Down** move through the entries, and the page behind changes straight away: Live TV, Live now, Sports, Movies, Shows, your streaming services (such as Netflix or Disney+), Music and Recordings.
 - **Right** (or **OK**) goes into the highlighted entry:
   - **Live TV**: its channel groups. Moving through them changes the guide behind as you go; OK picks one and takes you into the guide.
   - **Movies** and **Shows**: their home page, with your rows tucked under **Jump to a row**.
   - **My Library**: every library on all your servers and your music; moving through them shows each behind.
   - **Recordings**, **Music** and the streaming services: straight into the page.
-- **Left** or **Back** steps back one level at a time. On the main list, Back first goes to **Live TV**, and then closes the menu.
+- **Left** on an entry opens its own list (channel groups, libraries…); **Left** again goes back to the main list.
+- **Back** closes the menu from any list, and you stay on the page you were on.
 
 Going into a list slides the one before it away, one panel at a time, as TiviMate does.
 
@@ -50,8 +51,7 @@ Only want live TV? Switch Movies, Shows and the services off in **Edit menus** o
 Live TV keeps playing in the guide's preview place while you browse Movies, Shows, a service, a library, a title's page, Recordings or Music. The details of whatever you've highlighted sit beside it, with the posters below.
 
 - Nothing playing? The highlighted title's trailer plays there instead (see **Settings → Playback → Trailers**).
-- Films and episodes use the same window. Press **Back** while a film is playing and it keeps going top left while you browse. Back on that page brings it full screen again; **Stop** ends it. See [Films & shows](FILMS-AND-SHOWS.md#the-mini-player).
-- **Hold Back** anywhere to choose **Full screen** or **Close** for the picture in the corner. With **Settings → Playback → Highlight the corner picture** on, pressing towards the window from the edge of a page highlights it too.
+- **The mini player**: press **Back** while watching live TV or a film and it keeps going top left while you browse. **Back** on the mini player brings it full screen again. **Hold Back**, full screen or mini, closes the player. See [Films & shows](FILMS-AND-SHOWS.md#the-mini-player). With **Settings → Playback → Highlight the corner picture** on, pressing towards the window from the edge of a page highlights it too.
 
 ![Movies, with the top-left window and the details beside it](screenshots/movies.png)
 
@@ -76,7 +76,6 @@ Skip intro, the next-episode countdown, reminders and every other pop-up use the
 | **TV mark on channel groups** | Off, On | A small TV mark before each channel group's name. |
 | **Colour edge** | Off, On | A thin bar down each list's edge in your highlight colour. |
 | **Colour tint** | Off, On | Each list's glass faintly tinted in its section's colour. |
-| **Icon column** | Off, On | In a section's list, the main menu stays as a narrow column of icons with the one you're in lit, instead of folding away. |
 | **LIVE mark** | Off, On | A red ● LIVE on the channel groups' **All channels**. |
 | **Left / Right hints** | On, Off | The "Right › open its list" and "‹ Left: main menu" hints. |
 
@@ -86,6 +85,6 @@ Below these, each menu entry (Live now, Sports, Movies, Shows, Music, Recordings
 
 - **Button hints**: a small pill at the bottom of the screen says what the buttons do where you are. Choose **First few times**, **Always** or **Off** in **Settings → Appearance → Menu → Button hints**.
 - **Settings explain themselves**: a line at the top of Settings describes the highlighted entry, and every section says what it covers.
-- **Settings → Menu & navigation** sets where Viewarr opens (**App opens on**), where the menu opens (**Menu opens on**), and how poster rows behave. See [Settings](SETTINGS.md#menu--navigation).
+- **Settings → Menu & navigation** sets where Viewarr opens (**App opens on**) and how poster rows behave. See [Settings](SETTINGS.md#menu--navigation).
 - **Search** pops up over any screen: hold **Menu (≡)** or use the remote's search button. See [Films & shows](FILMS-AND-SHOWS.md#search).
 - **The tour** from the first run can be seen again any time from **Settings → About → Show the tour**.

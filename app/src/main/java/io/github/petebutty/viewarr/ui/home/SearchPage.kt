@@ -360,7 +360,8 @@ internal fun SearchPage(
                         // The text box would keep the remote: Down always leaves it for the results.
                         .onPreviewKeyEvent { e ->
                             // Left in an empty box: the mic if there is one, else the menu (with text, Left moves the cursor).
-                            if (e.key == Key.DirectionLeft && query.isEmpty()) {
+                            // (Not typing, the cursor can't be seen: Left goes to the mic / the menu with text in the box too.)
+                            if (e.key == Key.DirectionLeft && (query.isEmpty() || !typing)) {
                                 // (Asked for directly: a box being typed in keeps Left for its cursor.)
                                 if (e.type == KeyEventType.KeyDown) { if (canVoice) runCatching { micFocus.requestFocus() } else onOpenMenu() }
                                 return@onPreviewKeyEvent true
