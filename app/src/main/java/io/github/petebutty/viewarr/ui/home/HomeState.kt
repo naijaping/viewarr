@@ -139,7 +139,6 @@ import io.github.petebutty.viewarr.ui.music.MusicBrowseKind
 import io.github.petebutty.viewarr.ui.music.MusicScreen
 import io.github.petebutty.viewarr.ui.music.MusicViewModel
 import io.github.petebutty.viewarr.ui.player.CardOption
-import io.github.petebutty.viewarr.ui.player.LiveCorner
 import io.github.petebutty.viewarr.ui.player.LiveShortcut
 import io.github.petebutty.viewarr.ui.player.LiveShortcuts
 import io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge
@@ -235,7 +234,6 @@ class HomeState(
     var pipHoldJob by mutableStateOf<kotlinx.coroutines.Job?>(null)
     var digitsToken by mutableLongStateOf(0L)
     var digitsMessage by mutableStateOf<String?>(null)
-    var liveCorner by mutableStateOf(false)
     var livePreview by mutableStateOf(false)
     var sportsOpen by mutableStateOf(false)
     var liveBehind by mutableStateOf(false)
@@ -562,8 +560,6 @@ class HomeState(
         if (hs.liveBehind && playing != null) { hs.liveBehind = false; hs.page = Page.Tv; hs.fullscreen = true; showBanner(); return true }
         // The channel in the guide's preview place: Back is the channel full screen (as everywhere: Back maximises).
         if (hs.livePreview && playing != null && hs.page != Page.Tv) { hs.livePreview = false; hs.page = Page.Tv; hs.fullscreen = true; showBanner(); return true }
-        // The channel still playing in the corner: Back takes it full screen again. (Otherwise Back is the page's own.)
-        if (hs.liveCorner && playing != null && hs.page != Page.Tv && goLive()) return true
         return false
     }
 
@@ -789,8 +785,7 @@ class HomeState(
         // Hold Back with a picture in the corner (a film, or live TV over another page): its menu, Full screen /
         // Close picture (before the guide's own hold-Back). A hold is timed here too (some remotes send no
         // repeats); a tap is an ordinary Back.
-        val cornerUp = (VodHost.active && VodHost.mini) ||
-            (hs.liveCorner && playing != null && hs.page != Page.Tv)
+        val cornerUp = VodHost.active && VodHost.mini
         // A picture in the corner (a film, or live TV over another page): Back brings it full screen, hold Back closes
         // it, whatever page is open (as on the players themselves: Back shrinks, hold Back stops). The menu, search
         // and dialogs over the page take their own Back first.
@@ -800,7 +795,7 @@ class HomeState(
             fun closeCorner() {
                 hs.pipHoldJob?.cancel(); hs.pipHoldJob = null
                 hs.pipBackHeld = true
-                if (VodHost.active) VodHost.close() else { hs.liveCorner = false; playback.stop() }
+                if (VodHost.active) VodHost.close() else playback.stop()
             }
             when {
                 e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 && !hs.pipBackHeld -> {

@@ -155,7 +155,6 @@ data class RemoteSettings(
     val mediaBack: MediaBack = MediaBack.entries.first(),
     val menuOpensOn: MenuOpensOn = MenuOpensOn.entries.first(),
     val menuBack: MenuBack = MenuBack.entries.first(),
-    val menuLibraryRight: MenuLibraryRight = MenuLibraryRight.entries.first(),
     /** The preset last chosen (Settings → Remote buttons → Presets), for "Custom (from …)"; null: never chosen. */
     val presetBase: ControlPreset? = null,
     val liveSides: LiveSides = LiveSides.entries.first(),
@@ -205,7 +204,6 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
             mediaBack = p.read(MEDIA_BACK),
             menuOpensOn = p.read(MENU_OPENS_ON),
             menuBack = p.read(MENU_BACK),
-            menuLibraryRight = p.read(MENU_LIBRARY_RIGHT),
             liveSides = p.read(LIVE_SIDES),
             shortcutRows = p[stringPreferencesKey(SHORTCUT_ROWS)].orEmpty().split('\u001D').mapNotNull { r ->
                 val parts = r.split('\u001E'); if (parts.size != 2 || parts[0].isBlank()) null else parts[0] to parts[1].split('\u001F').filter { it.isNotBlank() }
@@ -348,7 +346,6 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
         const val MEDIA_BACK = "media_back_v2" // v2: "ask to exit" became the default (2026-11-05)
         const val MENU_OPENS_ON = "menu_opens_on"
         const val MENU_BACK = "menu_back"
-        const val MENU_LIBRARY_RIGHT = "menu_library_right"
         const val PRESET_BASE = "preset_base"
         const val LIVE_SIDES = "live_sides"
         const val SHORTCUT_ROWS = "shortcut_rows"

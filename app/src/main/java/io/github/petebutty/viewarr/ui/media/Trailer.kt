@@ -82,8 +82,7 @@ private fun trailerPlayer(context: android.content.Context, small: Boolean): Exo
 @Composable
 fun TrailerPreview(item: MediaItem?, active: Boolean, trailers: TrailerRepository, modifier: Modifier = Modifier) {
     val pb = LocalPlayback.current
-    if (pb.trailerPreview == TrailerPreview.Off || !io.github.petebutty.viewarr.ui.theme.AppColors.palette.heavyExtras ||
-        io.github.petebutty.viewarr.ui.player.LiveCorner.on) return
+    if (pb.trailerPreview == TrailerPreview.Off || !io.github.petebutty.viewarr.ui.theme.AppColors.palette.heavyExtras) return
     val context = LocalContext.current
     val player = remember { trailerPlayer(context, small = true) }
     var showing by remember { mutableStateOf(false) }

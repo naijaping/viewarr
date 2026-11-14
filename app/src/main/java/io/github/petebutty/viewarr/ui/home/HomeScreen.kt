@@ -140,7 +140,6 @@ import io.github.petebutty.viewarr.ui.music.MusicBrowseKind
 import io.github.petebutty.viewarr.ui.music.MusicScreen
 import io.github.petebutty.viewarr.ui.music.MusicViewModel
 import io.github.petebutty.viewarr.ui.player.CardOption
-import io.github.petebutty.viewarr.ui.player.LiveCorner
 import io.github.petebutty.viewarr.ui.player.LiveShortcut
 import io.github.petebutty.viewarr.ui.player.LiveShortcuts
 import io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge
@@ -395,22 +394,21 @@ fun HomeScreen(
     // its player let go (it carried on underneath, sound and all). Picking a channel afterwards starts it afresh.
     val vodOver = VodHost.active
     LaunchedEffect(vodOver) {
-        if (vodOver) { hs.fullscreen = false; hs.liveCorner = false; hs.livePreview = false; playback.close() }
+        if (vodOver) { hs.fullscreen = false; hs.livePreview = false; playback.close() }
     }
     // …and a channel started while a film is in the corner ends the film (one stream, one sound).
     LaunchedEffect(playing?.id) { if (playing != null) { VodHost.close(); MusicPlayer.stop() } }
     // Music starting ends Live TV (as a film does).
     val musicOn = MusicPlayer.active
-    LaunchedEffect(musicOn) { if (musicOn) { hs.fullscreen = false; hs.liveCorner = false; hs.livePreview = false; playback.close() } }
+    LaunchedEffect(musicOn) { if (musicOn) { hs.fullscreen = false; hs.livePreview = false; playback.close() } }
     // A full-screen trailer (title page → Trailer) ends live TV too; it was silent with the channel still playing.
     val trailerOn = FullTrailer.active
-    LaunchedEffect(trailerOn) { if (trailerOn) { hs.fullscreen = false; hs.liveCorner = false; hs.livePreview = false; playback.close() } }
+    LaunchedEffect(trailerOn) { if (trailerOn) { hs.fullscreen = false; hs.livePreview = false; playback.close() } }
     // Back on the guide (or the channel stopped): nothing in the corner any more.
-    LaunchedEffect(hs.page, playing == null) { if (hs.page == Page.Tv || playing == null) { hs.liveCorner = false; hs.livePreview = false } }
-    val cornerNow = hs.liveCorner && playing != null && hs.page != Page.Tv
-    // A picture in the corner (live TV over another page, or a film).
-    val pictureInCorner = cornerNow || (VodHost.active && VodHost.mini)
-    SideEffect { LiveCorner.on = cornerNow }
+    LaunchedEffect(hs.page, playing == null) { if (hs.page == Page.Tv || playing == null) { hs.livePreview = false } }
+    // A picture in the corner: a film in the mini player. (Live TV over another page plays in the guide's preview
+    // place instead, since 0.26.0.)
+    val pictureInCorner = VodHost.active && VodHost.mini
     // Settings → Playback → Still watching?: after hours without a button press on live TV, ask, then stop (a TV left
     // on otherwise holds a provider connection all night).
     val stillHours = AppColors.palette.stillWatchingHours
@@ -485,7 +483,6 @@ fun HomeScreen(
     val titleOpen = moviesVm.detail.collectAsStateWithLifecycle().value != null || showsVm.detail.collectAsStateWithLifecycle().value != null
     LaunchedEffect(titleOpen) {
         // (The channel in the preview place stays: the title page makes room for it.)
-        if (titleOpen && hs.liveCorner) { hs.liveCorner = false; playback.stop() }
         if (titleOpen && hs.liveBehind) { hs.liveBehind = false; playback.stop() }
     }
     // Over live TV only on Movies / Shows; nothing playing, nothing behind.
@@ -748,8 +745,7 @@ fun HomeScreen(
         // (The menu over a full-screen film: only the menu shows, the page stays out of sight underneath.)
         PagesLayer(hs, cornerArm, cornerFocus, cornerReachable, guideFocus, guidePush, mediaFocus, sportsFocus, sportsHub)
 
-        val inCorner = hs.liveCorner && hs.page != Page.Tv
-        val channel = playing.takeIf { hs.page == Page.Tv || inCorner || hs.liveBehind || hs.livePreview }
+        val channel = playing.takeIf { hs.page == Page.Tv || hs.liveBehind || hs.livePreview }
         // The live channel list: on its own over full-screen live TV, or as the menu strip's last column.
         val channelPanel: @Composable (Boolean, () -> Unit) -> Unit = { embedded, onLeft ->
             channel?.let { ch0 ->
@@ -830,7 +826,7 @@ fun HomeScreen(
         )
         MenuLayer(hs, channel, channelPanel, guidePush, menuServices)
 
-        SearchLayer(hs, cornerNow, filmInCorner)
+        SearchLayer(hs, filmInCorner)
 
         DialogsLayer(hs, cornerArm, cornerFocus, cornerReachable, filmInCorner, pictureInCorner, guideFocus, mediaFocus, searchMedia, onSignOut)
     }
@@ -882,15 +878,6 @@ private fun androidx.compose.foundation.layout.BoxScope.LiveTvLayer(
         tween(300, easing = FastOutSlowInEasing),
         label = "live",
     )
-    // Over another page (a shortcut, the Live TV hub): from the guide's preview place to the chosen corner.
-    val inCorner = hs.liveCorner && hs.page != Page.Tv
-    val liveSide = animateFloatAsState(
-        if (inCorner) 1f else 0f,
-        tween(300, easing = FastOutSlowInEasing),
-        label = "liveCorner",
-    )
-    val cornerSize = CornerPicture.size()
-    val cornerAt = AppColors.palette.opt(UiOpts.MINI_CORNER) // 0 BR, 1 BL, 2 TR, 3 TL
     val list = channel?.let { hs.programsOf(it) }.orEmpty()
     val current = catchup ?: GuideViewModel.programAt(list, now)
     if (channel != null && !(hs.multiView && hs.fullscreen)) {
@@ -902,7 +889,7 @@ private fun androidx.compose.foundation.layout.BoxScope.LiveTvLayer(
             vm = playback,
             fullscreen = hs.fullscreen,
             browse = browsed?.let { Triple(it, browsedNow, browsedNow?.let { c -> browsedList.firstOrNull { p -> p.startTime >= c.endTime } }) },
-            bannerVisible = hs.bannerVisible && !hs.osdVisible && !inCorner && !hs.liveBehind && !hs.livePreview,
+            bannerVisible = hs.bannerVisible && !hs.osdVisible && !hs.liveBehind && !hs.livePreview,
             current = current,
             next = next,
             now = now,
@@ -912,21 +899,17 @@ private fun androidx.compose.foundation.layout.BoxScope.LiveTvLayer(
             modifier = Modifier.zIndex(if (hs.liveBehind) -1f else 0f).fillMaxSize()
                 .layout { measurable, constraints ->
                     val p = liveShrink.value
-                    val q = liveSide.value
                     val fw = constraints.maxWidth
                     val fh = constraints.maxHeight
-                    // The small window: the guide's preview (q 0) or the corner (q 1), and in between on the way.
-                    val sw = 320.dp.roundToPx() + (cornerSize.first.roundToPx() - 320.dp.roundToPx()) * q
-                    val sh = 180.dp.roundToPx() + (cornerSize.second.roundToPx() - 180.dp.roundToPx()) * q
-                    val margin = 32.dp.roundToPx()
-                    val cx = if (cornerAt == 1 || cornerAt == 3) margin.toFloat() else fw - margin - sw
-                    val cy = if (cornerAt >= 2) margin.toFloat() else fh - margin - sh
-                    val sx = 12.dp.roundToPx() + (cx - 12.dp.roundToPx()) * q
-                    val sy = 20.dp.roundToPx() + (cy - 20.dp.roundToPx()) * q
+                    // The small window: the guide's preview place (320 x 180, top left), and in between on the way.
+                    val sw = 320.dp.roundToPx()
+                    val sh = 180.dp.roundToPx()
+                    val sx = 12.dp.roundToPx()
+                    val sy = 20.dp.roundToPx()
                     val cw = (fw + (sw - fw) * p).toInt().coerceAtLeast(1)
                     val ch = (fh + (sh - fh) * p).toInt().coerceAtLeast(1)
                     val placeable = measurable.measure(Constraints.fixed(cw, ch))
-                    layout(fw, fh) { placeable.place((sx * p).toInt() + (guidePush.value * p * (1 - q)).toInt(), (sy * p).toInt()) }
+                    layout(fw, fh) { placeable.place((sx * p).toInt() + (guidePush.value * p).toInt(), (sy * p).toInt()) }
                 }
                 .graphicsLayer { clip = liveShrink.value > 0.99f; shape = RoundedCornerShape(8.dp) },
         )
@@ -1137,7 +1120,7 @@ private fun androidx.compose.foundation.layout.BoxScope.DialogsLayer(
     // A film playing at all (not only while it's in the mini player): a held Back can bring it full screen just before
     // the pop-up's answer, and live TV then started in its place.
     fun cornerFull() { if (VodHost.active) VodHost.expand() else hs.goLive() }
-    fun cornerClose() { if (VodHost.active) VodHost.close() else { hs.liveCorner = false; playback.stop() } }
+    fun cornerClose() { if (VodHost.active) VodHost.close() else playback.stop() }
     if (pictureInCorner && (hs.page != Page.Tv || filmInCorner)) CornerHighlight(
         film = filmInCorner, focusRequester = cornerFocus, arm = cornerArm, reachable = cornerReachable, focused = hs.cornerFocused,
         onFocused = { hs.cornerFocused = it }, onFullScreen = ::cornerFull, onClose = ::cornerClose,
@@ -1279,7 +1262,6 @@ if (hs.askSignOut) io.github.petebutty.viewarr.ui.dvr.ChoicePanel(
 @Composable
 private fun androidx.compose.foundation.layout.BoxScope.SearchLayer(
     hs: HomeState,
-    cornerNow: Boolean,
     filmInCorner: Boolean,
 ) {
     // (Read here as HomeScreen reads them, so this part redraws on its own when they change.)
@@ -1299,8 +1281,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SearchLayer(
         // The remote stays inside search until it closes.
         // Live TV in the corner: a window cut in search where its picture is, so it shows (the video's drawn
         // behind the app; a film's picture is drawn over everything anyway).
-        val liveHole = cornerNow && !filmInCorner
-        Box(Modifier.fillMaxSize().then(if (liveHole) Modifier.cornerWindow() else Modifier).appBackground().then(if (hs.infoTarget == null && hs.recordTarget == null) Modifier.trapFocus() else Modifier)) {
+        Box(Modifier.fillMaxSize().appBackground().then(if (hs.infoTarget == null && hs.recordTarget == null) Modifier.trapFocus() else Modifier)) {
             SearchPage(
                 guide = vm,
                 serverUrl = session?.serverUrl.orEmpty(),
@@ -1484,8 +1465,7 @@ private fun androidx.compose.foundation.layout.BoxScope.PagesLayer(
             },
             onBack = {
                 if (VodHost.active && VodHost.mini) { VodHost.expand(); return@MediaScreen }
-                // The channel in the corner: back to it. Otherwise your Back setting (not always back to live TV).
-                if (hs.liveCorner && playing != null && hs.goLive()) return@MediaScreen
+                // Otherwise your Back setting (not always back to live TV).
                 // Over live TV: back to the channel full screen.
                 if (hs.liveBehind && playing != null) { hs.backOnPage(); return@MediaScreen }
                 // The channel in the preview place: back to the guide.

@@ -13,14 +13,6 @@ import io.github.petebutty.viewarr.data.media.MediaRow
 import io.github.petebutty.viewarr.ui.common.AppIcons
 
 /** One shortcut that can sit under the live TV controls. */
-/** Live TV playing in a corner over another page (Live TV hub, step 2). Trailer previews wait while it is. */
-object LiveCorner {
-    private val state = androidx.compose.runtime.mutableStateOf(false)
-    var on: Boolean
-        get() = state.value
-        set(v) { state.value = v }
-}
-
 /** A card in the live TV controls' poster rows: a title (picture landscape), or a channel ([logo] on a plain tile). */
 data class OsdPoster(
     val key: String,

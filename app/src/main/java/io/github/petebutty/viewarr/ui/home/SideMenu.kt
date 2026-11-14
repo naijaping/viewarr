@@ -862,7 +862,6 @@ internal fun MenuOverlay(
                     editing = menuEditing,
                     onEditing = { menuEditing = it },
                     editMode = editingMain,
-                    rightMode = remote.menuLibraryRight,
                     onCount = { t, n -> recentCount[t] = n },
                     onOpenPage = { onOpenPage(if (section == Section.Movies) Page.Movies else Page.Shows) },
                     onPreviewPage = { onHoverPage(if (section == Section.Movies) Page.Movies else Page.Shows) },
