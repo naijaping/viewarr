@@ -1,6 +1,7 @@
 # Shown once, the first time a new version opens (not on a fresh install). Keep it to the few things worth knowing.
 # Lines starting with "- " are the points; the first line without "#" or "-" is the heading.
-IPTV watch progress, and rows under the info bar
-- IPTV films and shows remember where you stopped: Resume, watched ticks and Continue watching (kept on this box)
-- Down from the info bar: the rows you choose, such as Continue watching, Favourite channels or On now (Settings → Appearance → Info bar & controls)
-- My Library in the menu, the buffer on the seek bar, and Previous / Next episode buttons you can add to the info bar
+One remote layout, programme pictures back, and a changelog
+- Back switches between full screen and the mini player; hold Back to close the player (live TV and films)
+- Programme pictures are back in the guide and the "What's selected" wallpaper
+- Five new info bar styles, including Faded glass (Settings → Appearance → Info bar & controls)
+- Every version's changes are now in Settings → About → Changelog

@@ -142,6 +142,7 @@ See [Profiles](PROFILES.md#your-setup-saved-on-dispatcharr) and [Privacy](PRIVAC
 ### About
 
 - **Viewarr**: the version, when it was installed and last updated, and where the source code is.
+- **Changelog**: what changed in each version, newest first. Versions are on the left; **Right** goes into the notes, **Up / Down** scroll them, **Left** goes back to the versions and **Back** closes it. The What's new card after an update also has a **Full changelog** button.
 - **Show the tour**: the tour of how Viewarr works, from the first run.
 - **This TV**: the model, Android version, memory, storage, screen and processor.
 - **Storage**: what Viewarr keeps on this TV (each source's TV guide, artwork, downloaded updates and so on). **Clear artwork** frees space; posters and logos are fetched again as you browse. Downloaded updates that are installed already are safe to delete.

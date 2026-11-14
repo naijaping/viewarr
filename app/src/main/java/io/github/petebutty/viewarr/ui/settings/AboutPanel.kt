@@ -173,6 +173,7 @@ fun AboutSettingsScreen(onBack: () -> Unit, vm: AboutViewModel = hiltViewModel()
     val loading = info == null
     val categories = listOf(
         SettingCategory("Viewarr", if (loading) "Gathering details…" else "This version of Viewarr.", rows(i.viewarr) + listOf(
+            SettingItem("Changelog", "What changed in each version of Viewarr, newest first.", emptyList(), Value("OK to read"), action = { io.github.petebutty.viewarr.ui.update.Changelog.open = true }, onSelect = {}),
             SettingItem("Show the tour", "The five-page tour of how Viewarr works, from the first run.", emptyList(), Value("OK to show"), action = { io.github.petebutty.viewarr.ui.onboarding.Tour.requested = true }, onSelect = {}),
         )),
         SettingCategory("This TV", if (loading) "Gathering details…" else "The box Viewarr is running on.", rows(i.device)),

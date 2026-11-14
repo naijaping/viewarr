@@ -209,6 +209,8 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
                 if (!splashShown) io.github.petebutty.viewarr.ui.update.UpdateHost()
                 // Once after an update: a few lines on what's new.
                 if (!splashShown) io.github.petebutty.viewarr.ui.update.WhatsNewHost()
+                // Settings → About → Changelog, or Full changelog on the What's new card.
+                io.github.petebutty.viewarr.ui.update.ChangelogHost()
                 if (!splashShown) io.github.petebutty.viewarr.ui.sync.SyncOfferHost()
                 // Who's watching? (on start and from Settings), and the admin Users page.
                 if (!splashShown) io.github.petebutty.viewarr.ui.profiles.ProfileHost()

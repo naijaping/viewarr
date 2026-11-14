@@ -78,8 +78,10 @@ fun WhatsNewHost() {
                     Text(p, fontSize = 14.sp, lineHeight = 19.sp, color = AppColors.TextPrimary)
                 }
             }
-            Box(Modifier.padding(top = 8.dp)) {
-                MenuItem(text = "Got it", selected = false, onClick = { if (ready) show = false }, modifier = Modifier.focusRequester(ok))
+            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MenuItem(text = "Got it", selected = false, onClick = { if (ready) show = false }, modifier = Modifier.weight(1f).focusRequester(ok))
+                // Everything in this version (and before): Settings → About → Changelog too.
+                MenuItem(text = "Full changelog", selected = false, onClick = { if (ready) { show = false; Changelog.open = true } }, modifier = Modifier.weight(1f))
             }
         }
     }

@@ -637,32 +637,9 @@ internal fun MenuOverlay(
         val subHint = single && !mainShown && !fullPage && AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MENU_HINTS) == 0
         // Room at the top for the hint (and the heading under it, in the padding as before).
         val subTop = if (subHint) 40.dp else 24.dp
-        Box(
-            Modifier
-                .width(if (subHidden) 0.dp else 230.dp)
-                .fillMaxHeight()
-                .onFocusChanged { subListFocused = it.hasFocus }
-                // Any other list (Music, Search): a Left nothing in it used brings the main list back.
-                .onKeyEvent { e ->
-                    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && !mainShown && section != Section.Settings) { revealMain(); true } else false
-                }
-                .onPreviewKeyEvent { e ->
-                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    when {
-                        // (Left from any list: the main menu, below.)
-                        // Editing the list: Left finishes (a library being moved is put down where it is).
-                        e.key == Key.DirectionLeft && menuEditing -> { menuEditing = false; true }
-                        // Left goes back to this section's menu entry, not whichever one is geometrically closest.
-                        e.key == Key.DirectionLeft && (section == Section.Tv || section == Section.Movies || section == Section.Shows || section == Section.Library || section == Section.Recordings ||
-                            (section == Section.Settings && !showAppearance && !showRemote && !showNavigation && !showSports && !showPlayback && !showAddons && !showUpdates && !showAbout && !showHomeRows && !showPlugins && !showLive && !showTrouble && !showSearchSettings)) -> {
-                            revealMain()
-                            true
-                        }
-                        else -> false
-                    }
-                }
-                .padding(start = 8.dp, end = 8.dp, top = subTop, bottom = 24.dp),
-        ) {
+        // The right-hand list, as a block of its own: compiled as a separate function, which keeps MenuOverlay
+        // under Android's size limit for optimising a function (it reads and changes the menu's state as before).
+        val subListPanel: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit = {
             val svc = serviceOn?.let { n -> services.firstOrNull { it.first == n } }
             // Colour edge: a thin bar down the list's left side in the highlight colour.
             if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MENU_EDGE) == 1 && !fullPage && !subHidden) Box(
@@ -898,6 +875,32 @@ internal fun MenuOverlay(
                 )
             }
         }
+        Box(
+            Modifier
+                .width(if (subHidden) 0.dp else 230.dp)
+                .fillMaxHeight()
+                .onFocusChanged { subListFocused = it.hasFocus }
+                // Any other list (Music, Search): a Left nothing in it used brings the main list back.
+                .onKeyEvent { e ->
+                    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && !mainShown && section != Section.Settings) { revealMain(); true } else false
+                }
+                .onPreviewKeyEvent { e ->
+                    if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    when {
+                        // (Left from any list: the main menu, below.)
+                        // Editing the list: Left finishes (a library being moved is put down where it is).
+                        e.key == Key.DirectionLeft && menuEditing -> { menuEditing = false; true }
+                        // Left goes back to this section's menu entry, not whichever one is geometrically closest.
+                        e.key == Key.DirectionLeft && (section == Section.Tv || section == Section.Movies || section == Section.Shows || section == Section.Library || section == Section.Recordings ||
+                            (section == Section.Settings && !showAppearance && !showRemote && !showNavigation && !showSports && !showPlayback && !showAddons && !showUpdates && !showAbout && !showHomeRows && !showPlugins && !showLive && !showTrouble && !showSearchSettings)) -> {
+                            revealMain()
+                            true
+                        }
+                        else -> false
+                    }
+                }
+                .padding(start = 8.dp, end = 8.dp, top = subTop, bottom = 24.dp),
+        ) { subListPanel() }
 
         if (channelsPanel != null && section == Section.Tv) {
             Box(Modifier.width(1.dp).fillMaxHeight().background(divider))
