@@ -54,6 +54,7 @@ import androidx.tv.material3.Text
 import io.github.petebutty.viewarr.BuildConfig
 import io.github.petebutty.viewarr.ui.common.MenuItem
 import io.github.petebutty.viewarr.ui.common.glass
+import io.github.petebutty.viewarr.ui.common.stopAt
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.launch
@@ -94,6 +95,8 @@ fun ChangelogHost() {
     var shown by remember { mutableIntStateOf(start) }
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (start - 3).coerceAtLeast(0))
     val firstFocus = remember { FocusRequester() }
+    // One per version: Left from the notes goes back to the version being read (not the one the screen opened on).
+    val versionFocus = remember(versions) { versions.map { FocusRequester() } }
     val notesFocus = remember { FocusRequester() }
     val notesScroll = rememberScrollState()
     var notesFocused by remember { mutableStateOf(false) }
@@ -134,7 +137,7 @@ fun ChangelogHost() {
                     if (versions.isEmpty()) {
                         Text("The changelog isn't in this build.", fontSize = 14.sp, color = AppColors.TextSecondary)
                         MenuItem(text = "Close", selected = false, onClick = { Changelog.open = false }, modifier = Modifier.focusRequester(firstFocus))
-                    } else LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    } else LazyColumn(Modifier.stopAt(androidx.compose.ui.focus.FocusDirection.Down), state = listState, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         itemsIndexed(versions, key = { _, v -> v.version }) { i, v ->
                             val current = v.version == BuildConfig.VERSION_NAME
                             MenuItem(
@@ -143,6 +146,7 @@ fun ChangelogHost() {
                                 // OK or Right: into the notes, to scroll them.
                                 onClick = { shown = i; runCatching { notesFocus.requestFocus() } },
                                 modifier = Modifier
+                                    .focusRequester(versionFocus[i])
                                     .then(if (i == start) Modifier.focusRequester(firstFocus) else Modifier)
                                     .onFocusChanged { if (it.isFocused) shown = i }
                                     .onPreviewKeyEvent { e ->
@@ -165,8 +169,13 @@ fun ChangelogHost() {
                                 Key.DirectionUp -> { scope.launch { notesScroll.animateScrollTo((notesScroll.value - 260).coerceAtLeast(0)) }; true }
                                 Key.DirectionLeft, Key.Back -> {
                                     if (e.key == Key.Back) return@onPreviewKeyEvent false
-                                    scope.launch { listState.animateScrollToItem((shown - 3).coerceAtLeast(0)) }
-                                    runCatching { firstFocus.requestFocus() }
+                                    // Back to the version being read: scrolled into view first (an item off screen isn't there to take
+                                    // focus, so focus vanished after scrolling down the list), then focused.
+                                    scope.launch {
+                                        listState.scrollToItem((shown - 3).coerceAtLeast(0))
+                                        awaitFrame()
+                                        runCatching { versionFocus.getOrNull(shown)?.requestFocus() ?: firstFocus.requestFocus() }
+                                    }
                                     true
                                 }
                                 Key.DirectionRight -> true

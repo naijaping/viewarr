@@ -210,3 +210,12 @@ fun filmOsdButtons(buttons: List<PlayerButton>, menu: PlayerMenu, paused: Boolea
             }, groupEnd = false, dim = hidden)
         }
     }
+
+/**
+ * The film player takes the remote (back to full screen, a panel closed, focus wandered): through the pages' focus
+ * fences (trapFocus on the guide, menus and title pages), which otherwise refuse a request from outside them too, so
+ * the film came back full screen with the remote still on the page underneath.
+ */
+fun takeFilmFocus(focus: androidx.compose.ui.focus.FocusRequester) {
+    io.github.petebutty.viewarr.ui.common.EdgeBlocked.lettingOut { runCatching { focus.requestFocus() } }
+}

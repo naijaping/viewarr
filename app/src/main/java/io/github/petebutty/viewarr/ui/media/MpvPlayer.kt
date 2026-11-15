@@ -307,11 +307,11 @@ fun MpvPlayer(
     val mini = VodHost.mini || VodHost.behind
     LaunchedEffect(mini) {
         if (mini) { menu.open = false; tracksOpen = false; transOpen = false; syncOpen = false; tvOpen = false; detailsOn = false; if (scrub.active) scrub.cancel(); osdUntil = 0L; return@LaunchedEffect }
-        repeat(3) { awaitFrame(); runCatching { focus.requestFocus() } }
+        repeat(3) { awaitFrame(); takeFilmFocus(focus) }
     }
     val searchOpen = io.github.petebutty.viewarr.ui.common.LocalQuickSearchOpen.current
     LaunchedEffect(hasFocus, tracksOpen, transOpen, syncOpen, tvOpen, searchOpen, mini) {
-        if (!hasFocus && !(tracksOpen || transOpen || syncOpen || tvOpen) && !searchOpen && !mini) { delay(150); runCatching { focus.requestFocus() } }
+        if (!hasFocus && !(tracksOpen || transOpen || syncOpen || tvOpen) && !searchOpen && !mini) { delay(150); takeFilmFocus(focus) }
     }
     // Repaint the clock for the auto-hiding controls.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -500,12 +500,12 @@ fun MpvPlayer(
         error?.let {
             Text(it, fontSize = 18.sp, color = Color.White, modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.7f)).padding(20.dp))
         }
-        if (tracksOpen && !mini) MpvTrackPicker(mpv, subtitlesFirst = tracksSubs, onSwitchPlayer = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f((position * 1000).toLong(), a, t) } } }, onClose = { tracksOpen = false; runCatching { focus.requestFocus() } }, modifier = Modifier.align(Alignment.CenterEnd))
-        if (transOpen && !mini) io.github.petebutty.viewarr.ui.player.TransparencyPanel(onClose = { transOpen = false; runCatching { focus.requestFocus() } },
+        if (tracksOpen && !mini) MpvTrackPicker(mpv, subtitlesFirst = tracksSubs, onSwitchPlayer = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f((position * 1000).toLong(), a, t) } } }, onClose = { tracksOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
+        if (transOpen && !mini) io.github.petebutty.viewarr.ui.player.TransparencyPanel(onClose = { transOpen = false; takeFilmFocus(focus) },
             // On its info bar rows: the film's bar up behind it, while they're being changed.
             onInfoBar = { show -> osdUntil = if (show) Long.MAX_VALUE else 0L })
-        if (syncOpen && !mini) io.github.petebutty.viewarr.ui.player.AvSyncPanel(onClose = { syncOpen = false; runCatching { focus.requestFocus() } }, modifier = Modifier.align(Alignment.CenterEnd))
-        if (tvOpen && !mini) io.github.petebutty.viewarr.ui.player.TvSettingsPanel(onClose = { tvOpen = false; runCatching { focus.requestFocus() } }, modifier = Modifier.align(Alignment.CenterEnd))
+        if (syncOpen && !mini) io.github.petebutty.viewarr.ui.player.AvSyncPanel(onClose = { syncOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
+        if (tvOpen && !mini) io.github.petebutty.viewarr.ui.player.TvSettingsPanel(onClose = { tvOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
     }
 }
 

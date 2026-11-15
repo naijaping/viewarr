@@ -1384,6 +1384,10 @@ private fun androidx.compose.foundation.layout.BoxScope.MenuLayer(
                     // My Library's own hover opens a library and comes through here.)
                     if (p == Page.Movies && moviesVm.currentRowSet.value != null) { moviesVm.openLibrary(null, MediaType.Movie); moviesVm.jumpTo(null) }
                     if (p == Page.Shows && showsVm.currentRowSet.value != null) { showsVm.openLibrary(null, MediaType.Show); showsVm.jumpTo(null) }
+                    // Coming to Movies / Shows from another page: a title page left open there (e.g. the film's, now in
+                    // the mini player) closes, so the page itself shows. (Already on one: its title page stays.)
+                    if (p != hs.page && p == Page.Movies) moviesVm.closeTitlePages()
+                    if (p != hs.page && p == Page.Shows) showsVm.closeTitlePages()
                     if (p != hs.page) hs.openPage(p, closeMenu = false)
                 }
             },

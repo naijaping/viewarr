@@ -386,7 +386,7 @@ fun VodPlayer(
         if (mini) return@LaunchedEffect
         repeat(3) {
             awaitFrame()
-            runCatching { focus.requestFocus() }
+            takeFilmFocus(focus)
         }
     }
     var hasFocus by remember { mutableStateOf(false) }
@@ -395,7 +395,7 @@ fun VodPlayer(
     LaunchedEffect(hasFocus, tracksOpen, transOpen, syncOpen, tvOpen, searchOpen, mini) {
         if (!hasFocus && !(tracksOpen || transOpen || syncOpen || tvOpen) && !searchOpen && !mini) {
             kotlinx.coroutines.delay(150)
-            runCatching { focus.requestFocus() }
+            takeFilmFocus(focus)
         }
     }
     // The remote is handled here, not by the PlayerView's own buttons: inside Compose those never get key focus,
@@ -473,12 +473,12 @@ fun VodPlayer(
         // Holding OK on a shortcut or a card: their menus (shared with the other player).
         FilmShortcutDialogs(menu)
         PlayerLoading(stream.title, art, visible = !mini && !started && error == null)
-        if (tracksOpen && !mini) TrackPicker(player, subtitlesFirst = tracksSubs, onSwitchPlayer = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f(player.currentPosition, a, t) } } }, onClose = { tracksOpen = false; runCatching { focus.requestFocus() } }, modifier = Modifier.align(Alignment.CenterEnd))
-        if (transOpen && !mini) io.github.petebutty.viewarr.ui.player.TransparencyPanel(onClose = { transOpen = false; runCatching { focus.requestFocus() } },
+        if (tracksOpen && !mini) TrackPicker(player, subtitlesFirst = tracksSubs, onSwitchPlayer = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f(player.currentPosition, a, t) } } }, onClose = { tracksOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
+        if (transOpen && !mini) io.github.petebutty.viewarr.ui.player.TransparencyPanel(onClose = { transOpen = false; takeFilmFocus(focus) },
             // On its info bar rows: the film's bar up behind it, while they're being changed.
             onInfoBar = { show -> osdUntil = if (show) Long.MAX_VALUE else 0L })
-        if (syncOpen && !mini) io.github.petebutty.viewarr.ui.player.AvSyncPanel(onClose = { syncOpen = false; runCatching { focus.requestFocus() } }, modifier = Modifier.align(Alignment.CenterEnd))
-        if (tvOpen && !mini) io.github.petebutty.viewarr.ui.player.TvSettingsPanel(onClose = { tvOpen = false; runCatching { focus.requestFocus() } }, modifier = Modifier.align(Alignment.CenterEnd))
+        if (syncOpen && !mini) io.github.petebutty.viewarr.ui.player.AvSyncPanel(onClose = { syncOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
+        if (tvOpen && !mini) io.github.petebutty.viewarr.ui.player.TvSettingsPanel(onClose = { tvOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
         if (!mini && (pb.stats == io.github.petebutty.viewarr.data.settings.StatsOverlay.On || menu.infoOn)) {
             var info by remember { mutableStateOf("") }
             LaunchedEffect(player) {

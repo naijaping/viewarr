@@ -13,6 +13,7 @@ import io.github.petebutty.viewarr.ui.theme.appBackground
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.verticalScroll
@@ -167,6 +168,17 @@ fun SettingsPage(
         runCatching { rowFocus[t]?.requestFocus() }
         refocus = null
     }
+    LaunchedEffect(choosing?.title) {
+        val open = choosing ?: return@LaunchedEffect
+        val idx = currentItems.indexOfFirst { it.title == open.title }
+        if (idx < 0) return@LaunchedEffect
+        val listIdx = idx + if (hasHeader) 1 else 0
+        awaitFrame(); awaitFrame(); awaitFrame()
+        val info = listState.layoutInfo
+        val it = info.visibleItemsInfo.firstOrNull { v -> v.index == listIdx } ?: run { runCatching { listState.animateScrollToItem(listIdx) }; return@LaunchedEffect }
+        val over = it.offset + it.size - (info.viewportEndOffset - 24)
+        if (over > 0) runCatching { listState.animateScrollBy(over.toFloat().coerceAtMost((it.offset - info.viewportStartOffset).toFloat().coerceAtLeast(0f))) }
+    }
     var returnTo by remember { mutableStateOf<String?>(null) }
     fun closeChoices() {
         returnTo = choosing?.title
@@ -268,7 +280,11 @@ fun SettingsPage(
                         }
                     }
                 }
-                androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides remember(gentle) { gentle.followingSetting() }) {
+                val following = remember(gentle) { gentle.followingSetting() }
+                // A dropdown open: the page holds still while the highlight moves inside it (it followed the highlight
+                // and scrolled the whole page); the dropdown scrolls itself (InlineChoices). Opening one brings it
+                // fully on screen once, below.
+                androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides (if (choosing != null) HoldStill else following)) {
                 LazyColumn(Modifier.stopAt(androidx.compose.ui.focus.FocusDirection.Down), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                     c.header?.let { h -> item(key = c.name + "#header") { h() } }
                     itemsIndexed(c.items, key = { _, it -> c.name + it.title }) { index, item ->
@@ -403,6 +419,7 @@ private fun Toggle(on: Boolean) {
  * OK picks; Back closes it unchanged (SettingsPage's Back). Nothing sits on top of the page, so focus can't be left
  * behind it or blocked by the page's traps (the pop-up it replaced had both problems).
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun InlineChoices(item: SettingItem, onDone: () -> Unit) {
     val focus = remember { FocusRequester() }
@@ -417,6 +434,7 @@ private fun InlineChoices(item: SettingItem, onDone: () -> Unit) {
             .border(1.dp, AppColors.Accent.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
             .padding(6.dp),
     ) {
+        androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides JustShow) {
         Column(Modifier.popupScroll(0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             item.choices.forEachIndexed { i, choice ->
                 MenuItem(
@@ -427,5 +445,22 @@ private fun InlineChoices(item: SettingItem, onDone: () -> Unit) {
                 )
             }
         }
+        }
+    }
+}
+
+/** Scrolling that never moves (the settings list while a dropdown is open). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private object HoldStill : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float) = 0f
+}
+
+/** Scrolling just far enough to show the highlighted item (a dropdown's list). */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+private object JustShow : androidx.compose.foundation.gestures.BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = when {
+        offset < 0f -> offset
+        offset + size > containerSize -> offset + size - containerSize
+        else -> 0f
     }
 }
