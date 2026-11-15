@@ -32,7 +32,31 @@ import javax.inject.Inject
 fun DetailUi.upTo(): Triple<Int, Int, Boolean>? {
     val item = detail.item
     val card = item.nextSeason?.let { s -> item.nextEpisode?.let { e -> Triple(s, e, item.progress != null) } }
-    return listOfNotNull(card, nextUp).maxWithOrNull(compareBy({ it.first }, { it.second }))
+    return listOfNotNull(card, nextUp).maxWithOrNull(compareBy({ it.first }, { it.second }))?.let(::realEpisode)
+}
+
+/**
+ * An episode that exists: "the one after the last you finished" can be a guess (this box's record only knows E9 was
+ * finished, so it said E10), which named S1 E10 of The Last of Us, a 9-episode season (Peter, 2026-11-15). Past the
+ * end of a season: the next season's first episode; finished episodes after it are skipped; past the last season,
+ * nothing (all watched). Seasons whose length isn't known yet are left alone.
+ */
+private fun DetailUi.realEpisode(t: Triple<Int, Int, Boolean>): Triple<Int, Int, Boolean>? {
+    val real = seasons.filter { it.number > 0 }.sortedBy { it.number }
+    val known = real.filter { it.episodes > 0 }
+    if (known.isEmpty()) return t
+    fun watched(k: Pair<Int, Int>) = plexEpisodes[k]?.watched == true || serverEpisodes[k]?.watched == true || k in traktEpisodes
+    var s = t.first; var e = t.second; var partial = t.third; var moved = false
+    repeat(1000) {
+        val len = known.firstOrNull { it.number == s }?.episodes ?: return if (moved) Triple(s, e, false) else t
+        when {
+            // (The next season even if its length isn't known yet: a new one just announced.)
+            e > len -> { val next = real.firstOrNull { it.number > s } ?: return null; s = next.number; e = 1; partial = false; moved = true; if (next.episodes <= 0) return Triple(s, e, false) }
+            moved && watched(s to e) -> e++
+            else -> return Triple(s, e, partial)
+        }
+    }
+    return t
 }
 
 data class DetailUi(
@@ -146,30 +170,43 @@ class MediaViewModel @Inject constructor(
 
     /**
      * Orders addon streams: within the quality limit before above it, cached (instant) before uncached,
-     * then higher resolution first. The addon's own order breaks ties.
+     * then higher resolution first. The addon's own order breaks ties. Cached only (Settings → Playback → Streams)
+     * leaves the uncached Usenet / torrent ones out.
      */
-    private suspend fun rank(found: List<io.github.petebutty.viewarr.data.media.StreamOption>): List<io.github.petebutty.viewarr.data.media.StreamOption> {
-        val max = playbackStore.current().maxResolution.height ?: io.github.petebutty.viewarr.playback.FrameRateMatcher.maxHeight(appContext)
-        fun res(o: io.github.petebutty.viewarr.data.media.StreamOption): Int {
-            val t = (o.name + " " + o.description).lowercase()
-            return when {
-                "2160" in t || "4k" in t || "uhd" in t -> 2160
-                "1080" in t -> 1080
-                "720" in t -> 720
-                "480" in t || " sd" in t -> 480
-                else -> 0
-            }
-        }
-        fun cached(o: io.github.petebutty.viewarr.data.media.StreamOption): Boolean {
-            val t = o.name + " " + o.description
-            return "⚡" in t || "+]" in t || t.contains("cached", ignoreCase = true) || t.contains("plex", ignoreCase = true)
-        }
+    private suspend fun rank(all: List<io.github.petebutty.viewarr.data.media.StreamOption>): List<io.github.petebutty.viewarr.data.media.StreamOption> {
+        val pb = playbackStore.current()
+        val found = if (pb.cachedOnly == io.github.petebutty.viewarr.data.settings.CachedOnly.On) all.filterNot(StreamMatch::uncached) else all
+        val max = pb.maxResolution.height ?: io.github.petebutty.viewarr.playback.FrameRateMatcher.maxHeight(appContext)
+        fun res(o: io.github.petebutty.viewarr.data.media.StreamOption) = StreamMatch.height(o)
+        fun cached(o: io.github.petebutty.viewarr.data.media.StreamOption) = StreamMatch.cached(o)
         return found.withIndex().sortedWith(
             compareBy<IndexedValue<io.github.petebutty.viewarr.data.media.StreamOption>> { if (res(it.value) > max) 1 else 0 }
                 .thenBy { if (cached(it.value)) 0 else 1 }
                 .thenByDescending { res(it.value) }
                 .thenBy { it.index },
         ).map { it.value }
+    }
+
+    /**
+     * What Play starts from ranked addon streams: the first matching the Auto-play match (else the first), with the
+     * next few behind it when Try the next stream is on (Settings → Playback → Streams).
+     */
+    private suspend fun autoStream(
+        ranked: List<io.github.petebutty.viewarr.data.media.StreamOption>,
+        make: (io.github.petebutty.viewarr.data.media.StreamOption) -> io.github.petebutty.viewarr.data.media.VodStream,
+    ): io.github.petebutty.viewarr.data.media.VodStream {
+        val pb = playbackStore.current()
+        val max = pb.maxResolution.height ?: io.github.petebutty.viewarr.playback.FrameRateMatcher.maxHeight(appContext)
+        fun within(o: io.github.petebutty.viewarr.data.media.StreamOption) = StreamMatch.height(o) <= max
+        val order = StreamMatch.autoOrder(ranked, StreamMatch.parse(pb.streamRules), ::within)
+        val first = order.first()
+        var behind: io.github.petebutty.viewarr.data.media.VodStream? = null
+        // The next ones behind it: within Best quality allowed (unless the first isn't either: nothing is), and with
+        // the same request headers (the player's connection is set up with the first one's).
+        if (pb.streamFallback == io.github.petebutty.viewarr.data.settings.StreamFallback.On)
+            for (o in order.drop(1).filter { (within(it) || !within(first)) && it.headers == first.headers }.take(3).reversed())
+                behind = make(o).copy(fallback = behind, nextSource = true)
+        return make(first).copy(fallback = behind)
     }
 
     private suspend fun autoPick() = playbackStore.current().streamPick == io.github.petebutty.viewarr.data.settings.StreamPick.Auto
@@ -397,9 +434,14 @@ class MediaViewModel @Inject constructor(
     private var ownsNextUp = false
     // An episode starts: find the one after it now, so the player can offer it over the credits (Skip credits plays
     // it; the countdown starts before the end) rather than only after the episode has closed.
+    /** The title that's playing (set as playback starts): its page is what reopens if Android clears Viewarr. */
+    var playingItem: MediaItem? = null
+        private set
+
     init {
         viewModelScope.launch {
             playing.collect { stream ->
+                playingItem = if (stream != null) playingItem ?: _detail.value?.detail?.item else null
                 val w = stream?.watch
                 val s = w?.season; val e = w?.episode
                 if (stream == null || w?.type != MediaType.Show || s == null || e == null) {
@@ -1008,7 +1050,7 @@ class MediaViewModel @Inject constructor(
         if (play && season != null && episode != null) { playBestEpisode(season, episode); return true }
         // A show: where you're up to (Plex / Jellyfin / Emby / Trakt), once that's known.
         val up = kotlinx.coroutines.withTimeoutOrNull(10_000) { _detail.first { it == null || it.detail.item.key != item.key || it.nextUpChecked } }
-            ?.takeIf { it.detail.item.key == item.key }?.nextUp
+            ?.takeIf { it.detail.item.key == item.key }?.upTo()
         val (ns, ne) = up?.let { it.first to it.second } ?: (1 to 1)
         // The guide's episode only if you're up to it (it's your next one, or you've watched past it); otherwise the
         // episodes, at the season you got up to, so you don't skip ahead.
@@ -1357,9 +1399,8 @@ class MediaViewModel @Inject constructor(
                     _detail.update { it?.copy(message = null, streams = found, episode = ep ?: it.episode) }
                     return true
                 }
-                val opt = found.first()
                 _detail.update { it?.copy(message = null, episode = null) }
-                _playing.value = io.github.petebutty.viewarr.data.media.VodStream(opt.url, title, opt.headers, watch = watch, boxPreviews = false, from = opt.addon)
+                _playing.value = autoStream(found) { opt -> io.github.petebutty.viewarr.data.media.VodStream(opt.url, title, opt.headers, watch = watch, boxPreviews = false, from = opt.addon) }
                 return true
             }
             fun iptv(): Boolean {
@@ -1382,7 +1423,7 @@ class MediaViewModel @Inject constructor(
             val found = rank(runCatching { repo.addonStreams(d.detail.item, ep.season, ep.number) }.getOrDefault(emptyList()))
             if (found.isNotEmpty() && (autoPick() || forceAuto)) {
                 _detail.update { it?.copy(searching = false, message = null) }
-                playStream(found.first())
+                _playing.value = autoStream(found) { streamOf(it, ep) }
                 return@launch
             }
             _detail.update {
@@ -1446,7 +1487,7 @@ class MediaViewModel @Inject constructor(
                 if (found.isEmpty()) return false
                 // Stream pick set to Manual (Settings → Playback): the list to choose from, as before.
                 if (!autoPick()) _detail.update { it?.copy(message = null, streams = found) }
-                else { _detail.update { it?.copy(message = null) }; playStream(found.first()) }
+                else { _detail.update { it?.copy(message = null) }; _playing.value = autoStream(found, ::streamOf) }
                 return true
             }
             suspend fun iptv(): Boolean {
@@ -1530,7 +1571,7 @@ class MediaViewModel @Inject constructor(
             val found = rank(runCatching { repo.addonStreams(d.detail.item) }.getOrDefault(emptyList()))
             if (found.isNotEmpty() && autoPick()) {
                 _detail.update { it?.copy(searching = false, message = null) }
-                playStream(found.first())
+                _playing.value = autoStream(found, ::streamOf)
                 return@launch
             }
             _detail.update {
@@ -1539,11 +1580,15 @@ class MediaViewModel @Inject constructor(
         }
     }
 
-    fun playStream(option: io.github.petebutty.viewarr.data.media.StreamOption) {
+    fun playStream(option: io.github.petebutty.viewarr.data.media.StreamOption) { _playing.value = streamOf(option) }
+
+    /** An addon stream, ready to play, for the page's film (or its open episode). */
+    private fun streamOf(option: io.github.petebutty.viewarr.data.media.StreamOption, episode: io.github.petebutty.viewarr.data.media.EpisodeInfo? = null): io.github.petebutty.viewarr.data.media.VodStream {
         val d = _detail.value
-        val title = listOfNotNull(d?.detail?.item?.title, d?.episode?.let { "S${it.season} · E${it.number}" }).joinToString(" · ").ifEmpty { option.name }
-        val ep = d?.episode
-        _playing.value = io.github.petebutty.viewarr.data.media.VodStream(
+        // (The episode searched for, when given: the page's open one can have changed during the search.)
+        val ep = episode ?: d?.episode
+        val title = listOfNotNull(d?.detail?.item?.title, ep?.let { "S${it.season} · E${it.number}" }).joinToString(" · ").ifEmpty { option.name }
+        return io.github.petebutty.viewarr.data.media.VodStream(
             option.url, title, option.headers, from = option.addon,
             watch = d?.detail?.item?.let { watchTarget(it, ep?.season, ep?.number) },
             // Addon links (debrid, AIOStreams) often allow one connection: a second one for seek previews can get the

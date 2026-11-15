@@ -534,7 +534,16 @@ internal fun MenuOverlay(
                     selected = editingMain, dim = !editingMain,
                     onClick = { if (editingMain) endEditMain() else { editingMain = true; carryingMain = null; mainFollow = null } },
                     // (Up from the top of the menu stays here: it fell into the folded-away channel groups.)
-                    modifier = Modifier.weight(1f).focusRequester(editMenusFocus).onPreviewKeyEvent { e -> e.key == Key.DirectionUp },
+                    // Right: on into the page beside the menu (the one showing), as Right does on every entry; while
+                    // editing, down onto the list being edited. (It went nowhere: Peter, 2026-11-15.)
+                    modifier = Modifier.weight(1f).focusRequester(editMenusFocus).onPreviewKeyEvent { e ->
+                        if (e.key == Key.DirectionUp) return@onPreviewKeyEvent true
+                        if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight) {
+                            if (editingMain) runCatching { navFocus.getValue(Section.Tv).requestFocus() } else openEntryPage(section)
+                            return@onPreviewKeyEvent true
+                        }
+                        false
+                    },
                 )
             }
             sectionItem(Section.Tv)

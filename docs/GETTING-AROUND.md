@@ -61,9 +61,10 @@ Live TV and films share the same glass info bar. It shows the programme or film,
 
 Skip intro, the next-episode countdown, reminders and every other pop-up use the same glass. You can change it in **Settings → Appearance → Glass & transparency**:
 
-- **Pop-up glass**: from see-through to solid, for the info bar, the player's controls and every pop-up.
+- **Pop-up glass**: 0% (solid) to 100% (clear) see-through, for the info bar (every style), the player's controls and every pop-up and notice.
 - **Info bar: border**: the thin light edge round the glass, on or off.
 - **Info bar size** and **Preview cards**: how big the bar and the cards in its rows are drawn.
+- **Clock on the info bar**: the time at the right of the bar, on live TV and films.
 
 ### Info bar styles
 

@@ -168,6 +168,31 @@ fun SettingsPage(
         runCatching { rowFocus[t]?.requestFocus() }
         refocus = null
     }
+    // A row moved (Right, then Up / Down): the list holds still and the row moves in it. (The list keeps its place by
+    // the row at the top; when that was the row being moved, the whole list scrolled with it, so the highlight always
+    // sat at the top and it was hard to see where it had got to. Peter, 2026-11-15.) It scrolls only when the moved
+    // row would go off screen, keeping a row's margin.
+    var moveAnchor by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var movedTitle by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(currentItems.map { it.title }) {
+        val (first, offset) = moveAnchor ?: return@LaunchedEffect
+        moveAnchor = null
+        runCatching { listState.scrollToItem(first, offset) }
+        awaitFrame()
+        val idx = currentItems.indexOfFirst { it.title == movedTitle }
+        if (idx < 0) return@LaunchedEffect
+        val listIdx = idx + if (hasHeader) 1 else 0
+        val info = listState.layoutInfo
+        val row = info.visibleItemsInfo.firstOrNull { it.index == listIdx }
+        if (row == null) { runCatching { listState.scrollToItem((listIdx - 2).coerceAtLeast(0)) }; return@LaunchedEffect }
+        val margin = (row.size * 1.2f)
+        val top = row.offset - info.viewportStartOffset
+        val bottom = info.viewportEndOffset - (row.offset + row.size)
+        when {
+            top < margin -> runCatching { listState.animateScrollBy(top - margin) }
+            bottom < margin -> runCatching { listState.animateScrollBy(margin - bottom) }
+        }
+    }
     LaunchedEffect(choosing?.title) {
         val open = choosing ?: return@LaunchedEffect
         val idx = currentItems.indexOfFirst { it.title == open.title }
@@ -295,7 +320,13 @@ fun SettingsPage(
                             item, enabled = choosing == null, focus = rowFocusReq,
                             moving = moving == item.title,
                             onMove = { picked -> moving = if (picked) item.title else null },
-                            onMoved = { refocus = item.title },
+                            onMoved = {
+                                moveAnchor = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                                movedTitle = item.title
+                                // (A move that did nothing, at the top or bottom, leaves no old place to jump back to later.)
+                                pageScope.launch { kotlinx.coroutines.delay(1_500); moveAnchor = null }
+                                refocus = item.title
+                            },
                             onFocused = {
                                 lastRow = item.title
                                 // The first row shows the section's picture above it in full, when both fit on screen.

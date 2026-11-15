@@ -1,5 +1,6 @@
 package io.github.petebutty.viewarr.ui.theme
 
+import kotlin.math.roundToInt
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +25,14 @@ data class Palette(val main: Color, val highlight: Color, val transparency: Floa
     /** Small display / behaviour options (UiOpts names → chosen index; 0 = the default). */ val opts: Map<String, Int> = emptyMap()) {
     fun shows(part: String) = part !in titleHidden
     fun opt(name: String) = opts[name] ?: UiOpts.defaults[name] ?: 0
+    /**
+     * How solid the info bar, the player's controls and every pop-up and notice are (1 solid … 0 clear): Settings →
+     * Appearance → Pop-up glass, 0–100% see-through in tens (since 0.28.5; the old setting only went from 70%
+     * see-through to solid, and is carried over until the new one is set).
+     */
+    val popupAlpha: Float get() = opts[UiOpts.POPUP_SEE]?.let { 1f - it.coerceIn(0, 10) / 10f } ?: (0.3f + 0.07f * opt(UiOpts.POPUP_GLASS).coerceIn(0, 10))
+    /** [popupAlpha] as the slider's step (0 solid … 10 clear). */
+    val popupSee: Int get() = opts[UiOpts.POPUP_SEE] ?: ((1f - popupAlpha) * 10).roundToInt().coerceIn(0, 10)
     /** Low-memory mode: the heavy extras are off whatever their own settings say. */
     val lowMemory get() = opt(UiOpts.LOW_MEMORY) == 1
     val guideArt get() = opt(UiOpts.GUIDE_ART) == 0 && !lowMemory
@@ -66,8 +75,10 @@ data class Palette(val main: Color, val highlight: Color, val transparency: Floa
     // The sliders' percentages as they look over a TV picture: a straight 1 - t left a dark panel looking all but
     // clear from about 50% (and invisible at 100%, the text on the bare picture). A curve keeps the middle of the
     // slider useful and leaves a trace of the panel at 100% so text stays readable.
-    val menuAlpha = 1f - 0.9f * transparency * transparency
-    val guideAlpha = 1f - 0.9f * guideTransparency * guideTransparency
+    // As the sliders say: 0% solid … 100% clear (since 0.28.5; it was a curve that stopped at 90%, so 50% showed
+    // only about a fifth through and 100% never went clear).
+    val menuAlpha = 1f - transparency.coerceIn(0f, 1f)
+    val guideAlpha = 1f - guideTransparency.coerceIn(0f, 1f)
     val panel = lerp(main, Color.White, 0.07f)
     val panelAlt = lerp(main, Color.White, 0.04f)
     val cellPast = lerp(main, Color.White, 0.025f)
@@ -273,8 +284,12 @@ object UiOpts {
     const val BANNER_GLASS = "banner_glass"
     /** The glass's strength for the info bar and every pop-up, as a slider: 0 the clearest … 10 solid. */
     const val POPUP_GLASS = "popup_glass"
+    /** Pop-up glass, 0–100% see-through (replaces [POPUP_GLASS]): see Palette.popupAlpha. */
+    const val POPUP_SEE = "popup_see"
     const val BANNER_BORDER = "banner_border"
     const val CLOCK = "clock"
+    /** The time on the info bar's top row (live TV, its controls, and films): Settings → Appearance → Info bar. */
+    const val INFOBAR_CLOCK = "infobar_clock"
     const val BADGE_SOURCE = "badge_source"
     const val BADGE_PROGRESS = "badge_progress"
     const val GUIDE_ART = "guide_art"
@@ -287,6 +302,8 @@ object UiOpts {
     const val LIST_ENDS = "list_ends2"
     /** A film or episode ending or stopped: stay where you were, or back to live TV. */
     const val AFTER_FILM = "after_film"
+    /** Back from a full-screen film: the mini player over the page it was started from (0, standard since 0.28.5), or over the TV guide with the menu (1). */
+    const val FILM_BACK = "film_back_v2"
     const val PLAYER_BACK = "player_back"
     const val AGE_RATING = "age_rating"
     const val BUTTON_HINTS = "button_hints"
@@ -317,6 +334,12 @@ object UiOpts {
     const val BANNER_CORNERS = "banner_corners"
     const val BANNER_BADGES = "banner_badges"
     const val BANNER_FPS = "banner_fps"
+    /** The channel list: a progress bar under each channel's programme (how far through it is). */
+    const val CHLIST_PROGRESS = "chlist_progress"
+    /** The channel list: the highlighted channel's progress bar colour (on the highlight). */
+    const val CHLIST_PROGRESS_COLOUR = "chlist_progress_colour"
+    /** Live TV info bar: the stream's provider (Dispatcharr's account for the stream playing, e.g. a backup). */
+    const val BANNER_SOURCE = "banner_source"
     /** Live TV keeps playing in a corner while you browse from a shortcut (or any page, Live TV hub style). */
     const val LIVE_CORNER = "live_corner"
     const val SEEK_PREVIEWS = "seek_previews"
@@ -372,8 +395,10 @@ object UiOpts {
         GUIDE_REFRESH to listOf("Every 4 hours", "Every 2 hours", "Every 8 hours", "Every 12 hours", "Once a day", "Only when I ask"),
         BANNER_GLASS to listOf("Medium", "Light", "Dark"),
         POPUP_GLASS to (0..10).map { if (it == 10) "Solid" else "${100 - (30 + it * 7)}% see-through" },
+        POPUP_SEE to (0..10).map { "${it * 10}%" },
         BANNER_BORDER to listOf("On", "Off"),
         CLOCK to listOf("Off", "On"),
+        INFOBAR_CLOCK to listOf("Off", "On"),
         BADGE_SOURCE to listOf("On", "Off"),
         BADGE_PROGRESS to listOf("On", "Off"),
         GUIDE_ART to listOf("On", "Off"),
@@ -383,6 +408,7 @@ object UiOpts {
         CORNER_FOCUS to listOf("On", "Off"),
         LIST_ENDS to listOf("Jump to the other end", "Stop"),
         AFTER_FILM to listOf("Stay where you were", "Back to live TV"),
+        FILM_BACK to listOf("Its own page", "The TV guide and menu"),
         ANIM_FILM to listOf("On", "Off"),
         ANIM_LIVE to listOf("On", "Off"),
         SHORTCUT_STYLE to listOf("Round", "Rounded squares", "Wide tiles"),
@@ -400,6 +426,9 @@ object UiOpts {
         BANNER_CORNERS to listOf("Rounded", "Square"),
         BANNER_BADGES to listOf("HD · FHD · 4K", "720p · 1080p · 2160p", "Off"),
         BANNER_FPS to listOf("On", "Off"),
+        CHLIST_PROGRESS to listOf("On", "Off"),
+        CHLIST_PROGRESS_COLOUR to listOf("White", "Black", "Grey", "Your highlight colour", "Dark highlight"),
+        BANNER_SOURCE to listOf("On", "Off"),
         LIVE_CORNER to listOf("On", "Off (browsing stops the channel)"),
         BUTTON_HINTS to listOf("First few times", "Always", "Off"),
         AGE_RATING to listOf("UK (BBFC: U, PG, 12A, 15, 18)", "US (MPA: G, PG, PG-13, R · TV-14, TV-MA)"),

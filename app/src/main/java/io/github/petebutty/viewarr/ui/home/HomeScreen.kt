@@ -78,7 +78,6 @@ import io.github.petebutty.viewarr.ui.dvr.RecordingsScreen
 import io.github.petebutty.viewarr.data.media.VodStream
 import io.github.petebutty.viewarr.data.local.ChannelListItem
 import io.github.petebutty.viewarr.data.local.GuideProgram
-import io.github.petebutty.viewarr.data.settings.GuideBack
 import io.github.petebutty.viewarr.data.settings.LocalRemote
 import io.github.petebutty.viewarr.data.settings.MediaBack
 import io.github.petebutty.viewarr.data.settings.PlayerOk
@@ -356,6 +355,8 @@ fun HomeScreen(
             delay(left)
         }
     }
+    // Reopening where you left off if Android cleared Viewarr in the background, and saving that spot (ResumeSpot.kt).
+    ResumeEffects(hs, remote, session, playing)
     LaunchedEffect(remote.loaded) {
         if (!remote.loaded || hs.startApplied) return@LaunchedEffect
         hs.startApplied = true
@@ -424,8 +425,7 @@ fun HomeScreen(
         delay(60_000)
         if (hs.stillAsk) { hs.stillAsk = false; hs.fullscreen = false; playback.stop() }
     }
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { playback.pause() }
-    LifecycleEventEffect(Lifecycle.Event.ON_START) { playback.resume() }
+    // Gone to the background: live TV stops (and lets go of its stream) and a film pauses, its place kept.
 
     // Back on a page (guide, Movies, Shows, Recordings) asks before leaving: a second Back within a few
     // seconds exits. The menu handles its own Back (list → main menu → closed).
@@ -440,22 +440,26 @@ fun HomeScreen(
     SideEffect { VodHost.openMenu = { VodHost.behind = true; hs.menuOnMain = true; hs.menuOpen = true } }
     /** When Back last took full screen down to the guide (a quick second Back then asks to exit). */
     /** The guide's Back (Settings → Remote & navigation → TV guide). */
-    val guideBack = remote.guideBack
 
     LaunchedEffect(hs.exitArmed) {
         if (hs.exitArmed != 0L) { delay(2_500); hs.exitArmed = 0L }
     }
     // Back returns to live TV first when browsing the past/future, then asks to exit (or opens the menu).
+    val guideBack = io.github.petebutty.viewarr.data.settings.ButtonMap.guideBack(remote)
     BackHandler(enabled = hs.page == Page.Tv && !hs.menuOpen && !hs.fullscreen && !hs.showAccounts && !hs.quickSearch) {
         when {
-            // A channel playing in the guide's window: Back brings it full screen (Back there shrinks it here again;
-            // hold Back closes it). The same for films and live TV since 0.28.3, whatever Guide Back says.
+            // "Back jumps to now first" (on as standard): away from now, Back comes back to now, the next Back does the
+            // rest (full screen with something playing; Peter, 2026-11-15). Off: it acts at once.
+            !vm.isAtNow() && remote.guideBackNow == io.github.petebutty.viewarr.data.settings.GuideBackNow.On -> vm.goToNow()
+            // A channel playing in the guide's window: Back brings it full screen (Peter,
+            // 2026-11-15; a film in the mini player likewise, at the root). Back there shrinks it here again; hold Back
+            // closes it.
             playing != null -> { if (!vm.isAtNow()) vm.goToNow(); hs.fullscreen = true; hs.showBanner() }
-            !vm.isAtNow() -> vm.goToNow()
             // "Press Back again to exit" is up: this Back exits.
             hs.exitArmed != 0L -> hs.backOnPage()
-            guideBack == GuideBack.Menu -> { hs.menuOpen = true; hs.menuFromGuideBack = true }
-            else -> hs.backOnPage()
+            // On now with nothing playing: Remote buttons → Back → In the TV guide (the menu, or ask to exit).
+            guideBack == io.github.petebutty.viewarr.data.settings.GuideBack.NowThenExit -> hs.backOnPage()
+            else -> { hs.menuOpen = true; hs.menuFromGuideBack = true }
         }
     }
     BackHandler(enabled = hs.fullscreen && !hs.osdVisible) {
@@ -793,7 +797,7 @@ fun HomeScreen(
             enter = androidx.compose.animation.EnterTransition.None, exit = androidx.compose.animation.ExitTransition.None,
         ) {
             Row(
-                Modifier.background(AppColors.Panel.copy(alpha = 0.94f), RoundedCornerShape(20.dp)).padding(horizontal = 20.dp, vertical = 10.dp),
+                Modifier.glass(20.dp).padding(horizontal = 20.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Icon(AppIcons.Replay, null, tint = AppColors.Accent, modifier = Modifier.size(22.dp))
@@ -807,7 +811,7 @@ fun HomeScreen(
                 hs.page == Page.Tv && hs.fullscreen && !hs.osdVisible && !hs.channelListOpen && !hs.multiView -> ButtonHint(
                     "live-back", "OK: controls  ·  ▲ ▼ channels  ·  Back: mini player  ·  hold Back: close the player")
                 hs.page == Page.Tv && !hs.fullscreen && session != null -> ButtonHint(
-                    if (playing != null) "guide-back" else "guide", "OK: watch  ·  " + (if (remote.guideLeft == io.github.petebutty.viewarr.data.settings.GuideLeft.NowMenu) "◀ menu  ·  hold ◀ catch-up" else "◀ catch-up") + "  ·  Back: " + (if (playing != null) "full screen  ·  hold Back: close the player" else when (guideBack) { GuideBack.Menu -> "menu"; else -> "exit" }))
+                    if (playing != null) "guide-back" else "guide", "OK: watch  ·  " + (if (remote.guideLeft == io.github.petebutty.viewarr.data.settings.GuideLeft.NowMenu) "◀ menu  ·  hold ◀ catch-up" else "◀ catch-up") + "  ·  Back: " + (if (playing != null) "full screen  ·  hold Back: close the player" else if (guideBack == io.github.petebutty.viewarr.data.settings.GuideBack.NowThenExit) "exit" else "menu"))
                 hs.page == Page.Movies || hs.page == Page.Shows -> ButtonHint(
                     "media", "OK: open  ·  hold OK: options  ·  ◀ menu  ·  hold Back: " + ButtonMap.action(remote, BtnScreen.Pages, BtnPress.BackHold).label.lowercase())
                 else -> Unit
@@ -884,6 +888,8 @@ private fun androidx.compose.foundation.layout.BoxScope.LiveTvLayer(
         tween(300, easing = FastOutSlowInEasing),
         label = "live",
     )
+    // (Read as a yes / no, so the glide doesn't redraw everything every frame.)
+    val grown by androidx.compose.runtime.remember { androidx.compose.runtime.derivedStateOf { liveShrink.value < 0.01f } }
     val list = channel?.let { hs.programsOf(it) }.orEmpty()
     val current = catchup ?: GuideViewModel.programAt(list, now)
     if (channel != null && !(hs.multiView && hs.fullscreen)) {
@@ -895,7 +901,9 @@ private fun androidx.compose.foundation.layout.BoxScope.LiveTvLayer(
             vm = playback,
             fullscreen = hs.fullscreen,
             browse = browsed?.let { Triple(it, browsedNow, browsedNow?.let { c -> browsedList.firstOrNull { p -> p.startTime >= c.endTime } }) },
-            bannerVisible = hs.bannerVisible && !hs.osdVisible && !hs.liveBehind && !hs.livePreview,
+            // (Only once the picture has finished growing to full screen: opening a channel from the guide showed the
+            // info bar during the glide, so it was seen resizing with the picture.)
+            bannerVisible = hs.bannerVisible && !hs.osdVisible && !hs.liveBehind && !hs.livePreview && grown,
             current = current,
             next = next,
             now = now,

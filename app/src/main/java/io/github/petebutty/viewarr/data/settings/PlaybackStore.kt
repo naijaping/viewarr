@@ -134,6 +134,18 @@ enum class SubtitleBackground(override val label: String) : RemoteChoice {
     Box("Dark box behind the text"),
 }
 
+/** Settings → Playback → Streams → Cached only: Usenet / torrent streams not marked instant are left out. */
+enum class CachedOnly(override val label: String) : RemoteChoice {
+    Off("Off"),
+    On("On"),
+}
+
+/** Settings → Playback → Streams → Try the next stream: when the one Play picked fails or doesn't start. */
+enum class StreamFallback(override val label: String) : RemoteChoice {
+    On("On"),
+    Off("Off"),
+}
+
 enum class StreamPick(override val label: String) : RemoteChoice {
     Choose("Let me choose from the list"),
     Auto("Play the best one automatically"),
@@ -209,6 +221,10 @@ data class PlaybackSettings(
     val subtitleColour: SubtitleColour = SubtitleColour.entries.first(),
     val subtitleBackground: SubtitleBackground = SubtitleBackground.entries.first(),
     val streamPick: StreamPick = StreamPick.entries.first(),
+    val cachedOnly: CachedOnly = CachedOnly.Off,
+    val streamFallback: StreamFallback = StreamFallback.On,
+    /** Auto-play match: the rules, in order, as saved (ui/media/StreamMatch.kt parse / save). */
+    val streamRules: String = "",
     val maxResolution: MaxResolution = MaxResolution.entries.first(),
     val buffer: BufferSize = BufferSize.entries.first(),
     val autoNext: AutoNext = AutoNext.entries.first(),
@@ -253,6 +269,9 @@ class PlaybackStore @Inject constructor(@ApplicationContext private val context:
             subtitleColour = p.read(SUB_COLOUR),
             subtitleBackground = p.read(SUB_BACKGROUND),
             streamPick = p.read(STREAM_PICK),
+            cachedOnly = p.read(CACHED_ONLY),
+            streamFallback = p.read(STREAM_FALLBACK),
+            streamRules = p[stringPreferencesKey(STREAM_RULES)].orEmpty(),
             maxResolution = p.read(MAX_RES),
             buffer = p.read(BUFFER),
             autoNext = p.read(AUTO_NEXT),
@@ -269,6 +288,10 @@ class PlaybackStore @Inject constructor(@ApplicationContext private val context:
 
     suspend fun set(key: String, value: Enum<*>) {
         context.playbackStore.edit { it[stringPreferencesKey(key)] = value.name }
+    }
+
+    suspend fun setText(key: String, value: String) {
+        context.playbackStore.edit { if (value.isBlank()) it.remove(stringPreferencesKey(key)) else it[stringPreferencesKey(key)] = value }
     }
 
     suspend fun reset() {
@@ -299,6 +322,9 @@ class PlaybackStore @Inject constructor(@ApplicationContext private val context:
         const val SUB_COLOUR = "sub_colour"
         const val SUB_BACKGROUND = "sub_background"
         const val STREAM_PICK = "stream_pick"
+        const val CACHED_ONLY = "cached_only"
+        const val STREAM_FALLBACK = "stream_fallback"
+        const val STREAM_RULES = "stream_rules"
         const val MAX_RES = "max_res"
         const val BUFFER = "buffer"
         const val AUTO_NEXT = "auto_next"

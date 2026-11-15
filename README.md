@@ -28,12 +28,13 @@ Viewarr doesn't provide any content. It plays only what your own servers and acc
 - **Sports**: follow teams and leagues and see which channel shows each game.
 - **No Dispatcharr?** Use an IPTV provider's Xtream Codes login or an M3U playlist, and save several sources.
 - **Films and shows** from Plex, Jellyfin, Emby, your addons and your IPTV provider, with Netflix-style rows, full libraries with sort, filter and A–Z, and your **streaming services** in the menu.
-- **One Play button** that picks the best copy you have; hold OK on Play to choose the source yourself.
+- **One Play button** that picks the best copy you have; hold OK on Play to choose the source yourself. **Auto-play match** rules (4K, Dolby Vision, Atmos, English…) decide which addon stream plays, with **Cached only** and **Try the next stream** if one fails.
 - **Watch progress for IPTV films and shows** too: Resume, watched ticks and Continue watching, kept on the box for each profile (Dispatcharr and Xtream keep none).
 - **Skip intro, next episode** and a **mini player** that keeps a film going while you browse.
 - **Music** from Navidrome, Plex, Jellyfin or Emby, with lyrics, the queue, song radio, artist pages and a spinning vinyl Now Playing.
 - **An info bar you arrange yourself**, in **11 styles** from glass to a soft fade: show, hide and move its buttons, and add extras such as Favourite, Last channel, Audio sync, a Sleep timer and TV settings. Browse channels in it without changing until you press OK. Press Down for **rows you choose** under it: next episodes, Continue watching, favourite or recent channels, what's on now and more.
-- **Frame rate matching** for films and live TV (the TV switches to 50 Hz for UK channels), with frame-rate badges on the info bar.
+- **Frame rate matching** for films and live TV (the TV switches to 50 Hz for UK channels), with frame-rate badges on the info bar; for films and shows the TV switches as they open, with the frame rate from Plex, Jellyfin or Emby, so the sound works from the start.
+- **Source switching without a break**: the channel keeps playing while its backup stream opens, then swaps in; stalled streams reconnect by themselves, and the info bar shows which provider you're on.
 - **Every remote button your way**, with TiviMate and Viewarr presets.
 - **Your setup saved on Dispatcharr**, so a new TV picks it up. *(Profiles for everyone in the house, and sharing with friends in another house, are coming soon.)*
 - **Easy setup** from your phone with a QR code, and **Search settings** to find any option by name.

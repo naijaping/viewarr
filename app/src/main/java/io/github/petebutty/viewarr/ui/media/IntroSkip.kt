@@ -47,6 +47,7 @@ object NextUp {
             // Just the season and episode, and when it came out (Peter: no name or running time). ▶ the one playing.
             title = (if (current == ep.season to ep.number) "▶  " else "") + "S${ep.season} · E${ep.number}",
             subtitle = null,
+            centred = true,
             note = released(ep.airDate),
             image = ep.still ?: fallbackArt,
             fallbackImage = fallbackArt,

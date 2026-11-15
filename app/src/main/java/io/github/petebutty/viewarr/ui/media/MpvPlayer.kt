@@ -114,15 +114,13 @@ fun MpvPlayer(
     val menu = remember { PlayerMenu() }
     // What's playing (poster, synopsis): the Info button, the Details button, or a moment after pausing.
     var detailsOn by panels::detailsOn
-    var pausedLong by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
     var hasFocus by remember { mutableStateOf(false) }
     var subText by remember { mutableStateOf("") }
     val scrub = remember { Scrubber() }
     // Still drawing straight to the screen (Hardware); false once picture subtitles moved this film to the GPU.
     var direct by remember { mutableStateOf(settings.mpvDecoding == MpvDecoding.Hardware) }
-    val thumbs = remember(stream) { io.github.petebutty.viewarr.playback.SeekThumbs.forStream(stream.url, stream.headers, stream.thumbs.takeIf { io.github.petebutty.viewarr.ui.theme.AppColors.palette.serverPreviews }, stream.boxPreviews && io.github.petebutty.viewarr.ui.theme.AppColors.palette.boxPreviews) }
-    DisposableEffect(thumbs) { onDispose { thumbs?.close() } }
+    val thumbs = rememberFilmThumbs(stream)
 
     val mpv = remember(stream) {
         MpvHandle(context).apply {
@@ -305,26 +303,12 @@ fun MpvPlayer(
     // Shrunk to the corner (picture-in-picture): just the picture; the page has the remote.
     // (The menu over it counts too: the player lets go of the remote and its controls.)
     val mini = VodHost.mini || VodHost.behind
-    LaunchedEffect(mini) {
-        if (mini) { menu.open = false; tracksOpen = false; transOpen = false; syncOpen = false; tvOpen = false; detailsOn = false; if (scrub.active) scrub.cancel(); osdUntil = 0L; return@LaunchedEffect }
-        repeat(3) { awaitFrame(); takeFilmFocus(focus) }
-    }
-    val searchOpen = io.github.petebutty.viewarr.ui.common.LocalQuickSearchOpen.current
-    LaunchedEffect(hasFocus, tracksOpen, transOpen, syncOpen, tvOpen, searchOpen, mini) {
-        if (!hasFocus && !(tracksOpen || transOpen || syncOpen || tvOpen) && !searchOpen && !mini) { delay(150); takeFilmFocus(focus) }
-    }
     // Repaint the clock for the auto-hiding controls.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { delay(500); now = System.currentTimeMillis() } }
 
     fun showOsd() { osdUntil = System.currentTimeMillis() + io.github.petebutty.viewarr.ui.theme.AppColors.palette.controlsMs }
-    // Back: closes audio & subtitles, then hides the controls, then stops (resume point saved). As Netflix / Plex.
-    // Back one step: closes what's open, then the last step (corner, or stop: Settings → Remote → Picture-in-picture).
-    // The Live TV hub (Settings → Remote & navigation → Style): Back's last step sends the film to the corner (as
-    // live TV goes to the guide's preview), and the controls have the live TV shortcuts and their rows. Classic: Back
-    // stops the film, no shortcuts.
-    // The TV guide button and the live TV shortcuts: always (they were the Live TV hub style's).
-    val hubOn = true
+    // Back, one step at a time (FilmControls.kt filmBackStep): what's open closes, then the mini player.
     fun backStep() = filmBackStep(panels, menu, scrub, skip, onClose, hideOsd = { osdUntil = 0L }, showOsd = ::showOsd)
     BackHandler(enabled = !mini) { backStep() }
 
@@ -341,16 +325,7 @@ fun MpvPlayer(
         val t = if (sid == "no" || sid == "false") -1 else sid?.toIntOrNull()?.minus(1)
         return a to t
     }
-    // Live TV hub: the TV guide first (live TV comes first there).
-    // As you've arranged them (hold OK on one to edit; see BarLayout).
-    val barAppearance: io.github.petebutty.viewarr.ui.settings.AppearanceViewModel = androidx.hilt.navigation.compose.hiltViewModel()
-    val barOpts: io.github.petebutty.viewarr.ui.settings.UiOptsViewModel = androidx.hilt.navigation.compose.hiltViewModel()
-    val buttons = filmButtons(menu, canSwitch = onSwitchPlayer != null)
-    val remoteSettings = io.github.petebutty.viewarr.data.settings.LocalRemote.current
-    // The remote: shared with the built-in player (VodKeys).
-    val keys = remember { VodKeys(scrub, menu) }
     // The remote's Play / Pause with the film in the corner (HomeState): this player while it's the one playing.
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { if (VodHost.remote != null) VodHost.remote = null } }
     val remote = object : VodRemote {
         override val positionMs get() = (position * 1000).toLong()
         override val durationMs get() = (duration * 1000).toLong()
@@ -360,39 +335,15 @@ fun MpvPlayer(
         override fun pause() = mpv.setPropertyBoolean("pause", true)
         override val playing get() = !paused
     }
-    // The info bar's buttons: shared with the other player (FilmControls.kt).
-    fun press(b: PlayerButton) {
-        val switch = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f((position * 1000).toLong(), a, t) } } }
-        if (pressFilmButton(b, remote, panels, menu, onClose, switch, barOpts::set)) showOsd()
-    }
-    androidx.compose.runtime.SideEffect { VodHost.remote = remote }
-    val hooks = filmHooks(buttons, remote, panels, menu, scrub, skip, (seekSec * 1000).toLong(), press = ::press, showOsd = ::showOsd,
-        osdShowing = { System.currentTimeMillis() < osdUntil }, backStep = ::backStep, onClose = onClose, barAppearance = barAppearance)
-    // The controls close after a while without a key (not while paused).
-    LaunchedEffect(paused) {
-        pausedLong = false
-        // Paused (the Play / Pause button or the remote's): the film's info shows straight away; playing hides it.
-        if (paused) pausedLong = true else detailsOn = false
-    }
-    // (Not while a shortcut's menu is open or one is being moved: they'd be left behind.)
-    LaunchedEffect(menu.open, menu.lastKey, paused, menu.scOptions, menu.scMoving, menu.scRows, io.github.petebutty.viewarr.ui.player.CardMenu.open) {
-        if (menu.scOptions != null || menu.scMoving || menu.scRows != null || io.github.petebutty.viewarr.ui.player.CardMenu.open != null) return@LaunchedEffect
-        if (menu.open && !paused) { delay(maxOf(8_000L, 2 * io.github.petebutty.viewarr.ui.theme.AppColors.palette.controlsMs)); menu.open = false }
-    }
+    // Carry on in the built-in player, with the tracks in use.
+    val switchPlayer = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f((position * 1000).toLong(), a, t) } } }
+    // The info bar, the remote, the timers and focus: shared with the built-in player (FilmShared.kt).
+    val wiring = rememberFilmWiring(remote, panels, menu, scrub, skip, (seekSec * 1000).toLong(), switchPlayer, onClose, showOsd = ::showOsd,
+        osdShowing = { System.currentTimeMillis() < osdUntil }, backStep = ::backStep)
+    val buttons = wiring.buttons
+    FilmEffects(panels, menu, scrub, paused, mini, hasFocus, focus, hideOsd = { osdUntil = 0L })
 
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .focusRequester(focus)
-            .onFocusChanged { hasFocus = it.isFocused }
-            .focusable(enabled = !(tracksOpen || transOpen || syncOpen || tvOpen) && !(mini && !VodHost.gliding))
-            .onPreviewKeyEvent { e ->
-                if (VodHost.eatsBack(e)) return@onPreviewKeyEvent true
-                if ((tracksOpen || transOpen || syncOpen || tvOpen)) return@onPreviewKeyEvent false
-                keys.handle(e, remote, hooks)
-            },
-    ) {
+    Box(Modifier.filmKeys(focus, panels, mini, { hasFocus = it }, wiring, remote)) {
         // Settings → Playback → Video view: Standard draws into a SurfaceView with a buffer fixed at the screen's
         // size, so moving or shrinking the view (the corner) never changes what mpv draws into (no reconfiguring).
         if (settings.videoView == io.github.petebutty.viewarr.data.settings.VideoView.Standard) AndroidView(
@@ -459,16 +410,11 @@ fun MpvPlayer(
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp, start = 120.dp, end = 120.dp)
                 .then(if (settings.subtitleBackground == io.github.petebutty.viewarr.data.settings.SubtitleBackground.Box) Modifier.background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(4.dp)).padding(horizontal = 10.dp, vertical = 4.dp) else Modifier),
         )
-        val osdVisible = paused || buffering || now < osdUntil || scrub.active || menu.open
         // Until the first picture: the loading screen (backdrop, breathing logo); then the controls carry the logo.
         var started by remember(stream) { mutableStateOf(false) }
         if (!buffering && position > 0) started = true
-        if (!mini && started && (detailsOn || (paused && pausedLong && !(tracksOpen || transOpen || syncOpen || tvOpen) && !scrub.active))) PlayerDetails(stream.title, art)
-        if (!mini && osdVisible && started) PlayerOsd(
-            stream.title, (position * 1000).toLong(), (duration * 1000).toLong(), paused, buffering,
-            scrub.targetMs, thumbs, Modifier.align(Alignment.BottomCenter), logo = art?.logo,
-            from = stream.from,
-            bufferedMs = (cachedTo * 1000).toLong(),
+        val state = FilmState((position * 1000).toLong(), (duration * 1000).toLong(), (cachedTo * 1000).toLong(), paused, buffering, started,
+            osdVisible = paused || buffering || now < osdUntil || scrub.active || menu.open,
             // The badges: the film's own picture, frame rate and sound, as mpv reads them.
             quality = runCatching {
                 io.github.petebutty.viewarr.ui.player.StreamQuality(
@@ -476,37 +422,15 @@ fun MpvPlayer(
                     (mpv.getPropertyDouble("container-fps") ?: 0.0).toFloat(),
                     mpv.getPropertyInt("audio-params/channel-count") ?: 0,
                 )
-            }.getOrNull(),
-            buttons = filmOsdButtons(buttons, menu, paused, "the built-in player"),
-            editingButtons = menu.open && menu.editing,
-            buttonFocus = if (menu.open && !menu.onBar && !menu.onShortcuts && !menu.onEpisodes) menu.focusIndex(buttons) else -1,
-            barFocused = menu.open && menu.onBar,
-            shortcuts = if (menu.open && menu.onShortcuts) io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge.items.map { it.first } else null,
-            shortcutFocus = menu.shortcut, shortcutMoving = menu.scMoving,
-            shortcutsHint = false,
-            downRows = if (menu.open && menu.onEpisodes) FilmShortcuts.downRows(menu.withNext) else null,
-            downRow = menu.downRow,
-            episodeFocus = menu.episode,
-            rows = if (menu.open && menu.onRows) io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge.rowsFor(menu.shortcut) else null,
-            rowFocus = menu.row, cardFocus = menu.card,
-        )
-        if (!mini && started && !menu.open && !scrub.active && !(tracksOpen || transOpen || syncOpen || tvOpen) && !osdVisible) IntroSkipPill(skip, Modifier.align(Alignment.BottomEnd).padding(end = 40.dp, bottom = 36.dp))
-        // Holding OK on a shortcut or a card: their menus (shared with the other player).
-        FilmShortcutDialogs(menu)
-        PlayerLoading(stream.title, art, visible = !mini && !started && error == null)
+            }.getOrNull())
+        FilmOverlays(stream, art, state, mini, panels, menu, scrub, skip, buttons, thumbs, "the built-in player", error, focus,
+            holdOsd = { show -> osdUntil = if (show) Long.MAX_VALUE else 0L }) {
+            MpvTrackPicker(mpv, subtitlesFirst = tracksSubs, onSwitchPlayer = switchPlayer, onClose = { tracksOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
+        }
         if (!mini && stats.isNotEmpty()) Text(
             stats, fontSize = 13.sp, color = Color.White,
             modifier = Modifier.align(Alignment.TopStart).padding(24.dp).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp)).padding(12.dp),
         )
-        error?.let {
-            Text(it, fontSize = 18.sp, color = Color.White, modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.7f)).padding(20.dp))
-        }
-        if (tracksOpen && !mini) MpvTrackPicker(mpv, subtitlesFirst = tracksSubs, onSwitchPlayer = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f((position * 1000).toLong(), a, t) } } }, onClose = { tracksOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
-        if (transOpen && !mini) io.github.petebutty.viewarr.ui.player.TransparencyPanel(onClose = { transOpen = false; takeFilmFocus(focus) },
-            // On its info bar rows: the film's bar up behind it, while they're being changed.
-            onInfoBar = { show -> osdUntil = if (show) Long.MAX_VALUE else 0L })
-        if (syncOpen && !mini) io.github.petebutty.viewarr.ui.player.AvSyncPanel(onClose = { syncOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
-        if (tvOpen && !mini) io.github.petebutty.viewarr.ui.player.TvSettingsPanel(onClose = { tvOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
     }
 }
 

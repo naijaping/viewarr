@@ -89,7 +89,7 @@ The guide shows **3 days** ahead by default. Change it in **Settings → Live TV
 
 The info bar shows the channel, what's on now and next, and badges for the stream. Change it in **Settings → Appearance → Info bar & controls**:
 
-- **Pop-up glass**: from see-through to solid. Every pop-up follows it.
+- **Pop-up glass**: 0% (solid) to 100% (clear) see-through. The info bar and every pop-up follow it.
 - **Info bar: border**, **Info bar: channel number** and **Info bar: episode numbers**: each on or off.
 - **Info bar: picture quality**: badges for the picture (HD · FHD · 4K, or 720p · 1080p · 2160p, or off) and 5.1 sound.
 - **Info bar: frame rate**: a badge with the stream's frames per second.
@@ -180,7 +180,9 @@ Each window counts as a stream on your provider. Dispatcharr's failover to a bac
 
 *(Dispatcharr admin users only.)*
 
-- **Source**: see every stream behind a channel (and which provider it's from) and switch Dispatcharr to another one from the remote.
+- **Source**: see every stream behind a channel (and which provider it's from) and switch to another one from the remote. The channel keeps playing while the new stream opens in the background, then it swaps in (usually 1–3 seconds, no black or loading screen). If that stream's provider is busy (for example a backup allowing one connection, already in use), you stay on the current one with a note. While on a stream you picked, Dispatcharr's own automatic failover doesn't watch it; changing channel goes back to normal. *(0.28.5 and later.)*
+- **The provider on the info bar**: where the channel's stream is coming from (your provider, or a backup), always shown; Settings → Appearance → **Info bar: source** turns it off.
+- **Stalled streams**: live TV stuck loading for 8 seconds after it had been playing (Dispatcharr moving to a backup, a provider hiccup) reconnects by itself.
 - **Stream info**: Dispatcharr's live view of the channel: source, provider, resolution, codecs, bitrate and viewers.
 
 Both are in the live TV controls (**OK** while watching).

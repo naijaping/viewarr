@@ -17,7 +17,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
-import io.github.petebutty.viewarr.data.settings.GuideBack
 import io.github.petebutty.viewarr.data.settings.GuideLeft
 import io.github.petebutty.viewarr.data.settings.MediaBack
 import io.github.petebutty.viewarr.data.settings.MenuBack
@@ -232,7 +231,10 @@ fun RemoteSettingsScreen(onBack: () -> Unit, part: RemotePart = RemotePart.Butto
             places.forEach { (screen, place) ->
                 when {
                     // Back and Left step through the guide and pages first, so they have their own choices there.
-                    screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Guide && press == io.github.petebutty.viewarr.data.settings.BtnPress.Back -> add(item(place, "Back first jumps to what's on now. On now: back to full screen, ask to exit, or the menu.", k.GUIDE_BACK, all<GuideBack>(), s.guideBack))
+                    screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Guide && press == io.github.petebutty.viewarr.data.settings.BtnPress.Back -> {
+                        add(item("In the TV guide: jump to now first", "Scrolled away from what's on now, Back first comes back to now, and the next Back goes full screen (something playing) or does what's set below (as TiviMate's \"Use Back to return to current programs\"). Off: Back does its job straight away.", k.GUIDE_BACK_NOW, all<io.github.petebutty.viewarr.data.settings.GuideBackNow>(), s.guideBackNow))
+                        add(item(place, "With a channel or film playing, Back always goes back to it full screen. With nothing playing: ask to exit, or open the menu. (Ask to exit needs another way to the menu, such as Menu set to Main menu; without one, Back opens the menu.)", k.GUIDE_BACK, listOf(io.github.petebutty.viewarr.data.settings.GuideBack.NowThenExit, io.github.petebutty.viewarr.data.settings.GuideBack.Menu), s.guideBack))
+                    }
                     // (Left in the guide and on the first poster work one way since 0.28.3: no choice to make.)
                     screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Guide && press == io.github.petebutty.viewarr.data.settings.BtnPress.Left -> Unit
                     screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Pages && press == io.github.petebutty.viewarr.data.settings.BtnPress.Back -> {
@@ -252,9 +254,9 @@ fun RemoteSettingsScreen(onBack: () -> Unit, part: RemotePart = RemotePart.Butto
             "Presets", "Set every button at once, then change any you like: each button below lists what it does in the TV guide, on live TV, in films and in menus.",
             listOf(
                 presetRow(io.github.petebutty.viewarr.data.settings.ControlPreset.Viewarr, "Use Viewarr buttons",
-                    "TiviMate's buttons with a few changes. The guide: Left carries on back into catch-up (no hold), hold OK the record options, Back jumps to now then the menu, the colour buttons record, groups and a day back / forward. Live TV: Up / Down change channel, OK the controls, Left / Right rewind and skip, hold Play for live. Search and extra buttons go back to standard too."),
+                    "TiviMate's buttons with a few changes. The guide: Left carries on back into catch-up (no hold), Back jumps to now then the menu, the colour buttons record, groups and a day back / forward. Live TV: Up / Down change channel, OK the controls, Left / Right rewind and skip, hold Play for live. Search and extra buttons go back to standard too."),
                 presetRow(io.github.petebutty.viewarr.data.settings.ControlPreset.TiviMate, "Use TiviMate buttons",
-                    "As TiviMate comes. Live TV: Up / Down change channel, OK the controls, Left the channel list, Right the channel before, Menu the main menu. The guide: Left back a programme (on now: the channel groups); Back back to the player. Search and extra buttons go back to standard too."),
+                    "As TiviMate comes. Live TV: Up / Down change channel, OK the controls, Left the channel list, Right the channel before, Menu the main menu. The guide: Left back a programme (on now: the channel groups); hold OK the record options; Back back to the player. Search and extra buttons go back to standard too."),
                 shareRow,
             ),
         ),

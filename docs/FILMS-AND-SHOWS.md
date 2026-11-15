@@ -87,6 +87,14 @@ Title logos also show on the Movies and Shows header and in the player. While a 
 
 **Hold OK on Play** (or on an episode) to pick the source yourself: your copies, IPTV, and your addons' streams, which are searched as soon as the list opens.
 
+#### Which addon stream plays
+
+With **Addon streams** set to play the best one automatically, Viewarr picks from your addons' streams: within your quality limit first, instant (⚡) ones first, then the highest resolution. To change that:
+
+- **Settings → Playback → Auto-play match**: rules for one thing each (4K, 1080p, 720p, REMUX, Dolby Vision, HDR, HEVC / x265, Atmos, TrueHD, DTS-HD, 5.1, English, Not CAM / TS…). Switch on the ones you want (each jumps to the top as you do) and sort them by importance (Right picks one up, Up / Down move it). The top rule decides first; among the streams it matches, the next one decides, and so on. **Add your own…** takes a word or a regex. It only picks; the lists stay as they are.
+- **Streams → Cached only**: leave out Usenet and torrent streams that aren't instant, in the lists too.
+- **Streams → Try the next stream** (on as standard): if the stream fails or hasn't started after 20 seconds, the next one plays (up to 3 more). Built-in player only.
+
 Shows get **Play / Resume S·E**, carrying on from Plex, Jellyfin / Emby or Trakt.
 
 Also on title pages:
@@ -147,7 +155,7 @@ All are in **Settings → Playback → Episodes**.
 
 ### The mini player
 
-- **Back** from a film or episode keeps it playing in the window at the top left while you browse.
+- **Back** from a film or episode keeps it playing in the window at the top left, over its page (where you started it). **Settings → Playback → Episodes → Back from a film → The TV guide and menu** takes you to the TV guide with the menu open instead.
 - **Back** on the mini player brings it full screen again.
 - **Hold Back**, full screen or mini, closes the player. So does **Stop**. Your place is saved.
 - The film controls' **Settings** button keeps it playing in the window while you change things.
@@ -163,7 +171,7 @@ All are in **Settings → Playback → Episodes**.
 
 If the built-in player can't play a file, Viewarr switches to mpv by itself at the same moment. You can also switch mid-film from the controls, keeping your soundtrack and subtitles. To use mpv for everything, choose it in **Settings → Playback → Player**.
 
-For smooth playback on weak boxes, mpv draws straight to the screen, the TV can switch to the film's frame rate (**Match frame rate**), and surround passthrough only uses formats your TV or receiver really accepts. See [Troubleshooting](TROUBLESHOOTING.md#picture-and-sound) for more.
+For smooth playback on weak boxes, mpv draws straight to the screen, the TV can switch to the film's frame rate (**Match frame rate**: as it opens, behind the loading screen, using the frame rate Plex, Jellyfin or Emby gives, so the sound works from the start; without one the TV is left as it is), and surround passthrough only uses formats your TV or receiver really accepts. See [Troubleshooting](TROUBLESHOOTING.md#picture-and-sound) for more.
 
 **Settings → Playback** also covers audio and subtitle language, surround passthrough, stereo downmix, night mode, subtitle size and colour, resume, and Plex quality. See [Settings](SETTINGS.md#playback).
 

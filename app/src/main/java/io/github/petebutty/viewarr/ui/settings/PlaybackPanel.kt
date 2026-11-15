@@ -28,6 +28,7 @@ class PlaybackSettingsViewModel @Inject constructor(
     fun set(key: String, value: RemoteChoice) = viewModelScope.launch { store.set(key, value as Enum<*>) }
     fun setRemote(key: String, value: RemoteChoice) = viewModelScope.launch { remoteStore.set(key, value as Enum<*>) }
     fun reset() = viewModelScope.launch { store.reset() }
+    fun setText(key: String, value: String) = viewModelScope.launch { store.setText(key, value) }
 }
 
 private inline fun <reified E> choices(): List<RemoteChoice> where E : Enum<E>, E : RemoteChoice = enumValues<E>().toList()
@@ -92,10 +93,16 @@ fun playbackCategories(vm: PlaybackSettingsViewModel = hiltViewModel(), opts: Ui
             listOf(
                 optItem(opts, "Play order", "Where Play looks for a film or episode, in turn, playing the first that works. Hold OK on Play (or on an episode) to pick from every source yourself.", io.github.petebutty.viewarr.ui.theme.UiOpts.PLAY_ORDER),
                 item("Addon streams", "Choose from the list yourself, or let Viewarr start the best cached stream within your quality limit.", k.STREAM_PICK, choices<io.github.petebutty.viewarr.data.settings.StreamPick>(), s.streamPick),
+                item("Cached only", "Leave out Usenet and torrent streams that aren't instant (marked ⚡ by your addon), in the lists and when Viewarr picks. Plain web streams always stay.", k.CACHED_ONLY, choices<io.github.petebutty.viewarr.data.settings.CachedOnly>(), s.cachedOnly),
+                item("Try the next stream", "If the addon stream Viewarr picked fails, or hasn't started after 20 seconds, the next one plays instead (up to 3 more). The built-in player only.", k.STREAM_FALLBACK, choices<io.github.petebutty.viewarr.data.settings.StreamFallback>(), s.streamFallback),
                 item("Best quality allowed", "Streams above this are listed last and never auto-picked. Match the TV works out 4K or 1080p for you.", k.MAX_RES, choices<io.github.petebutty.viewarr.data.settings.MaxResolution>(), s.maxResolution),
                 item("Plex quality", "Original plays the file itself and converts only if the TV can't. Lower settings always convert, for slow Wi-Fi.", k.PLEX_QUALITY, choices<io.github.petebutty.viewarr.data.settings.PlexQuality>(), s.plexQuality),
                 item("Buffer", "How much video is loaded ahead. Large helps on patchy internet; small helps boxes with little memory.", k.BUFFER, choices<io.github.petebutty.viewarr.data.settings.BufferSize>(), s.buffer),
             ),
+        ),
+        SettingCategory(
+            "Auto-play match", "Which addon stream Viewarr starts when it picks one itself: switch on what you want and sort it by importance, top first. Streams matching the top rule win; among those, the next rule decides, and so on. The rest is the usual order (instant first, then the highest resolution, within Best quality allowed). The lists to choose from aren't changed.",
+            streamRuleItems(s.streamRules) { vm.setText(k.STREAM_RULES, it) },
         ),
         SettingCategory(
             "Episodes", "Watching shows: skipping intros and credits, and the next episode.",
@@ -104,6 +111,7 @@ fun playbackCategories(vm: PlaybackSettingsViewModel = hiltViewModel(), opts: Ui
                 item("Skip credits", "During the credits: a Next episode button (OK plays it straight away; a film just ends), moved on by itself, or off. From the same places as the intros.", k.SKIP_CREDITS, choices<io.github.petebutty.viewarr.data.settings.SkipMode>(), s.skipCredits),
                 item("Play next episode automatically", "When an episode ends, the next one plays. Near the end (as the credits start, if they're marked) a countdown card shows it: OK plays it now, Back hides the card.", k.AUTO_NEXT, choices<io.github.petebutty.viewarr.data.settings.AutoNext>(), s.autoNext),
                 optItem(opts, "After a film or episode", "When it ends, or you stop it (Stop): stay where you were (its page, or wherever you started it), or back to live TV on the channel you were watching. (Back makes it the mini player instead.)", io.github.petebutty.viewarr.ui.theme.UiOpts.AFTER_FILM),
+                optItem(opts, "Back from a film", "Back on a full-screen film or episode makes it the mini player: over its own page (where you started it, usually its title page), or over the TV guide with the menu open on Live TV. Hold Back still stops it.", io.github.petebutty.viewarr.ui.theme.UiOpts.FILM_BACK),
                 optSlider(opts, "Next episode countdown", "How long the countdown runs before the next episode plays (Left / Right, 5 seconds at a time). It starts with the credits, or that long before the end, and always finishes before the episode does. No wait: straight on.", io.github.petebutty.viewarr.ui.theme.UiOpts.UP_NEXT_S, io.github.petebutty.viewarr.ui.theme.AppColors.palette.upNextSeconds / 5),
             ),
         ),
@@ -158,7 +166,7 @@ fun playbackCategories(vm: PlaybackSettingsViewModel = hiltViewModel(), opts: Ui
 /** Playback's settings back to how they come (the Playback page's Reset). */
 fun playbackReset(vm: PlaybackSettingsViewModel, opts: UiOptsViewModel) {
     vm.reset()
-        opts.reset(listOf(io.github.petebutty.viewarr.ui.theme.UiOpts.CONTROLS_TIME, io.github.petebutty.viewarr.ui.theme.UiOpts.CONTROLS_SIZE, io.github.petebutty.viewarr.ui.theme.UiOpts.SEEK_PREVIEWS, io.github.petebutty.viewarr.ui.theme.UiOpts.UP_NEXT, io.github.petebutty.viewarr.ui.theme.UiOpts.UP_NEXT_S, io.github.petebutty.viewarr.ui.theme.UiOpts.AFTER_FILM, io.github.petebutty.viewarr.ui.theme.UiOpts.MINI_SIZE, io.github.petebutty.viewarr.ui.theme.UiOpts.MINI_CORNER, io.github.petebutty.viewarr.ui.theme.UiOpts.CORNER_FOCUS, io.github.petebutty.viewarr.ui.theme.UiOpts.ANIM_FILM, io.github.petebutty.viewarr.ui.theme.UiOpts.ANIM_LIVE, io.github.petebutty.viewarr.ui.theme.UiOpts.LIVE_CORNER, io.github.petebutty.viewarr.ui.theme.UiOpts.STILL_WATCHING, io.github.petebutty.viewarr.ui.theme.UiOpts.LOW_MEMORY))
+        opts.reset(listOf(io.github.petebutty.viewarr.ui.theme.UiOpts.CONTROLS_TIME, io.github.petebutty.viewarr.ui.theme.UiOpts.CONTROLS_SIZE, io.github.petebutty.viewarr.ui.theme.UiOpts.SEEK_PREVIEWS, io.github.petebutty.viewarr.ui.theme.UiOpts.UP_NEXT, io.github.petebutty.viewarr.ui.theme.UiOpts.UP_NEXT_S, io.github.petebutty.viewarr.ui.theme.UiOpts.AFTER_FILM, io.github.petebutty.viewarr.ui.theme.UiOpts.FILM_BACK, io.github.petebutty.viewarr.ui.theme.UiOpts.MINI_SIZE, io.github.petebutty.viewarr.ui.theme.UiOpts.MINI_CORNER, io.github.petebutty.viewarr.ui.theme.UiOpts.CORNER_FOCUS, io.github.petebutty.viewarr.ui.theme.UiOpts.ANIM_FILM, io.github.petebutty.viewarr.ui.theme.UiOpts.ANIM_LIVE, io.github.petebutty.viewarr.ui.theme.UiOpts.LIVE_CORNER, io.github.petebutty.viewarr.ui.theme.UiOpts.STILL_WATCHING, io.github.petebutty.viewarr.ui.theme.UiOpts.LOW_MEMORY))
 }
 
 /** Settings → Playback on its own (Settings now opens it through the layout: SettingsMap). */

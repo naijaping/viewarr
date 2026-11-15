@@ -40,9 +40,9 @@ object SettingsMap {
             Section("Glass & transparency", "Left / Right on the sliders: how much shows through. Solid hides what's behind completely.",
                 r(A, "Transparency", "Glass", "Glass colour", "Guide", "Wallpaper dimming") + r(A, "Live TV", "Pop-up glass", "Info bar: border")),
             Section("TV guide", "How the TV guide and the channel list look.",
-                r(A, "Live TV", "Channel numbers", "Channel logos", "Programme corners", "Progress bars", "Episode numbers", "Timeline", "Catch-up icons", "Programme pictures")),
+                r(A, "Live TV", "Channel numbers", "Channel logos", "Programme corners", "Progress bars", "Episode numbers", "Channel list progress", "Highlighted progress colour", "Timeline", "Catch-up icons", "Programme pictures")),
             Section("Info bar & controls", "The bar over live TV and films (when you change channel or press OK / Info), and the film controls.",
-                r(A, "Live TV", "Info bar style", "Info bar corners", "Info bar size", "Info bar width", "Preview cards", "Info bar: channel number", "Info bar: episode numbers", "Info bar: picture quality", "Info bar: frame rate", "Rows under the info bar") +
+                r(A, "Live TV", "Info bar style", "Info bar corners", "Info bar size", "Clock on the info bar", "Info bar width", "Preview cards", "Info bar: channel number", "Info bar: episode numbers", "Info bar: picture quality", "Info bar: source", "Info bar: frame rate", "Rows under the info bar") +
                     r(P, "Player", "Player controls size")),
             Section("Menu", "How the menu on the left looks: headings, colours, hints and marks.",
                 r(A, "Main menu", "List headings", "Source in the Live TV heading", "Colour edge", "Colour tint", "Icon column", "Left / Right hints", "TV mark on channel groups", "LIVE mark") +
@@ -75,6 +75,7 @@ object SettingsMap {
             Section("Audio", "Language, surround sound and volume.", all(P, "Audio")),
             Section("Subtitles", "When subtitles show, and in which language.", r(P, "Subtitles", "Show subtitles", "Language")),
             Section("Streams", "Quality, Plex and addon streams.", all(P, "Streams")),
+            Section("Auto-play match", "Which addon stream plays when Viewarr picks: rules sorted by importance.", all(P, "Auto-play match")),
             Section("Episodes", "Watching shows: skipping intros and credits, and the next episode.", all(P, "Episodes")),
             Section("Trailers", "YouTube trailers for films and shows.", all(P, "Trailers")),
             Section("Music", "Where lyrics come from.", r(P, "Music", "Lyrics from LRCLIB")),

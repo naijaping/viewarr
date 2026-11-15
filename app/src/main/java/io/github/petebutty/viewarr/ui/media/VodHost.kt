@@ -34,6 +34,8 @@ class VodSource(
     /** Progress for [stream]: always the one that reported it (the old episode's last "stopped" arrives after the next
      *  one has started, and was being counted against the new one). */
     val onProgress: (stream: VodStream, state: String, positionMs: Long, durationMs: Long) -> Unit = { _, _, _, _ -> },
+    /** The title playing (for reopening its page if Android clears Viewarr in the background: ResumeSpot). */
+    val item: () -> io.github.petebutty.viewarr.data.media.MediaItem? = { null },
 )
 
 /**

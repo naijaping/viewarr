@@ -1,5 +1,6 @@
 package io.github.petebutty.viewarr.ui.media
 
+import io.github.petebutty.viewarr.ui.common.glass
 import io.github.petebutty.viewarr.ui.common.instantFocusScale
 import io.github.petebutty.viewarr.ui.common.popupScroll
 import io.github.petebutty.viewarr.ui.common.followingSetting
@@ -139,7 +140,7 @@ fun MediaScreen(
     val detail by vm.detail.collectAsStateWithLifecycle()
     val playingStream by vm.playing.collectAsStateWithLifecycle()
     // The player itself is above every page (VodHost), so it can shrink to a corner. Shrunk, this page is in use again.
-    val vodSource = remember(vm) { VodSource(vm.playing, vm.playerArt, vm::stopPlaying, vm::reportProgress) }
+    val vodSource = remember(vm) { VodSource(vm.playing, vm.playerArt, vm::stopPlaying, vm::reportProgress, item = { vm.playingItem ?: vm.detail.value?.detail?.item }) }
     LaunchedEffect(playingStream) { if (playingStream != null) VodHost.show(vodSource) }
     val playing = playingStream.takeIf { !VodHost.mini }
     // A whole library being browsed (menu → Movies / Shows → a library), shown instead of the rows.
@@ -299,7 +300,9 @@ fun MediaScreen(
     val overLive = io.github.petebutty.viewarr.ui.common.LiveBehind.on && searchHeader == null
     Box(Modifier.fillMaxSize().then(when {
         searchHeader != null -> Modifier
-        overLive -> Modifier.background(AppColors.palette.main.copy(alpha = 0.35f + 0.5f * AppColors.palette.menuAlpha))
+        // Over live TV: as see-through as the Glass setting says (0% solid … 100% nearly clear; a touch stays so the
+        // text can be read).
+        overLive -> Modifier.background(AppColors.palette.main.copy(alpha = maxOf(0.12f, AppColors.palette.menuAlpha)))
         else -> Modifier.appBackground(titleArt = true)
     })) {
         // A library's grid has no hero: the background follows the highlighted title here too (it kept the last
@@ -447,7 +450,7 @@ fun MediaScreen(
             Text(
                 text, fontSize = 16.sp, color = AppColors.TextPrimary,
                 modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp)
-                    .background(AppColors.Panel.copy(alpha = 0.95f), RoundedCornerShape(24.dp))
+                    .glass(24.dp)
                     .padding(horizontal = 24.dp, vertical = 10.dp),
             )
         }
@@ -1655,7 +1658,7 @@ private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entr
     LaunchedEffect(ui.episodes) { ui.episodes?.let { lastEpisodes = it } }
     val target = ui.episodes?.let { eps ->
         val next = if (ui.upTo()?.first == ui.season) eps.indexOfFirst { it.number == ui.upTo()?.second }
-            else if (ui.nextUp?.first == ui.season) eps.indexOfFirst { it.number == ui.nextUp?.second } else -1
+            else ui.upTo()?.let { up -> if (up.first == ui.season) eps.indexOfFirst { it.number == up.second } else -1 } ?: -1
         if (next >= 0) next else eps.indexOfFirst { e -> !watched(e.season, e.number) }.coerceAtLeast(0)
     } ?: -1
     // The row starts at the episode you're up to.
@@ -1861,9 +1864,9 @@ private fun UpNextOverlay(ep: io.github.petebutty.viewarr.data.media.EpisodeInfo
         while (left > 0) { delay(1_000); left-- }
         onPlay()
     }
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)).trapFocus(), contentAlignment = Alignment.BottomEnd) {
+    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f * AppColors.palette.popupAlpha)).trapFocus(), contentAlignment = Alignment.BottomEnd) {
         Column(
-            Modifier.padding(56.dp).width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp),
+            Modifier.padding(56.dp).width(520.dp).glass(14.dp).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("Next episode in $left s", fontSize = 14.sp, color = AppColors.Accent)
@@ -1895,7 +1898,7 @@ private fun QuickOptions(item: MediaItem, vm: MediaViewModel, onTrailer: () -> U
         val hasRow = remember(item.key) { vm.hasCollectionRow(item) }
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
             Column(
-                Modifier.width(420.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(20.dp).trapFocus().then(Modifier.ignoreHeldOk()),
+                Modifier.width(420.dp).glass(14.dp).padding(20.dp).trapFocus().then(Modifier.ignoreHeldOk()),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 Text(item.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
@@ -1914,7 +1917,7 @@ private fun QuickOptions(item: MediaItem, vm: MediaViewModel, onTrailer: () -> U
     io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
             Column(
-                Modifier.width(420.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(20.dp).trapFocus()
+                Modifier.width(420.dp).glass(14.dp).padding(20.dp).trapFocus()
                     .then(Modifier.ignoreHeldOk()),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
@@ -2285,8 +2288,8 @@ private fun AddonStreamItems(hasAddons: Boolean, streams: List<StreamOption>?, m
         streams.isEmpty() -> Text("Your addons found nothing for this.", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(vertical = 6.dp, horizontal = 12.dp))
         else -> streams.take(25).forEach { s ->
             io.github.petebutty.viewarr.ui.common.MenuItem(
-                text = s.addon + " · " + s.name.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" "),
-                selected = false, trailing = s.description.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(40),
+                // (Addons' own names run to several lines of emoji: a short summary, and where it comes from.)
+                text = StreamLabel.summary(s), selected = false, trailing = StreamLabel.from(s),
                 onClick = { onPick(s) }, modifier = mod(),
             )
         }

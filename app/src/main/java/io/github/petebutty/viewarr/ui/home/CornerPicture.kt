@@ -1,5 +1,6 @@
 package io.github.petebutty.viewarr.ui.home
 
+import io.github.petebutty.viewarr.ui.common.glass
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -148,7 +149,7 @@ internal fun CornerPictureMenu(film: Boolean, onFullScreen: () -> Unit, onCloseP
         // The held Back that opened it: its release mustn't close it straight away.
         var backDown by remember { mutableStateOf(false) }
         Column(
-            Modifier.width(400.dp).background(AppColors.Panel, RoundedCornerShape(14.dp))
+            Modifier.width(400.dp).glass(14.dp)
                 .onPreviewKeyEvent { e ->
                     if (e.key != Key.Back) return@onPreviewKeyEvent false
                     if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) { backDown = true; false } else !backDown

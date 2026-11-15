@@ -30,6 +30,10 @@ class FilmPanels {
     var tvOpen by mutableStateOf(false)
     /** What's playing (poster, synopsis): the Info / Details buttons, or a moment after pausing. */
     var detailsOn by mutableStateOf(false)
+    /** Paused for a moment: the film's info shows. */
+    var pausedLong by mutableStateOf(false)
+    /** A panel over the film has the remote. */
+    val anyOpen get() = tracksOpen || transOpen || syncOpen || tvOpen
 
     /** A panel with its own remote handling is open (the player's keys stand aside). */
     val anyPanel get() = tracksOpen || transOpen || syncOpen || tvOpen
@@ -107,13 +111,15 @@ fun pressFilmButton(
 }
 
 /**
- * Full screen to the mini player (Back's last step, or the remote's minimise): always the menu, open on Live TV,
- * with the TV guide behind (not the film's title page, or wherever it was started from). Peter's rule; live TV's
- * Back goes to the guide instead. Buttons that open something over the film (a page, Settings, Search, the guide) go there instead.
+ * Full screen to the mini player (Back's last step, or the remote's minimise): over the page it was started from (its
+ * title page, usually), as standard since 0.28.5; or, set so, the menu open on Live TV with the TV guide behind. Buttons that open something over the film (a page, Settings, Search, the guide) go there instead.
  */
 fun minimiseToLiveTv(onClose: () -> Unit) {
     VodHost.minimise()
     if (!VodHost.active) { onClose(); return }
+    // Settings → Playback → Back from a film: its own page (standard since 0.28.5, Gtunney / Peter) leaves the mini
+    // player over the page it was started from (its title page, usually); "The TV guide and menu" opens those.
+    if (io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.FILM_BACK) != 1) return
     LiveShortcutsBridge.openMenuOnLiveTv()
 }
 

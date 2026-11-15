@@ -1,5 +1,37 @@
 # Viewarr changelog (built by tools/changelog.py from the GitHub releases; don't edit by hand)
 
+## 0.28.5 · 15 Nov 2026
+
+### Live TV
+- **Switching source** (the Source button) is quick and clean now: the channel keeps playing while the new stream opens in the background, then it swaps in, usually in 1–3 seconds, with no black, no hang and no second load. A busy backup just leaves you on the current one.
+- **Stalled streams reconnect by themselves**: live TV stuck loading for 8 seconds after it had been playing (Dispatcharr moving to a backup stream, for one) reconnects, as turning the channel off and on did.
+- **Your provider on the info bar** (Happy TV, a backup after switching…). Settings → Appearance → Info bar: source.
+- **Progress bars in the channel list**. Settings → Appearance → Live TV → Channel list progress.
+- The info bar waits until the picture has finished growing to full screen when you open a channel from the guide.
+
+### Films and shows
+- **Auto-play match** (Settings → Playback → Auto-play match): rules for one thing each (4K, 1080p, REMUX, Dolby Vision, HDR, HEVC, Atmos, 5.1, English, Not CAM / TS…), switched on and sorted by importance; add your own (a word or a regex).
+- **Cached only**: leave out Usenet / torrent streams that aren't instant.
+- **Try the next stream**: if the stream Viewarr picked fails or doesn't start in 20 seconds, the next one plays.
+- **Back from a film** goes to its own page now (Settings → Playback → Episodes → Back from a film, to have the TV guide and menu instead).
+- **Up next** checks the real season lengths: no more episodes that don't exist (S1 · E10 of a 9-episode season).
+- **Match frame rate for films and shows works like live TV**: the TV switches as it opens, behind the loading screen, using the frame rate Plex, Jellyfin or Emby gives, so the sound works from the start (it could go silent when the TV switched mid-film). Without a frame rate from the server, the TV is left as it is.
+
+### TV guide and remote
+- **Back in the guide**: with something playing it goes back to it full screen (jumping to now first); with nothing playing, ask to exit or the menu. New: **jump to now first** On / Off (Remote buttons → Back).
+- The TiviMate preset's hold OK in the guide opens the record options.
+- Right on Edit menus moves on.
+- Holding Left on what's on now (TiviMate layout) steps back one programme into catch-up, instead of racing past several.
+
+### Looks
+- **Transparency that does what it says**: Pop-up glass now goes from 0% (solid) to 100% (clear), and every info bar style, pop-up and notice follows it. Glass and Guide are exactly the percentage set (your current ones will look more see-through: about 20% / 40% is the old look).
+- **Clock on the info bar**: Settings → Appearance → Info bar & controls.
+
+### Also
+- If Android closes Viewarr while it's in the background, it opens where you were (the channel, the film's page or the page you were on).
+- Less memory used in the background, so Android closes it less often.
+- Season / episode / date centred under the Episodes cards; the info bar no longer jumps between rows; shorter addon stream names in Play from.
+
 ## 0.28.4 · 15 Nov 2026
 
 ### A new Viewarr button layout

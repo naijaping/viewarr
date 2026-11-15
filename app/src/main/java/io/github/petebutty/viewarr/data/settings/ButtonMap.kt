@@ -257,6 +257,19 @@ object ButtonMap {
     }
 
     /**
+     * The guide's Back on what's on now with nothing playing (Settings → Remote buttons → Back). "Ask to exit" needs
+     * another way to the main menu (Left on now, or a button every remote has set to Main menu); without one it opens
+     * the menu, so no setting leaves the guide with no way to the menu.
+     */
+    fun guideBack(s: RemoteSettings): GuideBack {
+        if (s.guideBack != GuideBack.NowThenExit || s.guideLeft == GuideLeft.NowMenu) return s.guideBack
+        val menuElsewhere = presses[BtnScreen.Guide].orEmpty().any {
+            it in everyRemote && claimedBy(s, it) == null && action(s, BtnScreen.Guide, it) == BtnAction.MainMenu
+        }
+        return if (menuElsewhere) GuideBack.NowThenExit else GuideBack.Menu
+    }
+
+    /**
      * Presses every remote has (Shield and Fire TV remotes have no colour, media or Info buttons), so only these can
      * take over a screen's core job from OK.
      */

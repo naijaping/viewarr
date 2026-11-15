@@ -140,6 +140,10 @@ data class VodStream(
     val resumeMs: Long = 0,
     /** Tried once if this one can't play (e.g. Plex transcoding when direct play fails). */
     val fallback: VodStream? = null,
+    /** The file's frame rate as its server lists it (Plex, Jellyfin / Emby), known before playing: Match frame rate switches first. */
+    val fps: Float? = null,
+    /** This is another addon stream, tried when the one before it fails or doesn't start (Settings → Playback → Try the next stream). */
+    val nextSource: Boolean = false,
     /** What to report watch progress for (Plex timeline, Trakt scrobble). */
     val watch: WatchTarget? = null,
     /** The server's own seek-bar previews, when it made them (else the box takes its own; see SeekThumbs). */

@@ -1,6 +1,7 @@
 @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package io.github.petebutty.viewarr.ui.home
 
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import io.github.petebutty.viewarr.ui.common.followingSetting
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -166,9 +167,14 @@ internal fun ChannelListOverlay(
             val count = list.size
             items(count, key = { v -> list.getOrNull(v)?.id ?: "x$v" }) { v ->
                 val ch = list.getOrNull(v) ?: return@items
-                val nowOn = GuideViewModel.programAt(programs[ch.id].orEmpty(), now)?.title
+                val nowProg = GuideViewModel.programAt(programs[ch.id].orEmpty(), now)
+                val nowOn = nowProg?.title
+                // Whether this row is the highlighted one, from its own button (for its progress bar's colour).
+                val rowSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+                val rowFocused by rowSource.collectIsFocusedAsState()
                 Surface(
                     onClick = { onPick(ch) },
+                    interactionSource = rowSource,
                     modifier = (if (ch.id == focusTarget) Modifier.focusRequester(focus) else Modifier)
                         .then(if (v == returnTo) Modifier.focusRequester(returnFocus) else Modifier)
                         .then(if (v == 0) Modifier.focusRequester(firstCh) else Modifier)
@@ -187,7 +193,7 @@ internal fun ChannelListOverlay(
                             true
                         } else Modifier)
                         .focusProperties { canFocus = epgFor == null }
-                        .onFocusChanged { if (it.isFocused) { focusedCh = ch; focusedV = v } }
+                        .onFocusChanged { if (it.isFocused || it.hasFocus) { focusedCh = ch; focusedV = v } }
                         .fillMaxWidth(),
                     scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
                     shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
@@ -214,6 +220,25 @@ internal fun ChannelListOverlay(
                         Column(Modifier.weight(1f)) {
                             Text(ch.name, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             nowOn?.let { Text(it, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            // Settings → Appearance → Live TV → Channel list progress: how far through what's on now.
+                            if (nowProg != null && nowProg.endTime > nowProg.startTime && AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_PROGRESS) == 0) {
+                                val f = ((now - nowProg.startTime).toFloat() / (nowProg.endTime - nowProg.startTime)).coerceIn(0f, 1f)
+                                // On the highlighted row (your highlight colour behind it): a solid white bar on a darker
+                                // track, so it stands out (it was faint, the row's text colour on the highlight).
+                                val highlighted = rowFocused
+                                // (Its colour: Settings → Appearance → Live TV → Highlighted progress colour.)
+                                val fill = if (!highlighted) AppColors.Accent else when (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_PROGRESS_COLOUR)) {
+                                    1 -> Color.Black
+                                    2 -> Color(0xFF9AA0A6)
+                                    3 -> AppColors.Accent
+                                    4 -> androidx.compose.ui.graphics.lerp(AppColors.Accent, Color.Black, 0.55f)
+                                    else -> Color.White
+                                }
+                                val track = if (highlighted) (if (fill == Color.Black) Color.White.copy(alpha = 0.35f) else Color.Black.copy(alpha = 0.3f)) else AppColors.TextPrimary.copy(alpha = 0.25f)
+                                Box(Modifier.padding(top = 4.dp).fillMaxWidth(0.85f).height(3.dp).background(track, RoundedCornerShape(2.dp))) {
+                                    Box(Modifier.fillMaxWidth(f).height(3.dp).background(fill, RoundedCornerShape(2.dp)))
+                                }
+                            }
                         }
                         if (ch.id == epgFor?.id) Text("›", fontSize = 18.sp, modifier = Modifier.padding(start = 6.dp))
                     }
@@ -222,7 +247,7 @@ internal fun ChannelListOverlay(
         }
         }
     }
-    epgFor?.let { ch -> ChannelPrograms(vm, ch, now, epgFocus, onLive = { onPick(ch) }, onCatchup = { onCatchup(ch, it) }, onFuture = { onFuture(ch, it) }) }
+    epgFor?.let { ch -> ChannelPrograms(vm, ch, now, epgFocus, onLive = { onPick(ch) }, onCatchup = { onCatchup(ch, it) }, onFuture = { onFuture(ch, it) }, embedded = embedded) }
     }
 }
 
@@ -239,6 +264,8 @@ internal fun ChannelPrograms(
     onLive: () -> Unit,
     onCatchup: (GuideProgram) -> Unit,
     onFuture: (GuideProgram) -> Unit,
+    /** In the menu strip, which already draws the glass behind: no second layer (it doubled, so it barely saw through). */
+    embedded: Boolean = false,
 ) {
     val programs by androidx.compose.runtime.produceState<List<GuideProgram>?>(null, ch.id) { value = runCatching { vm.programsFor(ch) }.getOrDefault(emptyList()) }
     val list = programs
@@ -257,7 +284,8 @@ internal fun ChannelPrograms(
     val catchupFrom = if (ch.catchupDays > 0) now - ch.catchupDays * 86_400_000L else Long.MAX_VALUE
     Box(
         Modifier.fillMaxHeight().width(440.dp)
-            .background(AppColors.Panel.copy(alpha = AppColors.palette.menuAlpha))
+            // The glass as Settings → Appearance → Transparency → Glass has it (and its colour).
+            .then(if (embedded) Modifier else Modifier.background(AppColors.MenuPanel))
             .padding(start = 16.dp, top = 24.dp, bottom = 24.dp, end = 20.dp),
     ) {
         Column {

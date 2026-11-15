@@ -112,7 +112,7 @@ fun appearanceCategories(vm: AppearanceViewModel = hiltViewModel(), opts: UiOpts
     val mains = MainColourChoices.mapIndexed { i, c -> Choice(MainColourNames.getOrElse(i) { "Colour ${i + 1}" }, c) }
     val onOff = listOf(Choice("On", true), Choice("Off", false))
     val corners = listOf(Choice("Rounded", false), Choice("Square", true))
-    val transparencies = (0..100 step 10).map { Choice(if (it == 0) "Solid" else "$it%", it) }
+    val transparencies = (0..100 step 10).map { Choice("$it%", it) }
     val currentT = ((palette.transparency * 100).roundToInt() / 10 * 10).coerceIn(0, 100)
     val currentG = ((palette.guideTransparency * 100).roundToInt() / 10 * 10).coerceIn(0, 100)
     val wallModes = io.github.petebutty.viewarr.ui.theme.WallpaperModes.map { (v, n) -> Choice(n, v) }
@@ -168,7 +168,7 @@ fun appearanceCategories(vm: AppearanceViewModel = hiltViewModel(), opts: UiOpts
         ),
         // Every transparency in one place, as sliders (Left / Right).
         SettingCategory(
-            "Transparency", "Left / Right on each: how much shows through. Solid hides what's behind completely.",
+            "Transparency", "Left / Right on each: how much shows through, from 0% (solid) to 100% (clear). It shows most over live TV, a film or a wallpaper; over a plain background there's little behind to see.",
             buildList {
                 add(SettingItem("Glass", "The menu strip on the left and the channel list, on every page and over video.", transparencies,
                     transparencies.first { it.value == currentT }, slider = true) { c -> vm.setTransparency(((c as Choice).value as Int) / 100f) })
@@ -190,10 +190,13 @@ fun appearanceCategories(vm: AppearanceViewModel = hiltViewModel(), opts: UiOpts
                     if (palette.squareCorners) corners[1] else corners[0]) { c -> vm.setSquareCorners((c as Choice).value == true) },
                 SettingItem("Progress bars", "The bar showing how far through each programme on now is: on every channel, only the channel you're watching, or none.", progressChoices,
                     progressChoices[palette.progressBars.coerceIn(0, 2)]) { c -> vm.setProgressBars((c as Choice).value as Int) },
+                optItem(opts, "Channel list progress", "A bar under each channel's programme in the channel list, showing how far through it is.", io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_PROGRESS),
+                optItem(opts, "Highlighted progress colour", "The progress bar's colour on the highlighted channel in the channel list (on your highlight colour, so it shows up).", io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_PROGRESS_COLOUR),
                 optItem(opts, "Channel logos", "Logos beside the channel names.", io.github.petebutty.viewarr.ui.theme.UiOpts.CHANNEL_LOGOS),
                 optItem(opts, "Info bar style", "How the info bar looks over live TV and films: Glass (the Viewarr look), Square glass, Pill (rounded ends), Fade (no panel, a dark fade up from the bottom), Full-width bar (edge to edge, like a TV box), Minimal (just the text and buttons), Faded glass (the glass panel, solid at the bottom and fading to clear at the top), Feathered glass (glass with no edges, melting into the picture), Side fade (dark behind the text on the left, the picture clear on the right), Outline (almost clear, a fine edge in your highlight colour) , Corner card (a smaller panel in the bottom left), Floating card (a solid card lifted off the picture, a shadow under it), Slim strip (a thin band along the bottom, a line of your highlight colour on top) or Frosted (milky light glass).", io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_STYLE),
                 optItem(opts, "Info bar corners", "How rounded the info bar's corners are (Glass).", io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_CORNERS),
                 optItem(opts, "Info bar size", "How big the info bar is drawn over live TV and films: its text, buttons and preview rows together. Smaller covers less of the picture.", io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_SIZE),
+                optItem(opts, "Clock on the info bar", "The time at the right of the info bar: live TV, its controls, and films.", io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_CLOCK),
                 optItem(opts, "Info bar width", "How wide the info bar is: the whole screen, or narrower and centred at the bottom (live TV and films alike).", io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_WIDTH),
                 optItem(opts, "Preview cards", "The size of the cards in the info bar's rows (next episodes, shortcuts).", io.github.petebutty.viewarr.ui.theme.UiOpts.CARD_SIZE),
                 optItem(opts, "Episode numbers", "Series and episode numbers after programme names (\"S15E4\") in the guide and the channel list.", io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_EPISODE),
@@ -206,11 +209,12 @@ fun appearanceCategories(vm: AppearanceViewModel = hiltViewModel(), opts: UiOpts
             ) + listOf(
                 // The info bar over live TV.
                 // The glass: the info bar and controls, and every pop-up (next episode, skip intro, reminders, notes).
-                optSlider(opts, "Pop-up glass", "Left / Right: how see-through the info bar, the player's controls and every pop-up are (record options, next episode, skip intro, reminders), up to solid.", io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_GLASS, io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_GLASS)),
+                optSlider(opts, "Pop-up glass", "Left / Right: how see-through the info bar, the player's controls and every pop-up and notice are (record options, next episode, skip intro, reminders, notes), from solid (0%) to clear (100%).", io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_SEE, io.github.petebutty.viewarr.ui.theme.AppColors.palette.popupSee),
                 optItem(opts, "Info bar: border", "The thin light edge round the glass.", io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_BORDER),
                 optItem(opts, "Info bar: channel number", "The channel's number at the left of the info bar.", io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_NUMBER),
                 optItem(opts, "Info bar: episode numbers", "Series and episode numbers after programme names (\"S2026E180\") in the info bar.", io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_EPISODE),
                 optItem(opts, "Info bar: picture quality", "Badges for the channel's picture (HD, FHD, 4K, or 720p, 1080p, 2160p) and 5.1 sound, from the stream itself.", io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_BADGES),
+                optItem(opts, "Info bar: source", "Live TV: your provider, always on the info bar. Through Dispatcharr with an admin login it's the provider of the stream playing right now (a backup after switching, or after Dispatcharr switched by itself); otherwise your Live TV source's name.", io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_SOURCE),
                 optItem(opts, "Info bar: frame rate", "A badge with the stream's frames per second (25, 50…).", io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_FPS),
                 infoRowsItem(),
             ),
@@ -276,7 +280,7 @@ optItem(opts, "Colour edge", "A thin bar down the edge of each list in your high
 fun appearanceReset(vm: AppearanceViewModel, opts: UiOptsViewModel) {
         vm.apply(ThemePresets[0].main, ThemePresets[0].highlight); vm.setTransparency(0f); vm.setGuideTransparency(0f)
         vm.setShowNumbers(true); vm.setHideMedia(false); vm.setWallpaper(0, 0, 0.6f); vm.resetTitleParts()
-        opts.reset(listOf(io.github.petebutty.viewarr.ui.theme.UiOpts.TEXT_SIZE, io.github.petebutty.viewarr.ui.theme.UiOpts.CLOCK, io.github.petebutty.viewarr.ui.theme.UiOpts.CHANNEL_LOGOS, io.github.petebutty.viewarr.ui.theme.UiOpts.CATCHUP_ICONS, io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_ART, io.github.petebutty.viewarr.ui.theme.UiOpts.BADGE_SOURCE, io.github.petebutty.viewarr.ui.theme.UiOpts.BADGE_PROGRESS))
+        opts.reset(listOf(io.github.petebutty.viewarr.ui.theme.UiOpts.TEXT_SIZE, io.github.petebutty.viewarr.ui.theme.UiOpts.CLOCK, io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_SEE, io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_GLASS, io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_CLOCK, io.github.petebutty.viewarr.ui.theme.UiOpts.CHANNEL_LOGOS, io.github.petebutty.viewarr.ui.theme.UiOpts.CATCHUP_ICONS, io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_ART, io.github.petebutty.viewarr.ui.theme.UiOpts.BADGE_SOURCE, io.github.petebutty.viewarr.ui.theme.UiOpts.BADGE_PROGRESS))
 }
 
 /** Settings → Appearance on its own (Settings now opens it through the layout: SettingsMap). */

@@ -1,5 +1,6 @@
 package io.github.petebutty.viewarr.ui.player
 
+import io.github.petebutty.viewarr.ui.common.glass
 import androidx.compose.foundation.horizontalScroll
 import io.github.petebutty.viewarr.ui.common.popupScroll
 import androidx.compose.ui.draw.alpha
@@ -27,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -225,6 +227,7 @@ fun PlayerOsd(
                 else if (paused) Badge("PAUSED · PLAY CARRIES ON FROM HERE")
                 // (The saved picture / sound, with the frame rate as it is now: it can become certain after the info bar was up.)
                 QualityBadges(LiveQuality.now?.let { q -> LiveQuality.fps?.let { q.copy(fps = it) } ?: q })
+                SourceBadge(vm.streamSource.collectAsState().value)
             },
             title = current?.let { if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_EPISODE) == 0) displayTitle(it) else it.title } ?: "No guide information",
             progress = {
@@ -589,7 +592,7 @@ private fun PosterRows(rows: List<OsdRow>, current: Int, more: Boolean = false, 
             .padding(top = 6.dp)
             // Dimmed while it's only a preview: a dark tint drawn over it (fading the whole row with alpha made the
             // TV draw it twice, every frame).
-            .drawWithContent { drawContent(); if (!inside) drawRect(Color.Black.copy(alpha = 0.5f)) }
+            .drawWithContent { drawContent(); if (!inside) drawRect(Color.Black.copy(alpha = 0.5f * AppColors.palette.popupAlpha)) }
             .onPreviewKeyEvent { e ->
                 if (!inside || e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (e.key) {
@@ -628,7 +631,7 @@ fun ShortcutOptions(sc: LiveShortcut, onMove: () -> Unit, onRefresh: (() -> Unit
         Column(
             // (Pressing here counts as using the controls, so they don't close behind it. The held OK that opened it,
             // still down and then let go, mustn't press Cancel: it closed at once.)
-            Modifier.width(420.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).onPreviewKeyEvent { onActivity(); false }.ignoreHeldOk().padding(24.dp),
+            Modifier.width(420.dp).glass(14.dp).onPreviewKeyEvent { onActivity(); false }.ignoreHeldOk().padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             // A pinned team / league (Settings → Sports): Unpin puts it back under the Sports shortcut. (Pinned ones sit
@@ -664,7 +667,7 @@ fun CardMenuHost(onActivity: () -> Unit = {}, beforeRun: (plays: Boolean) -> Uni
         val first = remember { FocusRequester() }
         LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
         Column(
-            Modifier.width(420.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).onPreviewKeyEvent { onActivity(); false }.ignoreHeldOk().padding(24.dp),
+            Modifier.width(420.dp).glass(14.dp).onPreviewKeyEvent { onActivity(); false }.ignoreHeldOk().padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(p.title, fontSize = 18.sp, color = AppColors.TextPrimary, maxLines = 2)
@@ -704,7 +707,7 @@ fun ChooseRowsDialog(sc: LiveShortcut, onSave: (List<String>?) -> Unit, onClose:
     fun close() { if (changed) onSave(on); onClose() }
     androidx.compose.ui.window.Dialog(onDismissRequest = ::close) {
         Column(
-            Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).onPreviewKeyEvent { onActivity(); false }.ignoreHeldOk().padding(24.dp),
+            Modifier.width(520.dp).glass(14.dp).onPreviewKeyEvent { onActivity(); false }.ignoreHeldOk().padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text("Rows under ${sc.label}", fontSize = 18.sp, color = AppColors.TextPrimary)
@@ -779,11 +782,16 @@ fun OsdCardContent(p: OsdPoster) {
 @Composable
 fun OsdCardCaption(p: OsdPoster, highlighted: Boolean) {
     // Big and bright enough to read from the sofa over the glass (12 / 11 pt in grey was too small and faint).
+    val align = if (p.centred) androidx.compose.ui.text.style.TextAlign.Center else null
+    val wide = if (p.centred) Modifier.fillMaxWidth() else Modifier
     Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = if (highlighted) Color.White else Color.White.copy(alpha = 0.88f), maxLines = 1,
-        overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
-    p.subtitle?.let { Text(it, fontSize = 13.sp, color = Color.White.copy(alpha = 0.78f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+        overflow = TextOverflow.Ellipsis, textAlign = align, modifier = wide.padding(top = 6.dp))
+    p.subtitle?.let { Text(it, fontSize = 13.sp, color = Color.White.copy(alpha = 0.78f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = align, modifier = wide) }
     // A line of its own (an episode's release date): it was cut off at the end of the subtitle.
-    p.note?.let { Text(it, fontSize = 13.sp, color = if (p.unreleased) AppColors.Accent else Color.White.copy(alpha = 0.78f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
+    p.note?.let { Text(it, fontSize = 13.sp, color = if (p.unreleased) AppColors.Accent else Color.White.copy(alpha = 0.78f), maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = align, modifier = wide) }
+    // Always room for a second line, so every row is the same height and the info bar doesn't jump when you move
+    // between rows (Recently added has only names; Episodes and Continue watching have a second line).
+    if (p.subtitle == null && p.note == null) Text(" ", fontSize = 13.sp, maxLines = 1)
 }
 
 /** A row's heading: its name, then the next row's (or that there are more on the shortcut's own page). */
@@ -1023,7 +1031,7 @@ private fun OptionPopup(
             .width(if (wide) 560.dp else 300.dp)
             // (Down past the last choice stayed in it: it went onto the buttons with the pop-up still open.)
             .trapFocus()
-            .background(AppColors.Panel, RoundedCornerShape(10.dp))
+            .glass(10.dp)
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
@@ -1060,7 +1068,7 @@ private fun StreamInfoPopup(vm: PlaybackViewModel) {
         }
     }
     Column(
-        Modifier.width(460.dp).background(AppColors.Panel, RoundedCornerShape(10.dp)).padding(horizontal = 16.dp, vertical = 10.dp),
+        Modifier.width(460.dp).glass(10.dp).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
         Text("On this box (the player)", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 4.dp))

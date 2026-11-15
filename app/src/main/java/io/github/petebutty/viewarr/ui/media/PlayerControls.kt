@@ -692,7 +692,10 @@ fun PlayerLoading(title: String, art: io.github.petebutty.viewarr.data.media.Pla
  */
 @Composable
 fun PlayerDetails(title: String, art: io.github.petebutty.viewarr.data.media.PlayerArt?, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.88f), 0.55f to Color.Black.copy(alpha = 0.6f), 1f to Color.Transparent))) {
+    // (The shade follows Settings → Appearance → Pop-up glass, so the paused controls on top look as set: it made
+    // the info bar look dark whatever the slider said. A little is kept so the synopsis can be read.)
+    val k = maxOf(0.3f, io.github.petebutty.viewarr.ui.theme.AppColors.palette.popupAlpha)
+    Box(modifier.fillMaxSize().background(Brush.horizontalGradient(0f to Color.Black.copy(alpha = 0.88f * k), 0.55f to Color.Black.copy(alpha = 0.6f * k), 1f to Color.Transparent))) {
         Row(Modifier.padding(start = 64.dp, top = 56.dp, end = 64.dp).fillMaxWidth(0.7f), verticalAlignment = Alignment.Top) {
             art?.poster?.let {
                 io.github.petebutty.viewarr.ui.common.PosterImage(it, null, Modifier.width(180.dp).height(270.dp).clip(RoundedCornerShape(10.dp)))

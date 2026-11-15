@@ -77,7 +77,6 @@ import io.github.petebutty.viewarr.ui.dvr.RecordingsScreen
 import io.github.petebutty.viewarr.data.media.VodStream
 import io.github.petebutty.viewarr.data.local.ChannelListItem
 import io.github.petebutty.viewarr.data.local.GuideProgram
-import io.github.petebutty.viewarr.data.settings.GuideBack
 import io.github.petebutty.viewarr.data.settings.LocalRemote
 import io.github.petebutty.viewarr.data.settings.MediaBack
 import io.github.petebutty.viewarr.data.settings.PlayerOk
@@ -298,7 +297,8 @@ class HomeState(
      * Onto [ch] full screen (the guide moves to it first): live, or [catchup] from catch-up. [endMultiView]: multi-view
      * closes; [keepIfPlaying]: no restart when it's the channel already playing.
      */
-    fun watchChannel(ch: ChannelListItem, catchup: GuideProgram? = null, endMultiView: Boolean = false, keepIfPlaying: Boolean = false, s: Session? = session) {
+    /** [full]: full screen (false: in the guide's window, as reopening where you left it can ask). */
+    fun watchChannel(ch: ChannelListItem, catchup: GuideProgram? = null, endMultiView: Boolean = false, keepIfPlaying: Boolean = false, s: Session? = session, full: Boolean = true) {
         vm.reveal(ch) {
             hs.page = Page.Tv
             when {
@@ -306,9 +306,9 @@ class HomeState(
                 !keepIfPlaying || playing?.id != ch.id -> playback.play(ch, s)
             }
             vm.selectChannel(ch.id)
-            hs.fullscreen = true
+            hs.fullscreen = full
             if (endMultiView) hs.multiView = false
-            showBanner()
+            if (full) showBanner()
         }
     }
 

@@ -57,15 +57,20 @@ fun TransparencyPanel(onClose: () -> Unit, onRow: (Int) -> Unit = {},
     BackHandler(onBack = onClose)
     // (name, value 0..1 as shown, lowest, highest)
     val wallpaperOn = p.wallpaperMode != 0
+    // What's shown and stepped from: kept here as well as saved, so quick presses each count (stepping from the saved
+    // value lost presses made before it came back from storage).
+    var menuT by remember { androidx.compose.runtime.mutableFloatStateOf(p.transparency) }
+    var guideT by remember { androidx.compose.runtime.mutableFloatStateOf(p.guideTransparency) }
+    var dim by remember { androidx.compose.runtime.mutableFloatStateOf(p.wallpaperDim) }
+    var popup by remember { mutableIntStateOf(p.popupSee) }
     val rows = buildList {
-        add(Triple("Channel list", p.transparency, 0f..1f))
-        add(Triple("Guide", p.guideTransparency, 0f..1f))
-        if (wallpaperOn) add(Triple("Wallpaper dimming", p.wallpaperDim, 0.3f..0.9f))
+        add(Triple("Menu & channel list", menuT, 0f..1f))
+        add(Triple("Guide", guideT, 0f..1f))
+        if (wallpaperOn) add(Triple("Wallpaper dimming", dim, 0.3f..0.9f))
     }
     // After the sliders: the glass's colour (◀ ▶ through them) and how solid the info bar and pop-ups are.
     val tints = io.github.petebutty.viewarr.ui.theme.GlassTints
     val tint = p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.GLASS_TINT).coerceIn(0, tints.lastIndex)
-    val popup = p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_GLASS).coerceIn(0, 10)
     val colourRow = rows.size
     val popupRow = rows.size + 1
     val last = popupRow
@@ -73,13 +78,13 @@ fun TransparencyPanel(onClose: () -> Unit, onRow: (Int) -> Unit = {},
     androidx.compose.runtime.DisposableEffect(Unit) { onDispose { onInfoBar(false) } }
     fun change(i: Int, dir: Int) {
         if (i == colourRow) { opts.set(io.github.petebutty.viewarr.ui.theme.UiOpts.GLASS_TINT, (tint + dir + tints.size) % tints.size); return }
-        if (i == popupRow) { opts.set(io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_GLASS, (popup + dir).coerceIn(0, 10)); return }
+        if (i == popupRow) { popup = (popup + dir).coerceIn(0, 10); opts.set(io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_SEE, popup); return }
         val (_, v, range) = rows[i]
         val next = ((v * 10).roundToInt() + dir).coerceIn((range.start * 10).roundToInt(), (range.endInclusive * 10).roundToInt()) / 10f
         when (i) {
-            0 -> vm.setTransparency(next)
-            1 -> vm.setGuideTransparency(next)
-            2 -> vm.setWallpaper(p.wallpaper, p.wallpaperStyle, next)
+            0 -> { menuT = next; vm.setTransparency(next) }
+            1 -> { guideT = next; vm.setGuideTransparency(next) }
+            2 -> { dim = next; vm.setWallpaper(p.wallpaper, p.wallpaperStyle, next) }
         }
     }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
@@ -117,7 +122,7 @@ fun TransparencyPanel(onClose: () -> Unit, onRow: (Int) -> Unit = {},
                     Row(Modifier.fillMaxWidth()) {
                         Text(name, fontSize = 16.sp, color = AppColors.TextPrimary, modifier = Modifier.weight(1f))
                         val pct = (v * 100).roundToInt()
-                        Text(if (i < 2 && pct == 0) "Solid" else "$pct%", fontSize = 16.sp, color = if (on) AppColors.Accent else AppColors.TextSecondary)
+                        Text("$pct%", fontSize = 16.sp, color = if (on) AppColors.Accent else AppColors.TextSecondary)
                     }
                     val frac = ((v - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
                     Box(Modifier.fillMaxWidth().height(6.dp).background(AppColors.TextSecondary.copy(alpha = 0.3f), RoundedCornerShape(3.dp))) {
@@ -156,7 +161,7 @@ fun TransparencyPanel(onClose: () -> Unit, onRow: (Int) -> Unit = {},
             ) {
                 Row(Modifier.fillMaxWidth()) {
                     Text("Info bar & pop-ups", fontSize = 16.sp, color = AppColors.TextPrimary, modifier = Modifier.weight(1f))
-                    Text(io.github.petebutty.viewarr.ui.theme.UiOpts.choices.getValue(io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_GLASS)[popup], fontSize = 16.sp,
+                    Text(io.github.petebutty.viewarr.ui.theme.UiOpts.choices.getValue(io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_SEE)[popup], fontSize = 16.sp,
                         color = if (row == popupRow) AppColors.Accent else AppColors.TextSecondary)
                 }
                 Box(Modifier.fillMaxWidth().height(6.dp).background(AppColors.TextSecondary.copy(alpha = 0.3f), RoundedCornerShape(3.dp))) {

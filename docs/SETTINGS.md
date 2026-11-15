@@ -48,8 +48,8 @@ Everything to do with how Viewarr looks, in sections:
 | **Theme** | **Background colour** (Viewarr's charcoal, or Classic blue, Ocean blue, Sky blue and others), **Highlight colour** (orange by default, including Bright cyan), **Text size**, **Font**, **Clock**, **Date format** (Tue 10 Nov, Tue, Nov 10, Tue 10/11 or Tue 11/10) and **Time format**. |
 | **Wallpaper** | None, one of sixteen built-in designs, or the artwork of the programme you've highlighted. |
 | **Glass & transparency** | **Glass**, **Glass colour**, **Guide**, **Wallpaper dimming**, **Pop-up glass** and the info bar's **border**. |
-| **TV guide** | Channel numbers, logos, **Programme corners**, progress bars, episode numbers, catch-up icons and programme pictures. |
-| **Info bar & controls** | **Info bar style** (Glass, Square glass, Pill, Fade, Full-width bar, Minimal, Faded glass, Feathered glass, Side fade, Outline, Corner card, Floating card, Slim strip or Frosted) and **corners**, **Info bar size** and **width**, **Preview cards**, **Rows under the info bar** (which rows each player shows when you press Down, and their order, with a preview), the channel number, episode numbers, picture-quality and frame-rate badges, and **Player controls size**. |
+| **TV guide** | Channel numbers, logos, **Programme corners**, progress bars, **Channel list progress** (a bar under each programme in the channel list) and its **Highlighted progress colour**, episode numbers, catch-up icons and programme pictures. |
+| **Info bar & controls** | **Info bar style** (Glass, Square glass, Pill, Fade, Full-width bar, Minimal, Faded glass, Feathered glass, Side fade, Outline, Corner card, Floating card, Slim strip or Frosted) and **corners**, **Info bar size** and **width**, **Clock on the info bar**, **Preview cards**, **Rows under the info bar** (which rows each player shows when you press Down, and their order, with a preview), the channel number, episode numbers, picture-quality, source (where the live stream comes from) and frame-rate badges, and **Player controls size**. |
 | **Menu** | Headings, colour edge and tint, hints, the TV and LIVE marks, and **Button hints**. |
 | **Posters** | **Library posters** size, **Where it's from** and **Progress bars**. |
 | **Title pages** | What a title page shows, and **Age ratings**. |
@@ -70,7 +70,7 @@ Every button on your remote, and what it does in the TV guide, on live TV, in fi
 
 | Section | Settings |
 |---|---|
-| **Start** | **App opens on**: live TV (**Last channel** plays the channel you watched last, full screen), the TV guide, or one of your libraries. |
+| **Start** | **App opens on**: live TV (**Last channel** plays the channel you watched last, full screen), the TV guide, or one of your libraries. If Android closes Viewarr while it's in the background (the Home button, another app), it opens where you were instead: the channel, the film's page, or the page you were on (within 6 hours). Leaving with Back or Exit starts fresh next time. |
 | **What the menu lists** | Which entries the main menu shows (Live now, Sports, Movies, Shows, Music, Recordings, Search and your streaming services). |
 | **Poster rows** | **Moving between rows** and **Poster position**. |
 
@@ -94,7 +94,8 @@ How the guide and info bar look is in **Appearance**. See [Live TV](LIVE-TV.md).
 | **Video** | **Match frame rate** (Off, Films and episodes, Live TV, or Both), **Picture size**, **Deinterlace**. |
 | **Audio** | **Language**, **Surround passthrough**, **Channels**, **Night mode**, **Volume boost**, **Lip sync**. |
 | **Subtitles** | **Show subtitles** and **Language** (how they look is in Appearance). |
-| **Streams** | **Addon streams**, **Best quality allowed**, **Plex quality**, **Buffer**. |
+| **Streams** | **Play order**, **Addon streams**, **Cached only**, **Try the next stream**, **Best quality allowed**, **Plex quality**, **Buffer**. |
+| **Auto-play match** | Rules (4K, 1080p, HEVC, Atmos, English…) switched on and sorted by importance; **Add your own…**; **Reset the rules**. |
 | **Episodes** | **Skip intros**, **Skip credits**, **Play next episode automatically**, **After a film or episode**, **Next episode countdown**. |
 | **Trailers** | **Trailer previews**, **Start after**, **Preview sound**. |
 | **Music** | **Lyrics from LRCLIB**. |

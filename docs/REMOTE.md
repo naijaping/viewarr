@@ -11,9 +11,9 @@ These are the **Viewarr** buttons (the default). Where the **TiviMate** preset d
 | TV guide | OK | Watch live, or replay a past programme. On a programme still to come: show its details. |
 | TV guide | Hold OK | Record options (this programme, or the series), and more |
 | TV guide | Left | Back a programme, and on into catch-up (tap or hold). It stops at the start of catch-up. TiviMate: on what's on now, the channel groups; hold Left for catch-up. |
-| TV guide, a channel in the window | Back | Full screen |
+| TV guide, a channel or film playing | Back | Jumps to now, then back to it full screen (one press with **jump to now first** off) |
+| TV guide, nothing playing | Back | Jumps to now, then the menu. TiviMate: jumps to now, then asks to exit. Change it in Remote buttons → Back: **jump to now first** (On / Off), and **In the TV guide** (ask to exit or open the menu). |
 | TV guide, a channel in the window | Hold Back | Close the player |
-| TV guide, nothing playing | Back | Jumps to now, then the menu. TiviMate: jumps to now, then full screen. |
 | TV guide, nothing playing | Hold Back | The menu, on the channel groups (Left again: the main menu) |
 | TV guide | Menu (≡) | The main menu |
 | TV guide | Play / pause, Info | The programme's details |
@@ -57,7 +57,7 @@ Remotes with **Guide** and **Record** buttons open the TV guide and record what'
 
 At the top, a preset sets every button at once. You can then change any you like.
 
-- **Use Viewarr buttons** (how Viewarr comes): TiviMate's buttons with a few changes. In the guide, Left carries on back into catch-up (no hold), hold OK opens the record options, Back jumps to now and then opens the menu, and the colour buttons record, open the groups and move a day. On live TV, Left / Right rewind and skip, and holding Play / pause goes back to live.
+- **Use Viewarr buttons** (how Viewarr comes): TiviMate's buttons with a few changes. In the guide, Left carries on back into catch-up (no hold), Back jumps to now and then opens the menu, and the colour buttons record, open the groups and move a day. On live TV, Left / Right rewind and skip, and holding Play / pause goes back to live.
 - **Use TiviMate buttons**: as TiviMate comes. Live TV: Up / Down change channel, OK the controls, Left the channel list, Right the channel before, Menu the main menu. The guide: Left on what's on now opens the channel groups (hold Left for catch-up); Back goes back to the player.
 
 Applying a preset sets every button, and puts the **Search button** back to Automatic and removes any **extra buttons** you'd taught, so nothing left over can clash with it.

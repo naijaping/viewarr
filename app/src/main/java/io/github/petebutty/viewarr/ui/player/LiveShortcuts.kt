@@ -17,6 +17,8 @@ import io.github.petebutty.viewarr.ui.common.AppIcons
 data class OsdPoster(
     val key: String,
     val title: String,
+    /** The caption centred under the picture (the Episodes row: S·E and its date). */
+    val centred: Boolean = false,
     val subtitle: String? = null,
     val image: String? = null,
     val logo: Boolean = false,

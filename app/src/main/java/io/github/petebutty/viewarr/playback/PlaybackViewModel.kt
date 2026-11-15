@@ -95,7 +95,8 @@ class PlaybackViewModel @Inject constructor(
     // ---------------------------------------------------------------- Dispatcharr: the channel's sources
 
     /** One of the streams behind a Dispatcharr channel (providers often have several copies of each channel). */
-    data class LiveSource(val streamId: Int, val name: String, val provider: String, val current: Boolean)
+    /** [hash]: Dispatcharr's own handle for playing this one stream directly (its "Preview Stream"), when it gives one. */
+    data class LiveSource(val streamId: Int, val name: String, val provider: String, val current: Boolean, val hash: String? = null)
 
     /** Live TV through Dispatcharr (not a provider login, not catch-up): sources and stream info are available. */
     val dispatcharrLive get() = session?.isDirect == false && _catchup.value == null
@@ -131,7 +132,8 @@ class PlaybackViewModel @Inject constructor(
                 val streams = ids.map { id -> id to http.get(api(s, "api/channels/streams/$id/"), h).body }
                 val current = statusCurrent ?: streams.firstOrNull { (_, st) -> (st.int("current_viewers") ?: 0) > 0 }?.first
                 val list = streams.map { (id, st) ->
-                    LiveSource(id, st.str("name") ?: "Stream $id", st.int("m3u_account")?.let { names[it] } ?: "", id == current)
+                    LiveSource(id, st.str("name") ?: "Stream $id", st.int("m3u_account")?.let { names[it] } ?: "",
+                        if (direct?.first == ch.id) id == direct?.third else id == current, st.str("stream_hash"))
                 }
                 if (status.code == 401 || status.code == 403) _sourceNote.value = ADMIN_ONLY
                 if (list.size < 2) _sourceNote.value = "This channel has only one source."
@@ -143,30 +145,235 @@ class PlaybackViewModel @Inject constructor(
         }
     }
 
-    /** Tells Dispatcharr to feed this channel from another of its streams, then reconnects to pick it up cleanly. */
+    /**
+     * Tells Dispatcharr to feed this channel from another of its streams, then reconnects to pick it up cleanly.
+     *
+     * One at a time, with a breather between (Peter, 2026-11-15, from the log): Dispatcharr takes the request at once
+     * but switches a second or two later, so reconnecting after a fixed 0.8 s got the old stream's buffer, the stream
+     * then changed under the player and it stalled; and letting go of the channel first could leave Dispatcharr with
+     * no viewer, stopping the channel and starting it again on its first stream (the switch undone). Now the player
+     * stays connected, Viewarr asks Dispatcharr until it says the new stream is the one playing, and only then
+     * reconnects, once. Presses meanwhile, or within a few seconds of the last switch, are turned away with a note.
+     */
     fun switchSource(src: LiveSource) {
         val s = session ?: return
         val ch = _channel.value ?: return
-        viewModelScope.launch {
-            val r = runCatching {
-                http.post(api(s, "proxy/ts/change_stream/${ch.uuid}"),
-                    kotlinx.serialization.json.buildJsonObject { put("stream_id", kotlinx.serialization.json.JsonPrimitive(src.streamId)) },
-                    apiHeaders(s))
-            }.getOrNull()
-            if (r != null && r.code in 200..299) {
-                _sourceNote.value = "Switched to ${src.name}"
-                _sources.value = _sources.value?.map { it.copy(current = it.streamId == src.streamId) }
-                delay(800)
-                restart()
-            } else {
-                _sourceNote.value = when (r?.code) {
-                    401, 403 -> ADMIN_ONLY
-                    null -> "No answer from Dispatcharr."
-                    else -> r.body.str("error") ?: "Dispatcharr couldn't switch (${r.code})."
+        val now = System.currentTimeMillis()
+        if (switching) { _sourceNote.value = "Still switching…"; return }
+        if (now - lastSwitchAt < SWITCH_GAP_MS) { _sourceNote.value = "One moment: the last switch is still settling."; return }
+        // The quick, clean way when Dispatcharr gives the stream's own handle: play it directly (see directSwitch).
+        if (src.hash != null && !s.isDirect && _catchup.value == null && livePausedAt == null) { directSwitch(src, ch, s); return }
+        switching = true
+        _sourceNote.value = "Switching to ${src.name}…"
+        // The picture held (paused, still connected so Dispatcharr keeps the channel) while it switches: the stream
+        // carrying on would show the join between the two streams (a freeze or glitch).
+        val held = player?.takeIf { it.playWhenReady }
+        held?.playWhenReady = false
+        switchJob = viewModelScope.launch {
+            var reconnected = false
+            try {
+                val r = runCatching {
+                    http.post(api(s, "proxy/ts/change_stream/${ch.uuid}"),
+                        kotlinx.serialization.json.buildJsonObject { put("stream_id", kotlinx.serialization.json.JsonPrimitive(src.streamId)) },
+                        apiHeaders(s))
+                }.getOrNull()
+                if (r == null || r.code !in 200..299) {
+                    _sourceNote.value = when (r?.code) {
+                        401, 403 -> ADMIN_ONLY
+                        null -> "No answer from Dispatcharr."
+                        else -> r.body.str("error") ?: "Dispatcharr couldn't switch (${r.code})."
+                    }
+                    return@launch
                 }
+                // Until Dispatcharr says the new stream is the one playing, and then until its pictures are actually
+                // coming in: Dispatcharr calls the switch done before it has connected to the new provider (1–2 s
+                // later), and a viewer joins 4 chunks back in its buffer, so reconnecting at once joined the old
+                // stream's tail to the new one and the picture froze there (Peter's log, 2026-11-15). So: the new
+                // stream's id, then its buffer 5 chunks on from there (all of a new viewer's start is the new stream).
+                fun num(st: io.github.petebutty.viewarr.data.remote.services.JsonResponse?, k: String) = (st?.body?.child(k) as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()?.toLong()
+                suspend fun status() = runCatching { http.get(api(s, "proxy/ts/status/${ch.uuid}"), apiHeaders(s)) }.getOrNull()?.takeIf { it.code in 200..299 }
+                // A new viewer starts this far behind live (Dispatcharr's own setting, 5 s as it comes): that much of
+                // the new stream must be in before the reconnect, or it starts on the old stream and hits the join.
+                val behindMs = behindLiveMs(s)
+                var from: Long? = null
+                var flowingAt = 0L
+                val done = kotlinx.coroutines.withTimeoutOrNull(behindMs + 10_000) {
+                    while (true) {
+                        val st = status()
+                        if (num(st, "stream_id") == src.streamId.toLong()) {
+                            val at = num(st, "buffer_index") ?: break
+                            val start = from ?: at.also { from = it }
+                            if (flowingAt == 0L && at > start) flowingAt = System.currentTimeMillis()
+                            if (flowingAt > 0 && System.currentTimeMillis() - flowingAt >= behindMs + 700) break
+                        }
+                        delay(250)
+                    }
+                    true
+                } == true
+                // Changed channel, went into catch-up or paused live meanwhile: leave it be.
+                if (_channel.value?.id != ch.id || _catchup.value != null || livePausedAt != null) return@launch
+                lastSwitchAt = System.currentTimeMillis()
+                android.util.Log.i("Playback", "source switch to ${src.streamId}: ${if (done) "confirmed" else "not confirmed in 8 s"}, reconnecting")
+                _sources.value = _sources.value?.map { it.copy(current = it.streamId == src.streamId) }
+                _sourceNote.value = "Switched to ${src.name}"
+                refreshStreamSource()
+                // The reconnect's own loading isn't a stall (the watch would reconnect again) while it's hidden.
+                quietUntil = System.currentTimeMillis() + SEAMLESS_MS
+                // Seamless: the same channel asked for again without stopping, so the last picture stays on screen
+                // (no black, no loading screen) until the new stream's first one replaces it.
+                val p = player
+                if (p == null) restart()
+                else {
+                    seamless = true
+                    reconnected = true
+                    p.setMediaItem(MediaItem.fromUri(liveUrl(s, ch)))
+                    p.prepare()
+                    p.play()
+                    // Not playing by then: the loading shows after all and the stall watch takes over (it sat showing
+                    // "playing" over a still picture otherwise).
+                    seamlessJob?.cancel()
+                    seamlessJob = viewModelScope.launch {
+                        delay(SEAMLESS_MS)
+                        seamless = false
+                        if (player?.playbackState == Player.STATE_BUFFERING) { _state.value = PlaybackState.Buffering; watchRebuffer() }
+                    }
+                }
+            } finally {
+                switching = false
+                // Not switched (refused, no answer, left meanwhile): the held picture carries on.
+                if (!reconnected && held != null && player === held && _channel.value?.id == ch.id && livePausedAt == null) held.playWhenReady = true
             }
         }
     }
+    @Volatile private var switching = false
+
+    /** Playing a channel's source directly (channel id, its address, stream id), else null. */
+    private var direct: Triple<Int, String, Int>? = null
+    private var directProvider: String? = null
+    /** A source's player getting ready, out of sight, during a switch (released if it's abandoned). */
+    private var pendingPlayer: ExoPlayer? = null
+
+    /**
+     * A source switch, make before break (Peter, 2026-11-15, from four agents' look at Dispatcharr and the players):
+     * the chosen stream is opened directly (Dispatcharr's own "Preview Stream" address, its own clean buffer: no join
+     * between two streams, no wait for Dispatcharr's behind-live start) in a second, silent player, as multi-view
+     * opens a window, while the channel carries on playing normally. Once it has pictures, it's swapped in (the screen
+     * moves to it, its sound comes on) and the old one is let go, which frees its provider connection at once.
+     * Refused or silent (the backup's provider busy, say a recording on TRex's one connection): the channel just
+     * carries on, with a note. While on a directly played source, Dispatcharr's own failover doesn't watch it; the
+     * next channel change is back to normal.
+     */
+    private fun directSwitch(src: LiveSource, ch: ChannelListItem, s: Session) {
+        switching = true
+        _sourceNote.value = "Switching to ${src.name}…"
+        val url = "${s.serverUrl.trimEnd('/')}/proxy/ts/stream/${src.hash}"
+        switchJob = viewModelScope.launch {
+            var swapped = false
+            val next = buildPlayer(s).apply {
+                volume = 0f
+                trackSelectionParameters = trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()
+                playWhenReady = true
+                setMediaItem(MediaItem.fromUri(url))
+                prepare()
+            }
+            pendingPlayer = next
+            try {
+                // Ready with a little in hand (up to 15 s: a provider can take a while to answer).
+                val ready = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                    while (true) {
+                        if (next.playerError != null) return@withTimeoutOrNull false
+                        if (next.playbackState == Player.STATE_READY && next.bufferedPosition - next.currentPosition >= 700) return@withTimeoutOrNull true
+                        delay(100)
+                    }
+                    @Suppress("UNREACHABLE_CODE") false
+                } == true
+                if (_channel.value?.id != ch.id || _catchup.value != null || livePausedAt != null) return@launch
+                if (!ready) {
+                    android.util.Log.i("Playback", "direct source ${src.streamId}: ${next.playerError?.errorCodeName ?: "not ready in 15 s"}")
+                    _sourceNote.value = "${src.provider.ifEmpty { src.name }} didn't answer (busy?). Still on the current one."
+                    return@launch
+                }
+                // The swap: the screen and the sound move to the new one, the old one goes.
+                val old = player
+                quietUntil = System.currentTimeMillis() + 5_000
+                attachListener(next)
+                next.trackSelectionParameters = next.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, false).build()
+                next.volume = old?.volume?.takeIf { it > 0f } ?: 1f
+                pendingPlayer = null
+                player = next
+                direct = Triple(ch.id, url, src.streamId)
+                directProvider = src.provider.ifEmpty { null }
+                _playerVersion.value++
+                old?.release()
+                swapped = true
+                lastSwitchAt = System.currentTimeMillis()
+                _state.value = PlaybackState.Playing
+                _sources.value = _sources.value?.map { it.copy(current = it.streamId == src.streamId) }
+                _sourceNote.value = "Switched to ${src.name}"
+                sourceJob?.cancel()
+                _streamSource.value = directProvider ?: _streamSource.value
+                android.util.Log.i("Playback", "direct source ${src.streamId}: swapped in")
+            } finally {
+                if (!swapped) { runCatching { next.release() }; if (pendingPlayer === next) pendingPlayer = null }
+                switching = false
+            }
+        }
+    }
+
+    /** Dispatcharr's "new client behind seconds" (how far behind live a viewer starts), read once per server; 5 s as it comes. */
+    private var behindLive: Pair<String, Long>? = null
+    private suspend fun behindLiveMs(s: Session): Long {
+        behindLive?.takeIf { it.first == s.serverUrl }?.let { return it.second }
+        val r = runCatching { http.get(api(s, "api/core/settings/"), apiHeaders(s)) }.getOrNull()?.takeIf { it.code in 200..299 }
+        val list = (r?.body as? kotlinx.serialization.json.JsonArray) ?: ((r?.body as? kotlinx.serialization.json.JsonObject)?.get("results") as? kotlinx.serialization.json.JsonArray)
+        val proxy = list?.firstOrNull { (it as? kotlinx.serialization.json.JsonObject)?.get("key")?.let { k -> (k as? kotlinx.serialization.json.JsonPrimitive)?.content } == "proxy_settings" } as? kotlinx.serialization.json.JsonObject
+        val value = proxy?.get("value")
+        val obj = (value as? kotlinx.serialization.json.JsonObject)
+            ?: (value as? kotlinx.serialization.json.JsonPrimitive)?.content?.let { runCatching { kotlinx.serialization.json.Json.parseToJsonElement(it) as? kotlinx.serialization.json.JsonObject }.getOrNull() }
+        val secs = (obj?.get("new_client_behind_seconds") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull() ?: 5.0
+        return (secs * 1000).toLong().coerceIn(0, 30_000).also { behindLive = s.serverUrl to it }
+    }
+
+    /**
+     * Where the channel's stream comes from, for the info bar, shown all the time (Settings → Appearance → Info bar:
+     * source; Peter, 2026-11-15): through Dispatcharr with an admin login, the provider account of the stream
+     * playing right now ("Happy TV", "TRex (backup)"), checked again every 30 s so Dispatcharr's own switch to a backup
+     * shows too; otherwise the Live TV source itself (its name, else its address).
+     */
+    private val _streamSource = MutableStateFlow<String?>(null)
+    val streamSource = _streamSource.asStateFlow()
+    private var sourceJob: Job? = null
+    private fun sourceLabel(s: Session) = s.name?.takeIf { it.isNotBlank() }
+        ?: runCatching { android.net.Uri.parse(s.serverUrl).host }.getOrNull()?.removePrefix("www.") ?: "Live TV"
+    private fun refreshStreamSource() {
+        val s = session ?: run { _streamSource.value = null; return }
+        val ch = _channel.value ?: return
+        // On a directly played source: its provider, as picked (the channel's own status is about the channel).
+        if (direct?.first == ch.id) { sourceJob?.cancel(); _streamSource.value = directProvider ?: sourceLabel(s); return }
+        sourceJob?.cancel()
+        sourceJob = viewModelScope.launch {
+            while (true) {
+                if (_channel.value?.id != ch.id) return@launch
+                val account = if (s.isDirect) null else {
+                    val st = runCatching { http.get(api(s, "proxy/ts/status/${ch.uuid}"), apiHeaders(s)) }.getOrNull()?.takeIf { it.code in 200..299 }
+                    fun str(k: String) = (st?.body?.child(k) as? kotlinx.serialization.json.JsonPrimitive)?.content?.takeIf { it.isNotBlank() && it != "null" }
+                    str("m3u_profile_name")?.removeSuffix(" Default")?.trim() ?: str("stream_name")
+                }
+                _streamSource.value = account ?: sourceLabel(s)
+                // Only Dispatcharr can change it underneath: look again now and then.
+                if (s.isDirect || account == null) return@launch
+                delay(30_000)
+            }
+        }
+    }
+
+    /** Reconnecting after a source switch: the loading state isn't shown (see switchSource). */
+    @Volatile private var seamless = false
+    private var switchJob: Job? = null
+    private var seamlessJob: Job? = null
+    private var lastSwitchAt = 0L
+    /** The stall watch leaves the stream alone until then (just after a source switch). */
+    private var quietUntil = 0L
 
     // ---------------------------------------------------------------- Dispatcharr: live stream info
 
@@ -231,6 +438,12 @@ class PlaybackViewModel @Inject constructor(
 
     private companion object {
         const val ADMIN_ONLY = "Dispatcharr only lets admin users switch sources and see stream info."
+        /** How long live TV may sit loading, with nothing new arriving, after it had been playing, before reconnecting. */
+        const val REBUFFER_MS = 8_000L
+        /** After a source switch: how long its reconnect may load without showing it (the last picture stays up). */
+        const val SEAMLESS_MS = 8_000L
+        /** The least time between two source switches (Dispatcharr's switch settling, the provider's connections). */
+        const val SWITCH_GAP_MS = 5_000L
     }
 
     private fun clockText(ms: Long): String {
@@ -241,6 +454,8 @@ class PlaybackViewModel @Inject constructor(
     /** Live stream address: Dispatcharr's proxy, or the IPTV provider's own stream. */
     private fun liveUrl(s: Session, channel: ChannelListItem) =
         when {
+            // On a source picked by playing it directly (see switchSource): reconnects stay on it.
+            direct?.first == channel.id -> direct!!.second
             s.isXc -> xtream.liveUrl(s, channel.id)
             s.isM3u -> channel.uuid // the playlist's own stream link
             else -> "${s.serverUrl.trimEnd('/')}/proxy/ts/stream/${channel.uuid}"
@@ -395,9 +610,13 @@ class PlaybackViewModel @Inject constructor(
                     }
                     override fun onPlaybackStateChanged(playbackState: Int) {
                         when (playbackState) {
-                            Player.STATE_BUFFERING -> _state.value = PlaybackState.Buffering
+                            // (A seamless source switch shows no loading: the last picture stays until the new one.)
+                            Player.STATE_BUFFERING -> { if (!seamless) _state.value = PlaybackState.Buffering; watchRebuffer() }
                             Player.STATE_READY -> {
+                                seamless = false
                                 retried = false
+                                rebufferJob?.cancel()
+                                if (_state.value != PlaybackState.Playing) { playedAt = System.currentTimeMillis(); if (sourceJob?.isActive != true) refreshStreamSource() }
                                 _state.value = PlaybackState.Playing
                             }
                             Player.STATE_ENDED -> {
@@ -418,6 +637,21 @@ class PlaybackViewModel @Inject constructor(
                     }
 
                     override fun onPlayerError(error: PlaybackException) {
+                        // The sound couldn't open (a stream changing over, an odd first audio frame, the HDMI link
+                        // re-syncing): straight back in, without the wait, a few times; it's nearly always fine on the
+                        // next try. (It waited 2 s, then reconnected: a few seconds of black.)
+                        if (error.errorCode in AUDIO_ERRORS) {
+                            val t = System.currentTimeMillis()
+                            if (t - audioWindow > 60_000) { audioWindow = t; audioRetries = 0 }
+                            if (audioRetries < 3) {
+                                audioRetries++
+                                _state.value = PlaybackState.Buffering
+                                retryJob?.cancel()
+                                // (Catch-up carries on where it was, not from the programme's start.)
+                                retryJob = viewModelScope.launch { delay(150); restartHere() }
+                                return
+                            }
+                        }
                         if (!retried) {
                             retried = true
                             _state.value = PlaybackState.Buffering
@@ -436,6 +670,47 @@ class PlaybackViewModel @Inject constructor(
                     }
                 })
     }
+
+    /**
+     * Stuck loading after it had been playing (Discord, 2026-11-15: a stream struggles, Dispatcharr moves the channel to
+     * its next stream on its side, and the player sat on "Buffering" on the old connection until the channel was
+     * turned off and on): after a few seconds with nothing new arriving, it reconnects to the channel, as turning it
+     * off and on did. Live only (catch-up waits: it's a recording, it comes); a few times, then the error shows.
+     */
+    private var rebufferJob: Job? = null
+    private var playedAt = 0L
+    private var reconnects = 0
+    private var reconnectWindow = 0L
+    private fun watchRebuffer() {
+        if (playedAt == 0L || _catchup.value != null) return // still starting: the start's own watch (stallJob) has it
+        if (System.currentTimeMillis() < quietUntil) return
+        rebufferJob?.cancel()
+        val p = player ?: return
+        val buffered = p.bufferedPosition
+        val chId = _channel.value?.id
+        rebufferJob = viewModelScope.launch {
+            delay(REBUFFER_MS)
+            val now = player ?: return@launch
+            // Still this channel, still live, still loading, and nothing more has come in meanwhile.
+            if (_channel.value?.id != chId || _catchup.value != null) return@launch
+            if (_state.value != PlaybackState.Buffering || now.bufferedPosition > buffered + 1_000) return@launch
+            // At most 4 a minute, however they go (a stream that never answers isn't asked for every 8 s for ever).
+            val t = System.currentTimeMillis()
+            if (t - reconnectWindow > 60_000) { reconnectWindow = t; reconnects = 0 }
+            if (reconnects >= 4) { _state.value = PlaybackState.Error("The stream keeps stopping. Try another channel or source."); return@launch }
+            reconnects++
+            android.util.Log.i("Playback", "stuck loading ${REBUFFER_MS / 1000} s after playing: reconnecting ($reconnects)")
+            restart()
+        }
+    }
+
+    /** Sound that couldn't open or be written: retried at once (see onPlayerError), [audioRetries] times per stream. */
+    private val AUDIO_ERRORS = setOf(
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_INIT_FAILED,
+        PlaybackException.ERROR_CODE_AUDIO_TRACK_WRITE_FAILED,
+    )
+    private var audioRetries = 0
+    private var audioWindow = 0L
 
     // Zapping: the channel (its name, guide info) changes at once, but its stream is asked for only once you stop on
     // one. Each request starts the channel on Dispatcharr and takes a provider connection, held a few seconds after
@@ -549,8 +824,10 @@ class PlaybackViewModel @Inject constructor(
 
     private fun start(channel: ChannelListItem, program: GuideProgram?, s: Session, url: String, startAt: Long = 0) {
         val p = ensurePlayer(s)
-        retryJob?.cancel()
-        if (_channel.value?.id != channel.id || _catchup.value != program) retried = false
+        retryJob?.cancel(); rebufferJob?.cancel(); seamlessJob?.cancel(); seamless = false
+        if (_channel.value?.id != channel.id || program != null) switchJob?.cancel()
+        if (direct?.first != channel.id) { direct = null; directProvider = null }
+        if (_channel.value?.id != channel.id || _catchup.value != program) { retried = false; audioRetries = 0; reconnects = 0; playedAt = 0L; _streamSource.value = null }
         _channel.value = channel
         _catchup.value = program
         if (program == null) catchupOffset = 0
@@ -665,6 +942,9 @@ class PlaybackViewModel @Inject constructor(
         _paused.value = !p.playWhenReady
     }
 
+    /** Again from here: live at the live edge, catch-up where it had got to. */
+    private fun restartHere() = restart(if (_catchup.value != null) _position.value.first else 0)
+
     fun retry() {
         retried = false
         restart(if (_catchup.value != null) _position.value.first else 0)
@@ -673,7 +953,8 @@ class PlaybackViewModel @Inject constructor(
     /** Releases the stream (and the provider connection) when the app goes to the background. */
     fun pause() {
         // (A channel change, catch-up seek or stall check still waiting would start the stream again in the background.)
-        retryJob?.cancel(); zapJob?.cancel(); seekJob?.cancel(); stallJob?.cancel()
+        retryJob?.cancel(); zapJob?.cancel(); seekJob?.cancel(); stallJob?.cancel(); rebufferJob?.cancel(); switchJob?.cancel(); sourceJob?.cancel(); seamlessJob?.cancel()
+        pendingPlayer?.let { runCatching { it.release() } }; pendingPlayer = null
         player?.let { p -> _catchup.value?.let { c -> _position.value = (catchupOffset + p.currentPosition) to (c.endTime - c.startTime) } }
         player?.stop()
     }
@@ -690,7 +971,9 @@ class PlaybackViewModel @Inject constructor(
     }
 
     fun stop() {
-        retryJob?.cancel(); zapJob?.cancel(); seekJob?.cancel(); stallJob?.cancel()
+        retryJob?.cancel(); zapJob?.cancel(); seekJob?.cancel(); stallJob?.cancel(); rebufferJob?.cancel(); switchJob?.cancel(); sourceJob?.cancel(); seamlessJob?.cancel()
+        pendingPlayer?.let { runCatching { it.release() } }; pendingPlayer = null
+        direct = null; directProvider = null
         player?.stop()
         _channel.value = null
         _catchup.value = null
@@ -706,7 +989,9 @@ class PlaybackViewModel @Inject constructor(
         _playerVersion.value++
     }
 
+
     override fun onCleared() {
+        pendingPlayer?.let { runCatching { it.release() } }; pendingPlayer = null
         player?.release()
         player = null
     }

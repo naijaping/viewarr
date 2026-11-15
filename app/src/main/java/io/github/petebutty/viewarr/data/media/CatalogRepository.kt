@@ -1908,12 +1908,18 @@ class CatalogRepository @Inject constructor(
         val title = m.str("title") ?: "Plex"
         val headers = plex.headers(a.deviceId, p.token)
         val resume = m.long("viewOffset") ?: 0
+        // The file's frame rate (its video track's), for Match frame rate before it starts.
+        val fps = partObj.array("Stream").firstOrNull { it.int("streamType") == 1 }?.str("frameRate")?.toFloatOrNull()?.takeIf { it > 0f }
+            // (Not listed exactly, as on some shared servers: Plex's own label for every file, "24p", "PAL"…)
+            ?: when (media?.str("videoFrameRate")?.lowercase()) {
+                "24p" -> 23.976f; "pal" -> 25f; "ntsc" -> 29.97f; "50p" -> 50f; "60p" -> 59.94f; else -> null
+            }
         val target = (watch ?: WatchTarget(MediaType.Movie)).copy(plexRatingKey = ref)
         val quality = playbackStore.current().plexQuality
-        val transcode = VodStream(plexTranscodeUrl(a, p, ratingKey, quality.maxKbps ?: 20_000, idx), "$title (converted by Plex)", headers, resume, watch = target, thumbs = thumbs, markers = markers, from = "your library: ${p.serverName} · transcoding")
+        val transcode = VodStream(plexTranscodeUrl(a, p, ratingKey, quality.maxKbps ?: 20_000, idx), "$title (converted by Plex)", headers, resume, watch = target, thumbs = thumbs, markers = markers, from = "your library: ${p.serverName} · transcoding", fps = fps)
         // Settings → Playback → Plex quality: anything but Original always converts at that bitrate.
         if (quality.maxKbps != null) return transcode
-        val direct = VodStream("${p.serverUrl}$part?X-Plex-Token=${enc(p.token)}", title, headers, resume, fallback = transcode, watch = target, thumbs = thumbs, markers = markers, from = "your library: ${p.serverName} · direct play")
+        val direct = VodStream("${p.serverUrl}$part?X-Plex-Token=${enc(p.token)}", title, headers, resume, fallback = transcode, watch = target, thumbs = thumbs, markers = markers, from = "your library: ${p.serverName} · direct play", fps = fps)
         val playable = DeviceCodecs.canPlay(media.str("videoCodec"), media.str("container"))
         Log.i(TAG, "plex $ratingKey video=${media.str("videoCodec")} container=${media.str("container")} direct=$playable")
         return if (playable) direct else transcode
@@ -2128,7 +2134,13 @@ class CatalogRepository @Inject constructor(
         val info = runCatching { http.get("${s.serverUrl}/Users/${s.userId}/Items/$itemId", mediaServers.headers(emby, a.deviceId, s.token)) }
             .getOrNull()?.takeIf { it.ok }?.body
         val resumeMs = (info.child("UserData").long("PlaybackPositionTicks") ?: 0L) / 10_000
+        // The file's frame rate (the chosen version's video stream), for Match frame rate before it starts.
+        val src = info.array("MediaSources").let { l -> l.firstOrNull { sourceId != null && it.str("Id") == sourceId } ?: l.firstOrNull() }
+        val video = src.array("MediaStreams").firstOrNull { it.str("Type") == "Video" }
+        val fps = (video.child("RealFrameRate") as? JsonPrimitive)?.content?.toFloatOrNull()?.takeIf { it > 0f }
+            ?: (video.child("AverageFrameRate") as? JsonPrimitive)?.content?.toFloatOrNull()?.takeIf { it > 0f }
         return VodStream(
+            fps = fps,
             // Your own server: "from your library: Jellyfin" on the info bar (addons and IPTV keep their names).
             // (Always the file itself, never converted: direct play.)
             from = "your library: " + (if (emby) "Emby" else "Jellyfin") + " · direct play",

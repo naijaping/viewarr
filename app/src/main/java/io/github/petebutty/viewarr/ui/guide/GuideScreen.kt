@@ -110,6 +110,8 @@ fun GuideScreen(
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = (vm.cursor.value.row - 5).coerceAtLeast(0))
     val textMeasurer = rememberTextMeasurer(cacheSize = 256)
     val leftPending = remember { mutableStateOf(false) }
+    // A hold of Left that began on what's on now (going into catch-up): it steps back one programme only.
+    val leftIntoCatchup = remember { mutableStateOf(false) }
 
     val selectedChannel = channels.getOrNull(cursor.row)
     val focused = selectedChannel?.let { GuideViewModel.programAt(programs[it.id].orEmpty(), cursor.focusTime) }
@@ -165,12 +167,14 @@ fun GuideScreen(
                     return@onPreviewKeyEvent true
                 }
                 if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.NowMenu) {
-                    // Tap: back one programme, or the menu when already on what's on now. Hold: back into catch-up.
+                    // Tap: back one programme, or the menu when already on what's on now. Hold: back through the guide;
+                    // but a hold on what's on now (going into catch-up) steps back just one programme (it raced past
+                    // several, stepping on every repeat; Peter, 2026-11-15). Already in the past, a hold scrolls on.
                     when {
-                        e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 -> leftPending.value = true
+                        e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 -> { leftPending.value = true; leftIntoCatchup.value = vm.isAtNow() }
                         e.type == KeyEventType.KeyDown -> {
+                            if (!leftIntoCatchup.value || leftPending.value) vm.moveLeft()
                             leftPending.value = false
-                            vm.moveLeft()
                         }
                         e.type == KeyEventType.KeyUp && leftPending.value -> {
                             leftPending.value = false
