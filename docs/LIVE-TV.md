@@ -15,13 +15,15 @@ A TiviMate-style guide with channel logos, categories, and programmes going back
 - **OK** on a programme still to come: its details.
 - **Hold OK**: more options for that programme (see [Hold OK in the guide](#hold-ok-in-the-guide)).
 - **Number keys**: type a channel number.
-- **Left** goes back a programme. On what's on now it opens the channel groups; Left again brings the main menu. **Hold Left** goes back into catch-up.
+- **Left** goes back a programme, and carries on into catch-up (tap or hold; it stops at the start of catch-up). With the **TiviMate** preset, Left on what's on now opens the channel groups instead, and **hold Left** goes into catch-up.
+- **Menu (≡)** opens the main menu. **Play / pause** or **Info** shows the programme's details.
 - With a channel in the preview window: **Back** takes it full screen, **Hold Back** closes the player.
-- With nothing playing: **Back** jumps to what's on now, then asks to exit (press Back again); **Hold Back** opens the menu on the channel groups.
+- With nothing playing: **Back** jumps to what's on now, then opens the menu; **Hold Back** opens the menu on the channel groups.
 - The remote's **Stop** button stops the channel in the preview and leaves you on the guide.
 
 What the guide shows:
 
+- **How much time**: Settings → Appearance → TV guide → **Timeline** shows 1½ to 6 hours across the screen (2½ as standard).
 - A progress bar under what's on now: on every channel, only the one you're watching, or off (**Settings → Appearance → TV guide → Progress bars**).
 - A picture of the highlighted programme at the top: the guide's own artwork from Dispatcharr when it has some, otherwise one found on TMDB. Turn it off with **Programme pictures**.
 - **Programme corners**: rounded or square boxes for programmes and channel names.
@@ -142,8 +144,8 @@ On channels with catch-up (using Dispatcharr's catch-up):
 
 - **Pause**, then carry on from that moment.
 - **Rewind** with **Left** ("Rewind?" asks first). **Right** skips ahead.
-- Or press **OK**, go **Up** to the progress bar and move a marker back to where you want to jump to.
-- Fast-forward back to live, or press **Go live**.
+- Or press **OK**, go **Up** to the progress bar (a dot shows you're on it) and move a marker back to where you want to jump to.
+- Fast-forward back to live, press **Go live** (OK then Down lands on it), or **hold Play / pause**.
 
 The seek bar shows where you're playing and how far through the programme live is. **Settings → Remote buttons → Other buttons → Skip size** sets how far each skip goes.
 

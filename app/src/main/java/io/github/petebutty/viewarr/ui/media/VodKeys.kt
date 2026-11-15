@@ -77,12 +77,20 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
     private val menuKey = TapHold()
     // "Stop · hold Back: corner": a tap takes Back's usual step (on release); a hold shrinks to the corner at once.
     private var backDown = false
+    private var lastKey = 0
+
+    private val leaves = setOf(io.github.petebutty.viewarr.data.settings.BtnAction.Guide, io.github.petebutty.viewarr.data.settings.BtnAction.Search,
+        io.github.petebutty.viewarr.data.settings.BtnAction.MainMenu, io.github.petebutty.viewarr.data.settings.BtnAction.Settings,
+        io.github.petebutty.viewarr.data.settings.BtnAction.Stop)
 
     /** True when the event was used. */
     fun handle(e: KeyEvent, p: VodRemote, h: VodHooks): Boolean {
+        lastKey = e.nativeKeyEvent.keyCode
         val a = RemoteKeys.action(e)
         val down = e.type == KeyEventType.KeyDown
         val repeat = e.nativeKeyEvent.repeatCount
+        // Gliding into the corner: the film has let go (OK would open its controls in the corner, Right skip it).
+        if (VodHost.leaving) return a != RemoteAction.Back
         if (a == RemoteAction.Back && h.backMode == 2) {
             // Every Back press is decided here: a hold goes to the corner whatever is open (the corner closes it);
             // a tap takes Back's usual step (controls, details… then stop).
@@ -165,6 +173,9 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
         }
         // Menu: audio & subtitles on a tap, when it's let go (holding Menu is search, handled above the player).
         if (a == RemoteAction.Menu) {
+            // (The controls don't use Menu: a changed Menu stays off while they're open, as the other moving keys do;
+            // its own audio & subtitles still opens.)
+            if (menu.open && h.mapped(io.github.petebutty.viewarr.data.settings.BtnPress.Menu) != null) return true
             if (menuKey.feed(e) == Press.Tap) h.mapped(io.github.petebutty.viewarr.data.settings.BtnPress.Menu)?.let { perform(it, p, h) } ?: h.openTracks(false)
             return true
         }
@@ -196,6 +207,8 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
 
     /** A button's action from the table, on the film. */
     private fun perform(act: io.github.petebutty.viewarr.data.settings.BtnAction, p: VodRemote, h: VodHooks) {
+        // Leaving the player: the rest of this press (repeats, its release) is eaten at the root, not handed to the page.
+        if (act in leaves) VodHost.eatKey = lastKey
         when (act) {
             io.github.petebutty.viewarr.data.settings.BtnAction.Controls -> { menu.show(); h.showOsd() }
             io.github.petebutty.viewarr.data.settings.BtnAction.AudioSubs -> h.openTracks(null)

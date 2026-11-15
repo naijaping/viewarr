@@ -300,6 +300,10 @@ object UiOpts {
     const val SHORTCUT_SIZE = "shortcut_size"
     /** Live TV controls: how many poster rows Down reaches under the shortcuts (the rest: open the shortcut). */
     const val OSD_ROWS = "osd_rows"
+    /** TV guide: how much time the timeline shows across the screen (more time: more programmes, narrower). */
+    const val GUIDE_SPAN = "guide_span"
+    /** Films and episodes: where Play looks, in turn (see ui/media/PlayOrder). */
+    const val PLAY_ORDER = "play_order"
     /** Movies / Shows home page: an addon's network rows ("Netflix · Popular"…) too, or only behind their shortcuts. */
     const val SET_ROWS_HOME = "set_rows_home"
     /** Live TV controls → Down → Down: poster rows (Continue watching, Recent channels, Recently added). */
@@ -348,7 +352,7 @@ object UiOpts {
         LIST_SCROLL to listOf("Instant", "Smooth"),
         INFOBAR_RECENT to listOf("On", "Off"),
         FILM_TIME_RIGHT to listOf("Time left (15:05 left)", "Ends at (ends at 21:43)", "Both (15:05 left · ends 21:43)"),
-        INFOBAR_STYLE to listOf("Glass", "Square glass", "Pill", "Fade", "Full-width bar", "Minimal", "Faded glass", "Feathered glass", "Side fade", "Outline", "Corner card"),
+        INFOBAR_STYLE to listOf("Glass", "Square glass", "Pill", "Fade", "Full-width bar", "Minimal", "Faded glass", "Feathered glass", "Side fade", "Outline", "Corner card", "Floating card", "Slim strip", "Frosted"),
         INFOBAR_CORNERS to listOf("Medium", "Small", "Large"),
         LIVE_UPDOWN to listOf("Change channel", "Browse in the info bar, OK changes", "Browse in the info bar, changes when you stop"),
         MENU_HEAD_SOURCE to listOf("On", "Off"),
@@ -385,6 +389,8 @@ object UiOpts {
         OSD_PEEK to listOf("When you press Down", "Always show a preview"),
         SHORTCUT_SIZE to listOf("Small", "Medium", "Large"),
         OSD_ROWS to listOf("3", "2", "5", "All"),
+        PLAY_ORDER to io.github.petebutty.viewarr.ui.media.PlayOrder.orders.map(io.github.petebutty.viewarr.ui.media.PlayOrder::label),
+        GUIDE_SPAN to listOf("2½ hours", "1½ hours", "2 hours", "3 hours", "4 hours", "6 hours"),
         SET_ROWS_HOME to listOf("Only through their shortcuts", "On the home page too"),
         OSD_POSTERS to listOf("On", "Off"),
         CATCHUP_ICONS to listOf("Programmes and channels", "Channel names only", "Off"),

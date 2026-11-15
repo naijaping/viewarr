@@ -1337,28 +1337,36 @@ class MediaViewModel @Inject constructor(
                     tries += Try(c.source, runCatching { repo.isHomeCopy(c) }.getOrDefault(false)) { repo.serverStream(c.source, id, title, watch) }
                 }
             }
-            for (t in tries.sortedByDescending { it.home }) {
-                _detail.update { it?.copy(message = "Opening S$season · E$episode on ${t.label}…") }
-                val stream = kotlinx.coroutines.withTimeoutOrNull(20_000) { runCatching { t.get() }.getOrNull() }
-                if (stream != null) { _detail.update { it?.copy(message = null, episode = null) }; _playing.value = stream; return@launch }
+            // Each source in the order set in Settings → Playback → Play order (true: done, playing or a list to pick from).
+            suspend fun servers(): Boolean {
+                for (t in tries.sortedByDescending { it.home }) {
+                    _detail.update { it?.copy(message = "Opening S$season · E$episode on ${t.label}…") }
+                    val stream = kotlinx.coroutines.withTimeoutOrNull(20_000) { runCatching { t.get() }.getOrNull() }
+                    if (stream != null) { _detail.update { it?.copy(message = null, episode = null) }; _playing.value = stream; return true }
+                }
+                return false
             }
-            if (d.hasAddons && (item.imdbId != null || repo.isAddonOwnTitle(item))) {
+            suspend fun addons(): Boolean {
+                if (!d.hasAddons || (item.imdbId == null && !repo.isAddonOwnTitle(item))) return false
                 _detail.update { it?.copy(searching = true, message = "Looking in your addons for S$season · E$episode…") }
                 val found = kotlinx.coroutines.withTimeoutOrNull(30_000) { rank(runCatching { repo.addonStreams(item, season, episode) }.getOrDefault(emptyList())) }.orEmpty()
                 _detail.update { it?.copy(searching = false) }
-                if (found.isNotEmpty() && !autoPick()) {
+                if (found.isEmpty()) return false
+                if (!autoPick()) {
                     val ep = d.episodes?.firstOrNull { it.season == season && it.number == episode }
                     _detail.update { it?.copy(message = null, streams = found, episode = ep ?: it.episode) }
-                    return@launch
+                    return true
                 }
-                if (found.isNotEmpty()) {
-                    val opt = found.first()
-                    _detail.update { it?.copy(message = null, episode = null) }
-                    _playing.value = io.github.petebutty.viewarr.data.media.VodStream(opt.url, title, opt.headers, watch = watch, boxPreviews = false, from = opt.addon)
-                    return@launch
-                }
+                val opt = found.first()
+                _detail.update { it?.copy(message = null, episode = null) }
+                _playing.value = io.github.petebutty.viewarr.data.media.VodStream(opt.url, title, opt.headers, watch = watch, boxPreviews = false, from = opt.addon)
+                return true
             }
-            d.providerEpisodes[season to episode]?.let { return@launch playProviderEpisode(season, episode) }
+            fun iptv(): Boolean {
+                if ((season to episode) !in d.providerEpisodes) return false
+                playProviderEpisode(season, episode); return true
+            }
+            for (s in PlayOrder.current()) if (when (s) { PlayOrder.Source.Servers -> servers(); PlayOrder.Source.Iptv -> iptv(); PlayOrder.Source.Addons -> addons() }) return@launch
             _detail.update { it?.copy(message = "Couldn't play S$season · E$episode from any of your sources. Hold OK on it to pick one.") }
         }
     }
@@ -1408,10 +1416,8 @@ class MediaViewModel @Inject constructor(
     /**
      * The one Play button for a film: tries every way you have of watching it, best first, and plays the first
      * that works.
-     *  1. Your servers on the home network (Plex, Jellyfin, Emby): full quality, no internet needed.
-     *  2. Your servers away from home (another house, a remote Plex).
-     *  3. Stremio addons: the best-ranked stream (the stream ranking in Settings → Playback).
-     *  4. IPTV (your provider's copy through Dispatcharr).
+     *  Your servers (home network first, then far ones), IPTV (your provider's copy through Dispatcharr) and Stremio
+     *  addons (the best-ranked stream), in the order set in Settings → Playback → Play order (that order as standard).
      * A source is skipped when its file has gone (Plex checks), it doesn't answer, or it has nothing; the
      * message under the buttons says which one it's on.
      */
@@ -1422,25 +1428,34 @@ class MediaViewModel @Inject constructor(
         viewModelScope.launch {
             val copies = d.copies.orEmpty()
             // Your servers' copies, the best this TV can show first (a home server's before a far one's when they match).
-            val servers = rankedCopies(copies).map { it.copy }.filter { it.source != io.github.petebutty.viewarr.data.media.PROVIDER }
-            for (c in servers) {
-                _detail.update { it?.copy(message = "Opening on ${copyLabel(c)}…") }
-                val stream = kotlinx.coroutines.withTimeoutOrNull(20_000) { runCatching { streamFor(c, item) }.getOrNull() }
-                if (stream != null) { _detail.update { it?.copy(message = null) }; _playing.value = stream; return@launch }
+            val serverCopies = rankedCopies(copies).map { it.copy }.filter { it.source != io.github.petebutty.viewarr.data.media.PROVIDER }
+            // Each source in the order set in Settings → Playback → Play order (true: done, playing or a list to pick from).
+            suspend fun servers(): Boolean {
+                for (c in serverCopies) {
+                    _detail.update { it?.copy(message = "Opening on ${copyLabel(c)}…") }
+                    val stream = kotlinx.coroutines.withTimeoutOrNull(20_000) { runCatching { streamFor(c, item) }.getOrNull() }
+                    if (stream != null) { _detail.update { it?.copy(message = null) }; _playing.value = stream; return true }
+                }
+                return false
             }
-            if (d.hasAddons && (item.imdbId != null || repo.isAddonOwnTitle(item))) {
+            suspend fun addons(): Boolean {
+                if (!d.hasAddons || (item.imdbId == null && !repo.isAddonOwnTitle(item))) return false
                 _detail.update { it?.copy(searching = true, message = "Looking in your addons…") }
                 val found = kotlinx.coroutines.withTimeoutOrNull(30_000) { rank(runCatching { repo.addonStreams(item) }.getOrDefault(emptyList())) }.orEmpty()
                 _detail.update { it?.copy(searching = false) }
+                if (found.isEmpty()) return false
                 // Stream pick set to Manual (Settings → Playback): the list to choose from, as before.
-                if (found.isNotEmpty() && !autoPick()) { _detail.update { it?.copy(message = null, streams = found) }; return@launch }
-                if (found.isNotEmpty()) { _detail.update { it?.copy(message = null) }; playStream(found.first()); return@launch }
+                if (!autoPick()) _detail.update { it?.copy(message = null, streams = found) }
+                else { _detail.update { it?.copy(message = null) }; playStream(found.first()) }
+                return true
             }
-            copies.firstOrNull { it.source == io.github.petebutty.viewarr.data.media.PROVIDER }?.ref?.let { ref ->
+            suspend fun iptv(): Boolean {
+                val ref = copies.firstOrNull { it.source == io.github.petebutty.viewarr.data.media.PROVIDER }?.ref ?: return false
                 _detail.update { it?.copy(message = "Opening from IPTV…") }
-                val stream = runCatching { repo.providerMovie(ref, item.title, iptvTarget(item, null, null))?.withLocalResume(item, null, null) }.getOrNull()
-                if (stream != null) { _detail.update { it?.copy(message = null) }; _playing.value = stream; return@launch }
+                val stream = runCatching { repo.providerMovie(ref, item.title, iptvTarget(item, null, null))?.withLocalResume(item, null, null) }.getOrNull() ?: return false
+                _detail.update { it?.copy(message = null) }; _playing.value = stream; return true
             }
+            for (s in PlayOrder.current()) if (when (s) { PlayOrder.Source.Servers -> servers(); PlayOrder.Source.Iptv -> iptv(); PlayOrder.Source.Addons -> addons() }) return@launch
             _detail.update {
                 it?.copy(message = if (copies.isEmpty() && !d.hasAddons) "This isn't in any of your libraries, and no addon is connected."
                 else "Couldn't play this from any of your sources. Hold OK on Play to pick one.")
@@ -1492,6 +1507,15 @@ class MediaViewModel @Inject constructor(
             if (stream == null) _detail.update { it?.copy(message = "Couldn't open this on ${copyLabel(c)}.") }
             else { _detail.update { it?.copy(message = null) }; _playing.value = stream }
         }
+    }
+
+    /** The hold-Play list (Play from): the addons' streams for this film, ranked, without playing any (empty: none). */
+    suspend fun addonOptions(season: Int? = null, episode: Int? = null): List<io.github.petebutty.viewarr.data.media.StreamOption> {
+        val item = _detail.value?.detail?.item ?: return emptyList()
+        if (_detail.value?.hasAddons != true || (item.imdbId == null && !repo.isAddonOwnTitle(item))) return emptyList()
+        return kotlinx.coroutines.withTimeoutOrNull(30_000) {
+            rank(runCatching { if (season != null && episode != null) repo.addonStreams(item, season, episode) else repo.addonStreams(item) }.getOrDefault(emptyList()))
+        }.orEmpty()
     }
 
     fun searchAddons() {

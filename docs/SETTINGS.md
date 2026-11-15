@@ -49,7 +49,7 @@ Everything to do with how Viewarr looks, in sections:
 | **Wallpaper** | None, one of sixteen built-in designs, or the artwork of the programme you've highlighted. |
 | **Glass & transparency** | **Glass**, **Glass colour**, **Guide**, **Wallpaper dimming**, **Pop-up glass** and the info bar's **border**. |
 | **TV guide** | Channel numbers, logos, **Programme corners**, progress bars, episode numbers, catch-up icons and programme pictures. |
-| **Info bar & controls** | **Info bar style** (Glass, Square glass, Pill, Fade, Full-width bar, Minimal, Faded glass, Feathered glass, Side fade, Outline or Corner card) and **corners**, **Info bar size** and **width**, **Preview cards**, **Rows under the info bar** (which rows each player shows when you press Down, and their order, with a preview), the channel number, episode numbers, picture-quality and frame-rate badges, and **Player controls size**. |
+| **Info bar & controls** | **Info bar style** (Glass, Square glass, Pill, Fade, Full-width bar, Minimal, Faded glass, Feathered glass, Side fade, Outline, Corner card, Floating card, Slim strip or Frosted) and **corners**, **Info bar size** and **width**, **Preview cards**, **Rows under the info bar** (which rows each player shows when you press Down, and their order, with a preview), the channel number, episode numbers, picture-quality and frame-rate badges, and **Player controls size**. |
 | **Menu** | Headings, colour edge and tint, hints, the TV and LIVE marks, and **Button hints**. |
 | **Posters** | **Library posters** size, **Where it's from** and **Progress bars**. |
 | **Title pages** | What a title page shows, and **Age ratings**. |

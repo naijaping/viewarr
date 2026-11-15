@@ -79,12 +79,13 @@ Title logos also show on the Movies and Shows header and in the player. While a 
 
 **Play** plays the best copy you have, in this order:
 
-1. Your servers at home (Plex, Jellyfin, Emby)
-2. Your servers away from home
+1. Your servers (Plex, Jellyfin, Emby): at home first, then away from home
+2. IPTV (your provider's films and series)
 3. Your **addons** (for example AIOStreams)
-4. IPTV
 
-A copy whose file has gone is skipped. **Hold OK on Play** to pick the source yourself.
+**Settings → Playback → Streams → Play order** changes the order (for example addons first). A source that has nothing, or whose file has gone, is skipped.
+
+**Hold OK on Play** (or on an episode) to pick the source yourself: your copies, IPTV, and your addons' streams, which are searched as soon as the list opens.
 
 Shows get **Play / Resume S·E**, carrying on from Plex, Jellyfin / Emby or Trakt.
 

@@ -1294,7 +1294,7 @@ private fun DetailScreen(
                             Button(onClick = vm::openEpisodes, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) { Text("Episodes") }
                         }
                     } else if (onPlex || onServer || onProvider || ui.hasAddons) {
-                        // One Play: home servers, then away, then addons, then IPTV (MediaViewModel.playBest).
+                        // One Play: your servers, IPTV and addons in the Play order setting (MediaViewModel.playBest).
                         // OK plays from the best source; holding OK lists every source to pick from.
                         Button(onClick = vm::playBest, onLongClick = { sourcesOpen = true }, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) {
                             androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Play, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current)
@@ -1595,7 +1595,11 @@ private fun EpisodeActionsFor(ui: DetailUi, vm: MediaViewModel) {
     val onIptv = (ep.season to ep.number) in ui.providerEpisodes
     val localEntries by vm.localWatch.entries.collectAsState()
     val local = remember(localEntries, ui.detail.item.key) { vm.localWatch.episodesOf(ui.detail.item) }[ep.season to ep.number]
+    // The addons searched as soon as it opens (null: still searching).
+    val addonStreams by produceState<List<StreamOption>?>(if (ui.hasAddons) null else emptyList(), ui.detail.item.key, ep.season, ep.number) { value = vm.addonOptions(ep.season, ep.number) }
     EpisodeActions(
+        addonStreams = addonStreams,
+        onAddon = { opt -> vm.playStream(opt); vm.pickEpisode(null) },
         providerLabel = if (local != null && local.viewOffsetMs > 0 && !local.watched) "Resume from IPTV" else "Play from IPTV",
         markLabel = if (!onIptv) null else if (local?.watched == true) "Mark as not watched" else "Mark as watched",
         onMark = { vm.markIptvEpisode(ui.detail.item, ep.season, ep.number, local?.watched != true); vm.pickEpisode(null) },
@@ -1762,9 +1766,16 @@ private fun EpisodeActions(
     onPlex: () -> Unit,
     onSearch: () -> Unit,
     onClose: () -> Unit,
+    addonStreams: List<StreamOption>? = null,
+    onAddon: (StreamOption) -> Unit = {},
 ) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
+    // Nothing of your own above them: once the addons answer, the first stream is highlighted (not Mark as watched).
+    val noneAbove = plexLabel == null && serverLabel == null && onProvider == null
+    LaunchedEffect(addonStreams?.isNotEmpty() == true) {
+        if (addonStreams?.isNotEmpty() == true && noneAbove) { awaitFrame(); runCatching { first.requestFocus() } }
+    }
     // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
     io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
@@ -1776,7 +1787,9 @@ private fun EpisodeActions(
                 plexLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onPlex, modifier = m()) }
                 serverLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onServer, modifier = m()) }
                 onProvider?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = providerLabel, selected = false, onClick = it, modifier = m()) }
-                if (hasAddons) io.github.petebutty.viewarr.ui.common.MenuItem(text = if (searching) "Searching…" else "Search addons", selected = false, onClick = onSearch, modifier = m())
+                androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    AddonStreamItems(hasAddons, addonStreams, ::m, onAddon)
+                }
                 if (plexLabel == null && serverLabel == null && onProvider == null && !hasAddons) Text("This episode isn't in Plex or on IPTV, and no addon is connected.", fontSize = 13.sp, color = AppColors.TextSecondary)
                 markLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onMark, modifier = m()) }
                 io.github.petebutty.viewarr.ui.common.MenuItem(text = "Close", selected = false, onClick = onClose, modifier = m())
@@ -2227,7 +2240,13 @@ private fun ReviewDialog(r: io.github.petebutty.viewarr.data.media.Review, onClo
 private fun SourcesDialog(ui: DetailUi, vm: MediaViewModel, onSearch: () -> Unit, onDone: () -> Unit) {
     val first = remember { FocusRequester() }
     val ranked by produceState<List<MediaViewModel.RankedCopy>?>(null, ui.copies) { value = vm.rankedCopies(ui.copies.orEmpty()) }
+    // The addons are searched as soon as it opens, their streams listed with your copies (null: still searching).
+    val addonStreams by produceState<List<StreamOption>?>(if (ui.hasAddons) null else emptyList(), ui.detail.item.key) { value = vm.addonOptions() }
     LaunchedEffect(ranked != null) { if (ranked != null) { awaitFrame(); runCatching { first.requestFocus() } } }
+    // Nothing of your own above them: once the addons answer, the first stream is highlighted (not Cancel).
+    LaunchedEffect(addonStreams?.isNotEmpty() == true) {
+        if (addonStreams?.isNotEmpty() == true && ranked.isNullOrEmpty()) { awaitFrame(); runCatching { first.requestFocus() } }
+    }
     androidx.compose.ui.window.Dialog(onDismissRequest = onDone) {
         Column(
             // Opened by holding OK: letting go of that OK mustn't pick the first source.
@@ -2247,9 +2266,29 @@ private fun SourcesDialog(ui: DetailUi, vm: MediaViewModel, onSearch: () -> Unit
                         onClick = { onDone(); vm.playCopy(r.copy) }, modifier = mod(),
                     )
                 }
+                AddonStreamItems(ui.hasAddons, addonStreams, ::mod) { opt -> onDone(); vm.playStream(opt) }
             }
-            if (ui.hasAddons) io.github.petebutty.viewarr.ui.common.MenuItem(text = "Search addons", selected = false, onClick = onSearch, modifier = mod())
             io.github.petebutty.viewarr.ui.common.MenuItem(text = "Cancel", selected = false, onClick = onDone, modifier = mod())
+        }
+    }
+}
+
+/**
+ * The addons' streams in a Play from list: "Searching your addons…" while they're asked, then each stream (addon ·
+ * its name, the details beside it), or a line saying they found nothing.
+ */
+@Composable
+private fun AddonStreamItems(hasAddons: Boolean, streams: List<StreamOption>?, mod: () -> Modifier, onPick: (StreamOption) -> Unit) {
+    if (!hasAddons) return
+    when {
+        streams == null -> Text("Searching your addons…", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(vertical = 6.dp, horizontal = 12.dp))
+        streams.isEmpty() -> Text("Your addons found nothing for this.", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(vertical = 6.dp, horizontal = 12.dp))
+        else -> streams.take(25).forEach { s ->
+            io.github.petebutty.viewarr.ui.common.MenuItem(
+                text = s.addon + " · " + s.name.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.joinToString(" "),
+                selected = false, trailing = s.description.lineSequence().firstOrNull { it.isNotBlank() }?.trim()?.take(40),
+                onClick = { onPick(s) }, modifier = mod(),
+            )
         }
     }
 }

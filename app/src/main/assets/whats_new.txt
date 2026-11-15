@@ -1,7 +1,7 @@
 # Shown once, the first time a new version opens (not on a fresh install). Keep it to the few things worth knowing.
 # Lines starting with "- " are the points; the first line without "#" or "-" is the heading.
-One remote layout, programme pictures back, and a changelog
-- Back switches between full screen and the mini player; hold Back to close the player (live TV and films)
-- Programme pictures are back in the guide and the "What's selected" wallpaper
-- Five new info bar styles, including Faded glass (Settings → Appearance → Info bar & controls)
-- Every version's changes are now in Settings → About → Changelog
+A new button layout, and a choice of play order
+- Live TV: Up / Down now change channel; the TV guide's Left carries on into catch-up (Settings → Remote buttons → presets)
+- Button settings can't break the remote any more: OK, Back and Search always keep working
+- Play order: your servers, IPTV, then addons (Settings → Playback → Streams); hold OK on Play lists every source
+- Three more info bar styles and a longer TV guide timeline (Settings → Appearance)

@@ -8,7 +8,7 @@ Viewarr has one menu, on the left, made of glass. Whatever is playing keeps goin
 
 The menu is see-through on every page. It slides the page and the picture aside rather than covering them.
 
-- **Left** opens the menu from the first poster of any page. In the TV guide, Left goes back a programme; on what's on now it opens the channel groups, and Left again the main menu. **Hold Left** goes back into catch-up.
+- **Left** opens the menu from the first poster of any page. In the TV guide, Left goes back a programme and on into catch-up; **Menu (≡)** opens the menu, and with nothing playing so does Back on what's on now (with the TiviMate preset, Left on what's on now opens the channel groups and **hold Left** goes into catch-up).
 - **Up / Down** move through the entries, and the page behind changes straight away: Live TV, Live now, Sports, Movies, Shows, your streaming services (such as Netflix or Disney+), Music and Recordings.
 - **Right** (or **OK**) goes into the highlighted entry:
   - **Live TV**: its channel groups. Moving through them changes the guide behind as you go; OK picks one and takes you into the guide.
@@ -82,6 +82,9 @@ Choose how the bar looks in **Settings → Appearance → Info bar & controls �
 | **Side fade** | Dark behind the text on the left, the picture left clear on the right. |
 | **Outline** | Almost clear glass with a fine edge in your highlight colour. |
 | **Corner card** | A smaller panel in the bottom left, leaving most of the picture clear. |
+| **Floating card** | A more solid card lifted off the picture, with a soft shadow under it. |
+| **Slim strip** | A thin band along the bottom, with a line of your highlight colour across its top. |
+| **Frosted** | Milky light glass instead of the dark tint. |
 
 **Info bar width** and **corners** apply to the panel styles. Side fade and Corner card are narrower, so if you've added many extra buttons, check they still fit.
 

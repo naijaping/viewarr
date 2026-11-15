@@ -183,7 +183,9 @@ class GuideViewModel @Inject constructor(
         _cursor.map { it.row / BLOCK }.distinctUntilChanged(),
         _cursor.map { it.windowStart }.distinctUntilChanged(),
         repo.favourites,
-    ) { g, block, ws, f -> listOf(g, block, ws, f) }
+        // (A longer timeline in Settings: the programmes for the whole of it.)
+        androidx.compose.runtime.snapshotFlow { VISIBLE_MS }.distinctUntilChanged(),
+    ) { g, block, ws, f, _ -> listOf(g, block, ws, f) }
         .flatMapLatest { l ->
             val g = l[0] as Int?; val block = l[1] as Int; val ws = l[2] as Long
             @Suppress("UNCHECKED_CAST") val f = l[3] as Set<String>
@@ -602,7 +604,10 @@ class GuideViewModel @Inject constructor(
         /** [ukChannels]: in the UK listings' range, and not in them (not on UK TV). */
         const val NOT_ON_UK_TV = "\u0000not on UK TV"
         const val STEP_MS = 30 * 60_000L
-        const val VISIBLE_MS = 150 * 60_000L
+        /** How much of the timeline is on screen: Settings → Appearance → TV guide timeline (2½ hours as standard). */
+        val VISIBLE_MS: Long get() = when (io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_SPAN)) {
+            1 -> 90; 2 -> 120; 3 -> 180; 4 -> 240; 5 -> 360; else -> 150
+        } * 60_000L
         private const val BUFFER_MS = 90 * 60_000L
         /** A couple of hours short of what's fetched, so the last programmes aren't cut off. */
         private fun maxForwardMs() = io.github.petebutty.viewarr.ui.theme.AppColors.palette.guideForwardMs - 2 * 3_600_000L

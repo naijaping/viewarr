@@ -6,6 +6,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -29,6 +34,12 @@ fun ViewarrPopup(onClose: () -> Unit, content: @Composable BoxScope.() -> Unit) 
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         SideEffect { window?.setDimAmount(0f) }
         // (OK ignored until a fresh press: the hold that opened it, or its release, mustn't pick a choice.)
-        Box(Modifier.fillMaxSize().ignoreHeldOk(), content = content)
+        Box(Modifier.fillMaxSize().ignoreHeldOk().onPreviewKeyEvent { e ->
+            // Over a full-screen film: hold Back still stops it (the pop-up's own window had the press).
+            val film = io.github.petebutty.viewarr.ui.media.VodHost
+            if (e.key == Key.Back && e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 1 && film.active && !film.mini) {
+                onClose(); film.stopHeld(); true
+            } else false
+        }, content = content)
     }
 }

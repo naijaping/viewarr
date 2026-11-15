@@ -90,6 +90,7 @@ fun playbackCategories(vm: PlaybackSettingsViewModel = hiltViewModel(), opts: Ui
         SettingCategory(
             "Streams", "Quality, Plex and addon streams.",
             listOf(
+                optItem(opts, "Play order", "Where Play looks for a film or episode, in turn, playing the first that works. Hold OK on Play (or on an episode) to pick from every source yourself.", io.github.petebutty.viewarr.ui.theme.UiOpts.PLAY_ORDER),
                 item("Addon streams", "Choose from the list yourself, or let Viewarr start the best cached stream within your quality limit.", k.STREAM_PICK, choices<io.github.petebutty.viewarr.data.settings.StreamPick>(), s.streamPick),
                 item("Best quality allowed", "Streams above this are listed last and never auto-picked. Match the TV works out 4K or 1080p for you.", k.MAX_RES, choices<io.github.petebutty.viewarr.data.settings.MaxResolution>(), s.maxResolution),
                 item("Plex quality", "Original plays the file itself and converts only if the TV can't. Lower settings always convert, for slow Wi-Fi.", k.PLEX_QUALITY, choices<io.github.petebutty.viewarr.data.settings.PlexQuality>(), s.plexQuality),

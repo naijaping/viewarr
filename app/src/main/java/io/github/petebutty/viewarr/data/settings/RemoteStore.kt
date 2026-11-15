@@ -46,7 +46,7 @@ enum class GuideBack(override val label: String) : RemoteChoice {
     /** Since 0.23: the guide and full screen swap with Back (the channel keeps playing in the preview). */
     FullScreen("Jump to now, then back to full screen"),
     NowThenExit("Jump to now, then ask to exit"),
-    Menu("Open the menu"),
+    Menu("Jump to now, then the menu"),
 }
 
 enum class ChannelKeys(override val label: String) : RemoteChoice {
@@ -143,10 +143,10 @@ enum class SearchButton(override val label: String) : RemoteChoice {
 }
 
 data class RemoteSettings(
-    val guideLeft: GuideLeft = GuideLeft.entries.first(),
-    val guideBack: GuideBack = GuideBack.NowThenExit,
+    val guideLeft: GuideLeft = GuideLeft.AlwaysPast,
+    val guideBack: GuideBack = GuideBack.Menu,
     val channelKeys: ChannelKeys = ChannelKeys.entries.first(),
-    val zap: ZapDirection = ZapDirection.entries.first(),
+    val zap: ZapDirection = ZapDirection.UpNext,
     val seek: SeekStep = SeekStep.entries.first(),
     val playerOk: PlayerOk = PlayerOk.entries.first(),
     val rowMemory: RowMemory = RowMemory.entries.first(),
@@ -189,13 +189,15 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
 
     val settings: Flow<RemoteSettings> = context.remoteStore.data.map { p ->
         RemoteSettings(
-            guideLeft = p.read(GUIDE_LEFT),
-            // Not chosen: ask to exit with Classic menus (0.23 made full screen everyone's default by mistake, so
-            // Back swapped between the guide and full screen with no way out); the Live TV hub goes to full screen.
-            guideBack = if (p[stringPreferencesKey(GUIDE_BACK)] != null) p.read(GUIDE_BACK)
-                else if (p.read<NavStyle>(NAV_STYLE) == NavStyle.LiveHub) GuideBack.FullScreen else GuideBack.NowThenExit,
+            // Not chosen: the Viewarr preset's (Left carries on into catch-up; Back jumps to now, then the menu).
+            guideLeft = p.readOr(GUIDE_LEFT, GuideLeft.AlwaysPast).let { if (it == GuideLeft.NowMenu) it else GuideLeft.AlwaysPast },
+            // (With Left going into catch-up, an old "ask to exit" Back left no way to the menu from the guide on remotes
+            // without a Menu button: it opens the menu instead.)
+            guideBack = p.readOr(GUIDE_BACK, GuideBack.Menu).let { b ->
+                if (b == GuideBack.NowThenExit && p.readOr(GUIDE_LEFT, GuideLeft.AlwaysPast) != GuideLeft.NowMenu) GuideBack.Menu else b
+            },
             channelKeys = p.read(CHANNEL_KEYS),
-            zap = p.read(ZAP),
+            zap = p.readOr(ZAP, ZapDirection.UpNext),
             seek = p.read(SEEK),
             playerOk = p.read(PLAYER_OK),
             rowMemory = p.read(ROW_MEMORY),
@@ -275,7 +277,9 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
 
     /**
      * A preset (see [ControlPreset]): every button on every screen set its way, the choices ([Presets.values]) and the
-     * button table ([Presets.button]) alike, so nothing is left over from before.
+     * button table ([Presets.button]) alike, so nothing is left over from before: the Search button goes back to
+     * Automatic and extra buttons taught for actions are removed too (either could take a key the preset uses, say
+     * TiviMate's Yellow for the controls).
      */
     suspend fun applyPreset(p: ControlPreset) {
         if (p == ControlPreset.Custom) return
@@ -283,11 +287,14 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
         context.remoteStore.edit { prefs ->
             prefs[stringPreferencesKey(PRESET_BASE)] = p.name
             values.forEach { (k, v) -> prefs[stringPreferencesKey(k)] = v.name }
+            prefs.remove(stringPreferencesKey(SEARCH_BUTTON))
+            prefs.remove(intPreferencesKey(SEARCH_KEYCODE))
+            prefs.remove(stringPreferencesKey(BUTTONS))
             // The button table: only what differs from how Viewarr comes is stored.
             val base = Presets.settings(p)
             val map = ButtonMap.presses.flatMap { (screen, presses) ->
                 presses.mapNotNull { press ->
-                    Presets.button(p, screen, press).takeIf { it != ButtonMap.default(base, screen, press) }?.let { "${ButtonMap.key(screen, press)}=${it.name}" }
+                    Presets.button(p, screen, press, base).takeIf { it != ButtonMap.default(base, screen, press) }?.let { "${ButtonMap.key(screen, press)}=${it.name}" }
                 }
             }
             if (map.isEmpty()) prefs.remove(stringPreferencesKey(BUTTON_MAP)) else prefs[stringPreferencesKey(BUTTON_MAP)] = map.joinToString(",")
@@ -329,6 +336,9 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
             it[stringPreferencesKey(RECENT_CHANNELS)] = (listOf(id) + (before - id)).take(12).joinToString(",")
         }
     }
+
+    private inline fun <reified E : Enum<E>> Preferences.readOr(key: String, default: E): E =
+        this[stringPreferencesKey(key)]?.let { name -> enumValues<E>().firstOrNull { it.name == name } } ?: default
 
     private inline fun <reified E : Enum<E>> Preferences.read(key: String): E =
         this[stringPreferencesKey(key)]?.let { name -> enumValues<E>().firstOrNull { it.name == name } } ?: enumValues<E>().first()
@@ -378,8 +388,9 @@ object Presets {
             RemoteStore.MENU_OPENS_ON to MenuOpensOn.PageList, RemoteStore.MENU_BACK to MenuBack.TwiceToExit,
         )
         else -> mapOf(
-            RemoteStore.GUIDE_LEFT to GuideLeft.EdgeMenu, RemoteStore.GUIDE_BACK to GuideBack.NowThenExit, RemoteStore.CHANNEL_KEYS to ChannelKeys.Normal,
-            RemoteStore.ZAP to ZapDirection.ChannelList, RemoteStore.PLAYER_OK to PlayerOk.Controls, RemoteStore.LIVE_SIDES to LiveSides.Seek,
+            // TiviMate's, but Left carries on back into catch-up (no hold), so Back's second press opens the menu.
+            RemoteStore.GUIDE_LEFT to GuideLeft.AlwaysPast, RemoteStore.GUIDE_BACK to GuideBack.Menu, RemoteStore.CHANNEL_KEYS to ChannelKeys.Normal,
+            RemoteStore.ZAP to ZapDirection.UpNext, RemoteStore.PLAYER_OK to PlayerOk.Controls, RemoteStore.LIVE_SIDES to LiveSides.Seek,
             RemoteStore.SEEK to SeekStep.S30, RemoteStore.ROW_LEFT to RowLeft.Menu, RemoteStore.MEDIA_BACK to MediaBack.Exit,
             RemoteStore.MENU_OPENS_ON to MenuOpensOn.PageList, RemoteStore.MENU_BACK to MenuBack.TwiceToExit,
         )
@@ -413,7 +424,6 @@ object Presets {
         (BtnScreen.Guide to BtnPress.Blue) to BtnAction.Settings,
         (BtnScreen.Live to BtnPress.Ok) to BtnAction.Controls,
         (BtnScreen.Live to BtnPress.OkHold) to BtnAction.MainMenu,
-        (BtnScreen.Live to BtnPress.BackHold) to BtnAction.Stop,
         (BtnScreen.Live to BtnPress.LeftHold) to BtnAction.ChannelList,
         (BtnScreen.Live to BtnPress.RightHold) to BtnAction.Description,
         (BtnScreen.Live to BtnPress.DownHold) to BtnAction.Search,
@@ -429,8 +439,9 @@ object Presets {
     )
 
     /** What a press does on a screen in a preset. */
-    fun button(p: ControlPreset, screen: BtnScreen, press: BtnPress): BtnAction =
-        (if (p == ControlPreset.TiviMate) tiviMate[screen to press] else null) ?: ButtonMap.default(settings(p), screen, press)
+    fun button(p: ControlPreset, screen: BtnScreen, press: BtnPress, base: RemoteSettings = settings(p)): BtnAction =
+        (if (p == ControlPreset.TiviMate) tiviMate[screen to press] else null)?.takeIf { !(screen == BtnScreen.Guide && press == BtnPress.MenuHold && it == BtnAction.Search && base.searchButton != SearchButton.Auto) }
+            ?: ButtonMap.default(base, screen, press)
 
     /** The preset the settings match exactly, else Custom. */
     fun matching(s: RemoteSettings): ControlPreset {
@@ -440,7 +451,7 @@ object Presets {
             RemoteStore.ROW_LEFT to s.rowLeft, RemoteStore.MEDIA_BACK to s.mediaBack, RemoteStore.MENU_OPENS_ON to s.menuOpensOn, RemoteStore.MENU_BACK to s.menuBack,
         )
         return listOf(ControlPreset.Viewarr, ControlPreset.TiviMate).firstOrNull { p ->
-            values(p) == now && ButtonMap.presses.all { (screen, presses) -> presses.all { ButtonMap.action(s, screen, it) == button(p, screen, it) } }
+            values(p) == now && ButtonMap.presses.all { (screen, presses) -> presses.all { ButtonMap.action(s, screen, it) == button(p, screen, it, settings(p, RemoteSettings(searchButton = s.searchButton))) } }
         } ?: ControlPreset.Custom
     }
 }

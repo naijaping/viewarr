@@ -106,8 +106,9 @@ object ButtonMap {
      */
     val presses: Map<BtnScreen, List<BtnPress>> = mapOf(
         BtnScreen.Guide to listOf(BtnPress.Ok, BtnPress.OkHold, BtnPress.BackHold, BtnPress.ChannelUp, BtnPress.ChannelDown, BtnPress.Menu, BtnPress.MenuHold) + media + colours,
-        // (No Long Back: on live TV it always stops the channel, as for films, since 0.28.3.)
-        BtnScreen.Live to listOf(BtnPress.Ok, BtnPress.OkHold, BtnPress.Back, BtnPress.Left, BtnPress.LeftHold, BtnPress.Right, BtnPress.RightHold,
+        // (No Back or Long Back: on live TV Back always goes to the guide / mini player and Long Back stops the
+        // channel, as for films, since 0.28.3.)
+        BtnScreen.Live to listOf(BtnPress.Ok, BtnPress.OkHold, BtnPress.Left, BtnPress.LeftHold, BtnPress.Right, BtnPress.RightHold,
             BtnPress.Up, BtnPress.UpHold, BtnPress.Down, BtnPress.DownHold, BtnPress.ChannelUp, BtnPress.ChannelDown, BtnPress.Menu, BtnPress.MenuHold) + media + colours,
         BtnScreen.Film to listOf(BtnPress.Ok, BtnPress.OkHold, BtnPress.Left, BtnPress.Right, BtnPress.Up, BtnPress.Down, BtnPress.Menu,
             BtnPress.PlayPause, BtnPress.Stop, BtnPress.Rewind, BtnPress.FastForward, BtnPress.Info) + colours,
@@ -196,22 +197,29 @@ object ButtonMap {
     private fun menuHold(s: RemoteSettings) = if (s.searchButton == SearchButton.Auto) BtnAction.Search else BtnAction.Nothing
 
     /** Out of the box, beyond each press's own handling: IPTV-box style colour buttons, Record and Info. */
+    // (The Viewarr preset, 2026-11-15: TiviMate's buttons, keeping Viewarr's Long OK record options in the guide,
+    // Left / Right rewind and skip on live TV, Record = record now and the guide's colour buttons.)
     private val defaults: Map<Pair<BtnScreen, BtnPress>, BtnAction> = mapOf(
         (BtnScreen.Guide to BtnPress.BackHold) to BtnAction.GroupsMenu,
+        (BtnScreen.Guide to BtnPress.Menu) to BtnAction.MainMenu,
+        (BtnScreen.Guide to BtnPress.PlayPause) to BtnAction.Description,
+        (BtnScreen.Guide to BtnPress.Info) to BtnAction.Description,
         (BtnScreen.Guide to BtnPress.Record) to BtnAction.RecordNow,
         (BtnScreen.Guide to BtnPress.Stop) to BtnAction.Stop,
         (BtnScreen.Guide to BtnPress.Red) to BtnAction.RecordOptions,
         (BtnScreen.Guide to BtnPress.Green) to BtnAction.GroupsMenu,
         (BtnScreen.Guide to BtnPress.Yellow) to BtnAction.DayBack,
         (BtnScreen.Guide to BtnPress.Blue) to BtnAction.DayForward,
-        (BtnScreen.Live to BtnPress.BackHold) to BtnAction.GroupsMenu,
+        (BtnScreen.Live to BtnPress.OkHold) to BtnAction.MainMenu,
+        (BtnScreen.Live to BtnPress.Menu) to BtnAction.MainMenu,
+        (BtnScreen.Live to BtnPress.PlayPauseHold) to BtnAction.GoLive,
         (BtnScreen.Live to BtnPress.Record) to BtnAction.RecordNow,
         (BtnScreen.Live to BtnPress.Stop) to BtnAction.Stop,
-        (BtnScreen.Live to BtnPress.Red) to BtnAction.RecordOptions,
-        (BtnScreen.Live to BtnPress.Green) to BtnAction.ChannelList,
-        (BtnScreen.Live to BtnPress.Yellow) to BtnAction.StartOver,
-        (BtnScreen.Live to BtnPress.Blue) to BtnAction.Banner,
         (BtnScreen.Live to BtnPress.Info) to BtnAction.Banner,
+        (BtnScreen.Live to BtnPress.Red) to BtnAction.Guide,
+        (BtnScreen.Live to BtnPress.Green) to BtnAction.GroupsMenu,
+        (BtnScreen.Live to BtnPress.Yellow) to BtnAction.Controls,
+        (BtnScreen.Live to BtnPress.Blue) to BtnAction.Settings,
         (BtnScreen.Film to BtnPress.Green) to BtnAction.AudioSubs,
         // Down while an episode plays: the next episodes (a film: the seek bar, as before).
         (BtnScreen.Film to BtnPress.Down) to BtnAction.Episodes,
@@ -230,21 +238,124 @@ object ButtonMap {
     fun changed(s: RemoteSettings, screen: BtnScreen, press: BtnPress): BtnAction? {
         if (press !in presses[screen].orEmpty()) return null
         val native = native(s, screen, press)
-        return action(s, screen, press).takeIf { it != native && !(it == BtnAction.Nothing && native == null) }
+        val a = action(s, screen, press)
+        // Set to Nothing on purpose (Record or Info, say): it does nothing, rather than passing on to their usual job.
+        if (a == BtnAction.Nothing && s.buttonMap[key(screen, press)] == BtnAction.Nothing.name) return BtnAction.Nothing
+        return a.takeIf { it != native && !(it == BtnAction.Nothing && native == null) }
     }
 
     fun key(screen: BtnScreen, press: BtnPress) = "${screen.name}.${press.name}"
 
     /** What [press] does on [screen] with these settings. */
-    fun action(s: RemoteSettings, screen: BtnScreen, press: BtnPress): BtnAction =
-        s.buttonMap[key(screen, press)]?.let { n -> BtnAction.entries.firstOrNull { it.name == n } } ?: default(s, screen, press)
+    fun action(s: RemoteSettings, screen: BtnScreen, press: BtnPress): BtnAction {
+        val a = chosen(s, screen, press)
+        // OK keeps the screen's core job unless another button has it, so no setting can lock you out of it.
+        val need = core[screen] ?: return a
+        if (press == BtnPress.Ok && a !in need && !coreElsewhere(s, screen, need))
+            return default(s, screen, press).takeIf { it in need } ?: need.first()
+        return a
+    }
+
+    /**
+     * Presses every remote has (Shield and Fire TV remotes have no colour, media or Info buttons), so only these can
+     * take over a screen's core job from OK.
+     */
+    private val everyRemote = setOf(BtnPress.OkHold, BtnPress.Up, BtnPress.UpHold, BtnPress.Down, BtnPress.DownHold,
+        BtnPress.Left, BtnPress.LeftHold, BtnPress.Right, BtnPress.RightHold, BtnPress.Menu, BtnPress.MenuHold)
+
+    /** Whether a press besides OK, on every remote and not taken by Search or an extra button, does the core job. */
+    private fun coreElsewhere(s: RemoteSettings, screen: BtnScreen, need: Set<BtnAction>) = presses[screen].orEmpty().any {
+        it != BtnPress.Ok && it in everyRemote && claimedBy(s, it) == null && chosen(s, screen, it) in need
+    }
+
+    private fun chosen(s: RemoteSettings, screen: BtnScreen, press: BtnPress): BtnAction =
+        s.buttonMap[key(screen, press)]?.let { n -> BtnAction.entries.firstOrNull { it.name == n } }
+            ?.takeIf { allowed(screen, press, it) } ?: default(s, screen, press)
+
+    /**
+     * Each screen's core job, which some button must always do: watching from the guide, and opening the controls on
+     * live TV and in films (everything else is reached from there). If OK is changed and nothing else does it, OK
+     * keeps doing it.
+     */
+    private val core: Map<BtnScreen, Set<BtnAction>> = mapOf(
+        BtnScreen.Guide to setOf(BtnAction.Watch, BtnAction.WatchInGuide),
+        BtnScreen.Live to setOf(BtnAction.Controls),
+        BtnScreen.Film to setOf(BtnAction.Controls),
+    )
+
+    /** Whether OK on [screen] has to keep its core job with these settings (no other button does it). */
+    fun okLocked(s: RemoteSettings, screen: BtnScreen): String? {
+        val need = core[screen] ?: return null
+        if (coreElsewhere(s, screen, need)) return null
+        return if (screen == BtnScreen.Guide) "watching" else "opening the controls"
+    }
+
+    /**
+     * Whether [a] can go on [press] here. OK can't do nothing (it's how you pick anything), and only the screen's own
+     * actions count, so an old or hand-edited setting falls back to standard instead of clashing.
+     */
+    fun allowed(screen: BtnScreen, press: BtnPress, a: BtnAction) =
+        press in presses[screen].orEmpty() && a in actions[screen].orEmpty() && !(press == BtnPress.Ok && a == BtnAction.Nothing)
+
+    /** The key code that opens search now (Auto: the remote's own search key; holding Menu is in the table). */
+    fun searchCode(s: RemoteSettings): Int? = when (s.searchButton) {
+        SearchButton.Auto -> KeyEvent.KEYCODE_SEARCH
+        SearchButton.Red -> KeyEvent.KEYCODE_PROG_RED
+        SearchButton.Green -> KeyEvent.KEYCODE_PROG_GREEN
+        SearchButton.Yellow -> KeyEvent.KEYCODE_PROG_YELLOW
+        SearchButton.Blue -> KeyEvent.KEYCODE_PROG_BLUE
+        SearchButton.Info -> KeyEvent.KEYCODE_INFO
+        SearchButton.Chosen -> s.searchKeyCode
+        SearchButton.Off -> null
+    }
+
+    /** The table press a remote's own key code is (before any extra buttons taught in Settings), or null. */
+    fun pressOfCode(code: Int?): BtnPress? = when (code) {
+        KeyEvent.KEYCODE_PROG_RED -> BtnPress.Red
+        KeyEvent.KEYCODE_PROG_GREEN -> BtnPress.Green
+        KeyEvent.KEYCODE_PROG_YELLOW -> BtnPress.Yellow
+        KeyEvent.KEYCODE_PROG_BLUE -> BtnPress.Blue
+        KeyEvent.KEYCODE_INFO -> BtnPress.Info
+        KeyEvent.KEYCODE_MENU -> BtnPress.Menu
+        KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> BtnPress.ChannelUp
+        KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN -> BtnPress.ChannelDown
+        KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_MEDIA_PLAY, KeyEvent.KEYCODE_MEDIA_PAUSE -> BtnPress.PlayPause
+        KeyEvent.KEYCODE_MEDIA_STOP -> BtnPress.Stop
+        KeyEvent.KEYCODE_MEDIA_REWIND -> BtnPress.Rewind
+        KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> BtnPress.FastForward
+        KeyEvent.KEYCODE_MEDIA_RECORD -> BtnPress.Record
+        else -> null
+    }
+
+    /**
+     * What has taken [press]'s button away from the table, or null. The Search button is checked before the table, so
+     * its press always opens search; a button taught as an extra button for something else (Buttons while watching)
+     * does that instead. Their table rows show this rather than choices that would never run.
+     */
+    fun claimedBy(s: RemoteSettings, press: BtnPress): String? {
+        // A long press goes with its button: the key is taken on its first press, so its hold never reaches the table.
+        val tap = tapOf[press] ?: press
+        if (pressOfCode(searchCode(s)) == tap) return "Search"
+        return s.buttons.entries.firstOrNull { (action, code) -> pressOfCode(code) == tap && pressOfAction(action) != tap }
+            ?.key?.let { n -> io.github.petebutty.viewarr.ui.common.RemoteKeys.teachable.firstOrNull { it.first.name == n }?.second }
+    }
+
+    private val tapOf: Map<BtnPress, BtnPress> by lazy { longOf.entries.associate { (tap, long) -> long to tap } + (BtnPress.MenuHold to BtnPress.Menu) }
+
+    private fun pressOfAction(name: String): BtnPress? = when (name) {
+        "PlayPause" -> BtnPress.PlayPause; "Rewind" -> BtnPress.Rewind; "FastForward" -> BtnPress.FastForward
+        "Stop" -> BtnPress.Stop; "Info" -> BtnPress.Info; "Menu" -> BtnPress.Menu; "ChannelUp" -> BtnPress.ChannelUp
+        "ChannelDown" -> BtnPress.ChannelDown; "Record" -> BtnPress.Record
+        else -> null
+    }
 
     /**
      * The table press a button is, or null (arrows, OK, Back, numbers… keep their own handling). Record and Info
      * come through RemoteKeys, so a button taught for them (Buttons while watching) counts too.
      */
     fun pressOf(e: androidx.compose.ui.input.key.KeyEvent): BtnPress? {
-        when (e.nativeKeyEvent.keyCode) {
+        // A button taught as an extra button for something (a colour button for Record, say) is that, not its colour.
+        if (!io.github.petebutty.viewarr.ui.common.RemoteKeys.isTaught(e.nativeKeyEvent.keyCode)) when (e.nativeKeyEvent.keyCode) {
             KeyEvent.KEYCODE_PROG_RED -> return BtnPress.Red
             KeyEvent.KEYCODE_PROG_GREEN -> return BtnPress.Green
             KeyEvent.KEYCODE_PROG_YELLOW -> return BtnPress.Yellow

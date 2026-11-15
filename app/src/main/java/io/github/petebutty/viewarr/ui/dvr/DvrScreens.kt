@@ -147,8 +147,6 @@ internal fun ChoicePanel(
     description: String? = null,
 ) {
     val first = remember { FocusRequester() }
-    // TEMP (hold-OK): the pop-up opening / closing.
-    androidx.compose.runtime.DisposableEffect(Unit) { android.util.Log.i("HoldDebug", "ChoicePanel open: $title"); onDispose { android.util.Log.i("HoldDebug", "ChoicePanel closed: $title") } }
     BackHandler(onBack = onClose)
     io.github.petebutty.viewarr.ui.common.BackLayer()
     LaunchedEffect(Unit) {
@@ -174,7 +172,7 @@ internal fun ChoicePanel(
                     Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary, maxLines = 7, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 14.dp))
                 }
                 choices.forEachIndexed { i, (label, action) ->
-                    MenuItem(text = label, selected = false, onClick = { android.util.Log.i("HoldDebug", "ChoicePanel pressed: $label"); action() }, compact = true, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier)
+                    MenuItem(text = label, selected = false, onClick = action, compact = true, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier)
                 }
                 message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp)) }
             }

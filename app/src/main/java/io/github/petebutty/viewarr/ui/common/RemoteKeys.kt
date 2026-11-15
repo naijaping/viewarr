@@ -27,6 +27,9 @@ object RemoteKeys {
         taught = byAction.mapNotNull { (name, code) -> RemoteAction.entries.firstOrNull { it.name == name }?.let { code to it } }.toMap()
     }
 
+    /** Whether [code] was taught as an extra button for something (Settings → Remote buttons). */
+    fun isTaught(code: Int) = code in taught
+
     /** What [e] means: a taught button first, then the default table. */
     fun action(e: KeyEvent): RemoteAction? = taught[e.nativeKeyEvent.keyCode] ?: defaultAction(e)
 
@@ -45,6 +48,12 @@ object RemoteKeys {
     )
 
     /** Never taught: needed to move around and get out (or kept by the TV itself), and the number keys (channels). */
+    /** Buttons that keep their own jobs (pausing, changing channel): not for search or an extra button. */
+    fun isCore(code: Int): Boolean = code in setOf(
+        android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.KEYCODE_MEDIA_PLAY, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE,
+        android.view.KeyEvent.KEYCODE_CHANNEL_UP, android.view.KeyEvent.KEYCODE_CHANNEL_DOWN,
+    )
+
     fun isProtected(code: Int): Boolean = code in setOf(
         android.view.KeyEvent.KEYCODE_DPAD_UP, android.view.KeyEvent.KEYCODE_DPAD_DOWN,
         android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT,

@@ -79,17 +79,7 @@ private fun defaultButtons(a: io.github.petebutty.viewarr.ui.common.RemoteAction
     else -> ""
 }
 
-/** The key code that opens search now (Settings → Remote buttons → Search & extra buttons), so it isn't taught to something else. */
-private fun searchCode(s: RemoteSettings): Int? = when (s.searchButton) {
-    io.github.petebutty.viewarr.data.settings.SearchButton.Auto -> android.view.KeyEvent.KEYCODE_SEARCH
-    io.github.petebutty.viewarr.data.settings.SearchButton.Red -> android.view.KeyEvent.KEYCODE_PROG_RED
-    io.github.petebutty.viewarr.data.settings.SearchButton.Green -> android.view.KeyEvent.KEYCODE_PROG_GREEN
-    io.github.petebutty.viewarr.data.settings.SearchButton.Yellow -> android.view.KeyEvent.KEYCODE_PROG_YELLOW
-    io.github.petebutty.viewarr.data.settings.SearchButton.Blue -> android.view.KeyEvent.KEYCODE_PROG_BLUE
-    io.github.petebutty.viewarr.data.settings.SearchButton.Info -> android.view.KeyEvent.KEYCODE_INFO
-    io.github.petebutty.viewarr.data.settings.SearchButton.Chosen -> s.searchKeyCode
-    io.github.petebutty.viewarr.data.settings.SearchButton.Off -> null
-}
+private fun searchCode(s: RemoteSettings): Int? = io.github.petebutty.viewarr.data.settings.ButtonMap.searchCode(s)
 
 private inline fun <reified E> all(): List<RemoteChoice> where E : Enum<E>, E : RemoteChoice = enumValues<E>().toList()
 
@@ -111,13 +101,24 @@ fun RemoteSettingsScreen(onBack: () -> Unit, part: RemotePart = RemotePart.Butto
         SettingItem(name, if (extra == null) "OK to add a button for this, e.g. a colour button or one your remote has spare." else "OK to change or remove the extra button.",
             listOf(ButtonStatus(status)), ButtonStatus(status), action = { teaching = a to name }, onSelect = {})
     }
+    val toastCtx = androidx.compose.ui.platform.LocalContext.current
+    fun freeForSearch(code: Int?) {
+        val taken = s.buttons.entries.firstOrNull { it.value == code }?.key ?: return
+        vm.setButton(taken, null)
+        val name = io.github.petebutty.viewarr.ui.common.RemoteKeys.teachable.firstOrNull { it.first.name == taken }?.second ?: taken
+        android.widget.Toast.makeText(toastCtx, "That button was the extra button for $name. It opens search now.", android.widget.Toast.LENGTH_LONG).show()
+    }
     // "A button you choose": the next button pressed becomes the search button.
     var learning by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     var networkSetup by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
     fun item(title: String, description: String, key: String, choices: List<RemoteChoice>, current: RemoteChoice) =
         SettingItem(title, description, choices, current) {
             if (it == io.github.petebutty.viewarr.data.settings.SearchButton.Chosen) learning = true
-            else vm.set(key, it)
+            else {
+                vm.set(key, it)
+                // A Search button that was an extra button for something stops being that (search is checked first).
+                if (key == RemoteStore.SEARCH_BUTTON) freeForSearch(searchCode(s.copy(searchButton = it as io.github.petebutty.viewarr.data.settings.SearchButton)))
+            }
         }
     val k = RemoteStore.Companion
     // Live TV shortcuts: what can be one (the same lists the menu shows).
@@ -188,7 +189,10 @@ fun RemoteSettingsScreen(onBack: () -> Unit, part: RemotePart = RemotePart.Butto
     val preset = io.github.petebutty.viewarr.data.settings.Presets.matching(s)
     fun presetRow(p: io.github.petebutty.viewarr.data.settings.ControlPreset, title: String, about: String): SettingItem {
         val status = ButtonStatus(if (preset == p) "✓ In use" else if (preset == io.github.petebutty.viewarr.data.settings.ControlPreset.Custom && s.presetBase == p) "Changed" else "")
-        return SettingItem(title, about, listOf(status), status, action = { vm.applyPreset(p) }, onSelect = {})
+        return SettingItem(title, about, listOf(status), status, action = {
+            vm.applyPreset(p)
+            android.widget.Toast.makeText(ctx, "$title: every button set, Search and extra buttons back to standard", android.widget.Toast.LENGTH_SHORT).show()
+        }, onSelect = {})
     }
     val shareRow = SettingItem("Share this button setup", "Writes every button to the app's log (for building a preset from it).",
         listOf(ButtonStatus("")), ButtonStatus(""), action = {
@@ -203,10 +207,26 @@ fun RemoteSettingsScreen(onBack: () -> Unit, part: RemotePart = RemotePart.Butto
     // By button (as TiviMate): every button on the remote, each with what it does in every part of Viewarr.
     val bm = io.github.petebutty.viewarr.data.settings.ButtonMap
     val places = listOf(io.github.petebutty.viewarr.data.settings.BtnScreen.Guide to "In the TV guide", io.github.petebutty.viewarr.data.settings.BtnScreen.Live to "On live TV", io.github.petebutty.viewarr.data.settings.BtnScreen.Film to "In films & shows", io.github.petebutty.viewarr.data.settings.BtnScreen.Pages to "In menus & pages")
-    fun placeRow(screen: io.github.petebutty.viewarr.data.settings.BtnScreen, press: io.github.petebutty.viewarr.data.settings.BtnPress, title: String) =
-        SettingItem(title, "", bm.actions[screen].orEmpty().map { ActionChoice(it) }, ActionChoice(bm.action(s, screen, press))) { c ->
-            vm.setMapping(screen, press, (c as ActionChoice).action)
+    fun placeRow(screen: io.github.petebutty.viewarr.data.settings.BtnScreen, press: io.github.petebutty.viewarr.data.settings.BtnPress, title: String): SettingItem {
+        // A button that's the Search button, or an extra button for something else, does that everywhere: no choices
+        // here that would never run.
+        bm.claimedBy(s, press)?.let { by ->
+            val status = ButtonStatus(by)
+            val why = if (by == "Search") "Opens search: it's your Search button (Other buttons, below). Pick another Search button to use this one here."
+                else "It's the extra button for $by (Other buttons, below). Remove it there to use this one here."
+            return SettingItem(title, why, listOf(status), status, action = {}, onSelect = {})
         }
+        val locked = if (press == io.github.petebutty.viewarr.data.settings.BtnPress.Ok) bm.okLocked(s, screen) else null
+        return SettingItem(title, "", bm.actions[screen].orEmpty().filter { bm.allowed(screen, press, it) }.map { ActionChoice(it) }, ActionChoice(bm.action(s, screen, press))) { c ->
+            val a = (c as ActionChoice).action
+            // OK is the only button doing the screen's core job: it keeps it until another button is given it (the change
+            // isn't saved either, so it can't turn up later).
+            val refused = locked != null && a != bm.default(s, screen, press) &&
+                bm.action(s.copy(buttonMap = s.buttonMap + (bm.key(screen, press) to a.name)), screen, press) != a
+            if (!refused) vm.setMapping(screen, press, a)
+            else android.widget.Toast.makeText(toastCtx, "OK is the only button for $locked here, so it keeps that. Give Long OK, an arrow or Menu ${if (screen == io.github.petebutty.viewarr.data.settings.BtnScreen.Guide) "Watch" else "Controls"} first, then change OK.", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
     val perButton = io.github.petebutty.viewarr.data.settings.BtnPress.entries.mapNotNull { press ->
         val rows = buildList {
             places.forEach { (screen, place) ->
@@ -232,9 +252,9 @@ fun RemoteSettingsScreen(onBack: () -> Unit, part: RemotePart = RemotePart.Butto
             "Presets", "Set every button at once, then change any you like: each button below lists what it does in the TV guide, on live TV, in films and in menus.",
             listOf(
                 presetRow(io.github.petebutty.viewarr.data.settings.ControlPreset.Viewarr, "Use Viewarr buttons",
-                    "Live TV: Up / Down the channel list, OK the controls, Left / Right rewind and skip. The guide: Left goes into catch-up and opens the menu at the start; Back jumps to now, then asks to exit."),
+                    "TiviMate's buttons with a few changes. The guide: Left carries on back into catch-up (no hold), hold OK the record options, Back jumps to now then the menu, the colour buttons record, groups and a day back / forward. Live TV: Up / Down change channel, OK the controls, Left / Right rewind and skip, hold Play for live. Search and extra buttons go back to standard too."),
                 presetRow(io.github.petebutty.viewarr.data.settings.ControlPreset.TiviMate, "Use TiviMate buttons",
-                    "As TiviMate comes. Live TV: Up / Down change channel, OK the controls, Left the channel list, Right the channel before, Menu the main menu. The guide: Left back to now, then the menu; Back back to the player."),
+                    "As TiviMate comes. Live TV: Up / Down change channel, OK the controls, Left the channel list, Right the channel before, Menu the main menu. The guide: Left back a programme (on now: the channel groups); Back back to the player. Search and extra buttons go back to standard too."),
                 shareRow,
             ),
         ),
@@ -267,7 +287,7 @@ fun RemoteSettingsScreen(onBack: () -> Unit, part: RemotePart = RemotePart.Butto
         },
         onClose = { networkSetup = false },
     )
-    if (learning) LearnButtonDialog(onKey = { code -> vm.setSearchKey(code); learning = false }, onCancel = { learning = false })
+    if (learning) LearnButtonDialog(onKey = { code -> freeForSearch(code); vm.setSearchKey(code); learning = false }, onCancel = { learning = false })
     teaching?.let { (a, name) ->
         TeachButtonDialog(
             name = name,
@@ -316,7 +336,8 @@ private fun TeachButtonDialog(
                         code == android.view.KeyEvent.KEYCODE_DPAD_CENTER || code == android.view.KeyEvent.KEYCODE_ENTER || code == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER ->
                             if (current != null) onRemove() else note = "OK, Back, the arrows and the numbers can't be used. Press another button."
                         io.github.petebutty.viewarr.ui.common.RemoteKeys.isProtected(code) -> note = "That button is needed for moving around (or by the TV). Try another one."
-                        code == search -> note = "That button opens search (Settings → Remote buttons → Search & extra buttons). Choose another, or change the search button first."
+                        io.github.petebutty.viewarr.ui.common.RemoteKeys.isCore(code) -> note = "Play / pause and the channel buttons keep their own jobs. Try a spare button, like a colour one."
+                        code == search -> note = "That button opens search (Remote buttons → Other buttons → Search button). Choose another, or change the search button first."
                         code == current -> onCancel()
                         takenBy(code) != null && confirm != code -> { confirm = code; note = "${io.github.petebutty.viewarr.ui.common.RemoteKeys.buttonName(code)} is the extra button for ${takenBy(code)}. Press it again to use it for $name instead." }
                         else -> onKey(code)
@@ -359,7 +380,8 @@ private fun LearnButtonDialog(onKey: (Int) -> Unit, onCancel: () -> Unit) {
                     val code = e.nativeKeyEvent.keyCode
                     when {
                         code == android.view.KeyEvent.KEYCODE_BACK -> onCancel()
-                        code in reserved -> note = "That button is needed for moving around. Try another one."
+                        io.github.petebutty.viewarr.ui.common.RemoteKeys.isCore(code) -> note = "Play / pause and the channel buttons keep their own jobs. Try another one."
+                        code in reserved || io.github.petebutty.viewarr.ui.common.RemoteKeys.isProtected(code) -> note = "That button is needed for moving around. Try another one."
                         else -> onKey(code)
                     }
                     true

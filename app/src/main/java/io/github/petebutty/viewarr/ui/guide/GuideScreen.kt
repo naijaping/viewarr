@@ -144,9 +144,10 @@ fun GuideScreen(
         }
     }
 
-    // Left in the guide, as TiviMate (since 0.28.3, one way for everyone): a tap goes back a programme, or on what's on
-    // now opens the channel groups (Left again: the main menu); holding Left goes back into catch-up.
-    val guideLeft = GuideLeft.NowMenu
+    // Left in the guide: the Viewarr preset carries on back through the programmes into catch-up (tap or hold; it stops
+    // at the start); TiviMate's goes back a programme, or on what's on now opens the channel groups, and holding Left
+    // goes into catch-up. (Older choices are kept as the Viewarr way.)
+    val guideLeft = if (remote.guideLeft == GuideLeft.NowMenu) GuideLeft.NowMenu else GuideLeft.AlwaysPast
     Column(
         Modifier
             .fillMaxSize()
@@ -173,8 +174,10 @@ fun GuideScreen(
                         }
                         e.type == KeyEventType.KeyUp && leftPending.value -> {
                             leftPending.value = false
-                            // (Also when it can't go back any further: no guide data, or the start of catch-up. It did nothing.)
-                            if (vm.isAtNow() || (!vm.moveLeft() && !vm.loadingPast)) onOpenMenu()
+                            // Only on what's on now. Back in catch-up, a Left that can't go further (the start of catch-up,
+                            // or a channel without catch-up that far back) does nothing: it used to open the channel
+                            // groups mid-browse, as soon as the earlier programmes had finished loading.
+                            if (vm.isAtNow()) onOpenMenu() else vm.moveLeft()
                         }
                     }
                     return@onPreviewKeyEvent true
@@ -215,8 +218,6 @@ fun GuideScreen(
                 }
                 // OK: a tap selects (play / info); holding it opens the record options.
                 if (e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter) {
-                    // TEMP (hold-OK): what the guide sees.
-                    android.util.Log.i("HoldDebug", "guide OK type=${e.type} repeat=${e.nativeKeyEvent.repeatCount} pending=${okPending.value}")
                     when {
                         e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 -> okPending.value = true
                         e.type == KeyEventType.KeyDown && okPending.value -> {
@@ -445,7 +446,9 @@ private fun TimeHeader(now: Long, windowStart: Long, sync: SyncState, gridWidth:
             modifier = Modifier.align(Alignment.CenterStart),
         )
         Box(Modifier.padding(start = ChannelColumn).fillMaxSize().clipToBounds()) {
-            var t = windowStart
+            // (Hourly marks on a long timeline start on the hour.)
+            val hourly = GuideViewModel.VISIBLE_MS > 180 * 60_000L
+            var t = if (hourly && windowStart % 3_600_000L != 0L) windowStart + GuideViewModel.STEP_MS else windowStart
             while (t < windowStart + GuideViewModel.VISIBLE_MS) {
                 // Midnight along the top: the new day's name with it ("Sat 00:00").
                 Text(
@@ -454,7 +457,8 @@ private fun TimeHeader(now: Long, windowStart: Long, sync: SyncState, gridWidth:
                     color = AppColors.TextSecondary,
                     modifier = Modifier.align(Alignment.CenterStart).offset(x = xOf(t, windowStart, gridWidth) + 4.dp),
                 )
-                t += GuideViewModel.STEP_MS
+                // (Hourly marks on a long timeline, so the times don't crowd.)
+                t += if (hourly) 2 * GuideViewModel.STEP_MS else GuideViewModel.STEP_MS
             }
         }
         if (sync is SyncState.Running) {

@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import io.github.petebutty.viewarr.ui.common.glass
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -292,6 +293,28 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
         10 -> modifier.fillMaxWidth().padding(start = 40.dp, bottom = 32.dp)
             .wrapContentWidth(Alignment.Start).fillMaxWidth(0.58f)
             .glass(radius = r).padding(horizontal = 22.dp, vertical = 16.dp)
+        // Floating card: a more solid card lifted off the picture, a soft shadow under it, sitting higher up.
+        11 -> {
+            val shape = androidx.compose.foundation.shape.RoundedCornerShape(maxOf(r, 22.dp))
+            modifier.fillMaxWidth(w).padding(start = 64.dp, end = 64.dp, bottom = 52.dp)
+                .shadow(28.dp, shape, ambientColor = Color.Black, spotColor = Color.Black)
+                .background(bg.copy(alpha = minOf(1f, glassAlpha + 0.25f)), shape)
+                .padding(horizontal = 28.dp, vertical = 20.dp)
+        }
+        // Slim strip: a thin full-width band along the bottom, a line in the highlight colour across its top.
+        12 -> modifier.fillMaxWidth()
+            .background(bg.copy(alpha = minOf(1f, glassAlpha + 0.1f)))
+            .drawBehind { drawRect(AppColors.Accent, size = androidx.compose.ui.geometry.Size(size.width, 2.dp.toPx())) }
+            .padding(start = 64.dp, end = 64.dp, top = 12.dp, bottom = 12.dp)
+        // Frosted: milky light glass (white-tinted, a soft sheen from the top), rather than the dark tint.
+        13 -> {
+            val shape = androidx.compose.foundation.shape.RoundedCornerShape(r)
+            modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp)
+                .background(Color.Black.copy(alpha = 0.35f), shape)
+                .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.White.copy(alpha = 0.22f), 1f to Color.White.copy(alpha = 0.08f)), shape)
+                .border(1.dp, Color.White.copy(alpha = 0.35f), shape)
+                .padding(horizontal = 24.dp, vertical = 18.dp)
+        }
         // Glass (the Viewarr look): the panel inset from the edges, everything inside it.
         else -> modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp).glass(radius = r).padding(horizontal = 24.dp, vertical = 18.dp)
     }

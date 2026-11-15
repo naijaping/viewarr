@@ -109,6 +109,15 @@ object VodHost {
         return true
     }
     fun close() { if (active) source?.onClose(); mini = false }
+
+    /** The key whose table action left the player: the root eats the rest of that press. */
+    var eatKey: Int? = null
+
+    /** Hold Back on the full-screen film (from the root or a pop-up over it): stop, and eat the rest of the press. */
+    fun stopHeld() { swallowBack = true; val was = active; close(); if (was) afterStop() }
+
+    /** Keys during the glide into the corner: the film is going, the page underneath doesn't have the remote yet. */
+    val leaving get() = mini
 }
 
 /** At the root, over everything: the player, full screen or in the corner. */

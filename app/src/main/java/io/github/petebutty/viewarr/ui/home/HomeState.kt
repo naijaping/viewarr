@@ -392,17 +392,54 @@ class HomeState(
     fun upDown(delta: Int) { if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.LIVE_UPDOWN) != 0) browse(delta) else zap(delta) }
 
     /** A press from the button table (Settings → Remote → Buttons) on the guide, live TV or a page. */
+    /**
+     * OK on a programme in the guide (and Watch / Watch in the preview from a changed button there): a recording plays
+     * the recording; on now, the channel; aired on a catch-up channel, its catch-up straight away (never a library
+     * search first); still to come, its details.
+     */
+    fun pickInGuide(channel: ChannelListItem, program: GuideProgram?, inGuide: Boolean) {
+        // Recorded on Dispatcharr (the guide shows it as recorded): OK plays the recording.
+        val rec = program?.let { dvr.recordingFor(channel.id, it) }
+        if (rec != null && rec.state == DvrState.Recorded && rec.hasFile) {
+            fromStartScope.launch { dvr.playback(rec)?.let { hs.recordingPlayback = it } ?: hs.toast("That recording couldn't be played") }
+            return
+        }
+        val t = System.currentTimeMillis()
+        val live = program == null || (program.startTime <= t && program.endTime > t)
+        val replayable = program != null && program.endTime <= t && channel.catchupDays > 0 &&
+            program.startTime >= t - channel.catchupDays * 86_400_000L
+        when {
+            live -> {
+                val alreadyLive = playing?.id == channel.id && catchup == null && playback.state.value !is PlaybackState.Error
+                if (!alreadyLive) playback.play(channel, session)
+                if (!inGuide || alreadyLive) { hs.fullscreen = true; showBanner() }
+            }
+            replayable -> {
+                val already = catchup?.rowId == program!!.rowId && playing?.id == channel.id
+                if (!already) playback.playCatchup(channel, program, session)
+                if (!inGuide || already) { hs.fullscreen = true; showBanner() }
+            }
+            // A programme still to come: show its details (Record options from there).
+            program != null && program.startTime > t ->
+                // Already set to record: straight to cancelling it. Otherwise the details, with record / remind.
+                if (dvr.recordingFor(channel.id, program) != null) hs.recordTarget = channel to program
+                else hs.infoTarget = channel to program
+            // Aired, with no catch-up for it: its details, rather than nothing happening.
+            program != null -> hs.infoTarget = channel to program
+        }
+    }
+
     fun doButton(screen: BtnScreen, act: BtnAction) {
         val ch = playing
         when (act) {
             BtnAction.Nothing, BtnAction.TimeTitle, BtnAction.SeekBar, BtnAction.Episodes, BtnAction.MediaInfo, BtnAction.SwitchPlayer -> Unit
             BtnAction.Movies, BtnAction.Shows, BtnAction.Recordings, BtnAction.Music, BtnAction.Exit -> hs.buttonRequest = act
             BtnAction.Settings -> { hs.fullscreen = false; hs.channelListOpen = false; hs.menuOnSettings = true; hs.menuOpen = true }
-            BtnAction.WatchInGuide -> vm.channels.value.getOrNull(vm.cursor.value.row)?.let { c ->
-                if (playing?.id == c.id && catchup == null) { hs.fullscreen = true; showBanner() } else { playback.play(c, session); vm.selectChannel(c.id) }
-            }
-            BtnAction.Watch -> vm.channels.value.getOrNull(vm.cursor.value.row)?.let { c ->
-                playback.play(c, session); vm.selectChannel(c.id); hs.fullscreen = true; showBanner()
+            // In the guide: the highlighted programme, as OK does (an aired one on a catch-up channel plays its catch-up).
+            BtnAction.WatchInGuide, BtnAction.Watch -> vm.channels.value.getOrNull(vm.cursor.value.row)?.let { c ->
+                if (screen == BtnScreen.Guide) { pickInGuide(c, GuideViewModel.programAt(programsOf(c), vm.cursor.value.focusTime), inGuide = act == BtnAction.WatchInGuide); vm.selectChannel(c.id) }
+                else if (act == BtnAction.WatchInGuide && playing?.id == c.id && catchup == null) { hs.fullscreen = true; showBanner() }
+                else { playback.play(c, session); vm.selectChannel(c.id); if (act == BtnAction.Watch) { hs.fullscreen = true; showBanner() } }
             }
             BtnAction.GoLive -> if (catchup != null) { playback.goLive(); showBanner() }
             BtnAction.Description -> {
@@ -526,7 +563,8 @@ class HomeState(
 
     /** Which screen of Settings → Remote buttons a press is on now (null: none, e.g. a menu or dialog is open). */
     fun tableScreen(): BtnScreen? {
-        if (hs.menuOpen || hs.showAccounts || hs.quickSearch || hs.recordTarget != null || hs.infoTarget != null || VodHost.covering || hs.transparencyOpen) return null
+        if (hs.menuOpen || hs.showAccounts || hs.quickSearch || hs.recordTarget != null || hs.infoTarget != null || VodHost.covering || hs.transparencyOpen ||
+            hs.seasonPick != null || (hs.sportsOpen && !hs.fullscreen)) return null
         return when {
             hs.page == Page.Tv -> if (hs.fullscreen) BtnScreen.Live else BtnScreen.Guide
             hs.page != Page.Search && !MusicPlayer.nowPlayingOpen -> BtnScreen.Pages
@@ -780,6 +818,18 @@ class HomeState(
                 return@root true
             }
         }
+        // The rest of a press whose table action left the film (search, the guide, the menu…): not for the page now open.
+        VodHost.eatKey?.let { k ->
+            if (e.nativeKeyEvent.keyCode != k || (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0)) VodHost.eatKey = null
+            else { if (e.type == KeyEventType.KeyUp) VodHost.eatKey = null; return@root true }
+        }
+        // Hold Back on a full-screen film or show stops it, whatever is open over it (Audio sync, TV settings, Transparency
+        // took the press before the player saw it, so the hold only closed the panel).
+        if (e.key == Key.Back && e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 1 && !VodHost.swallowBack &&
+            VodHost.active && !VodHost.mini && !VodHost.gliding && !VodHost.behind) {
+            VodHost.stopHeld()
+            return@root true
+        }
         // The rest of a held Back that already sent the film to the corner: nothing else (VodKeys).
         if (e.key == Key.Back && VodHost.swallowBack) {
             if (e.type == KeyEventType.KeyUp) VodHost.swallowBack = false
@@ -844,9 +894,11 @@ class HomeState(
                 return@root true
             }
             if (e.type == KeyEventType.KeyDown) {
+                // (Once per press: holding Play / pause flipped it back and forth.)
+                val first = e.nativeKeyEvent.repeatCount == 0
                 when (RemoteKeys.action(e)) {
-                    RemoteAction.PlayPause -> { music.toggle(); return@root true }
-                    RemoteAction.Stop -> { music.stop(); return@root true }
+                    RemoteAction.PlayPause -> { if (first) music.toggle(); return@root true }
+                    RemoteAction.Stop -> { if (first) music.stop(); return@root true }
                     else -> Unit
                 }
                 when (e.nativeKeyEvent.keyCode) {
@@ -856,6 +908,9 @@ class HomeState(
             }
         }
         // The search button (Settings → Remote): pops search up over whatever's on screen.
+        // (A new press ends it: after a hold the release can be dropped app-wide, MainActivity's okHeld, and the next
+        // button pressed was swallowed.)
+        if (hs.searchHeld && e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) hs.searchHeld = false
         if (hs.searchHeld) {
             if (e.type == KeyEventType.KeyUp) hs.searchHeld = false
             return@root true
@@ -884,6 +939,12 @@ class HomeState(
             }
         }
         // Settings → Remote buttons: the rest of a changed button's press.
+        // (A new press of it is a new press: the last one's release can have been dropped after a hold, MainActivity's
+        // okHeld, which left this waiting and swallowed the next OK.)
+        if (hs.tableHeld != null && e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) {
+            hs.tableHeld = null
+            if (hs.holdTap != null) { holdJob[0]?.cancel(); hs.holdTap = null }
+        }
         hs.tableHeld?.let { held ->
             if (ButtonMap.pressOf(e) == held) {
                 // Held: channels and skips keep going, as their own buttons do.
@@ -924,7 +985,11 @@ class HomeState(
             val free = !hs.channelListOpen && !hs.osdVisible && !(hs.fullscreen && hs.multiView)
             val alwaysOn = press == BtnPress.Stop || (!(hs.fullscreen && hs.multiView) && press in setOf(
                 BtnPress.ChannelUp, BtnPress.ChannelDown, BtnPress.PlayPause, BtnPress.Rewind, BtnPress.FastForward))
-            if (press != null && screen != null && press !in setOf(BtnPress.OkHold, BtnPress.Back, BtnPress.BackHold) &&
+            // (OK in the guide is never taken here: the guide's own handler times tap and hold, and does a changed OK and
+            // Long OK itself. Taking it here when OK had been changed fired OK at once and swallowed the hold, so holding
+            // OK in the guide just tuned the channel and the record options never opened.)
+            val guideOk = screen == BtnScreen.Guide && press == BtnPress.Ok
+            if (press != null && screen != null && !guideOk && press !in setOf(BtnPress.OkHold, BtnPress.Back, BtnPress.BackHold) &&
                 (free || alwaysOn)
             ) {
                 // With a long press too: wait to see which (OK in the guide times its own hold).

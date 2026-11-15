@@ -7,6 +7,7 @@ import io.github.petebutty.viewarr.ui.common.instantFocusScale
 import kotlinx.coroutines.delay
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import io.github.petebutty.viewarr.ui.common.ignoreHeldOk
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -83,6 +85,7 @@ private val hhmm get() = io.github.petebutty.viewarr.ui.theme.Dates.time
 private fun Long.clockTime() = Instant.ofEpochMilli(this).atZone(ZoneId.systemDefault()).format(hhmm)
 
 /** TiviMate-style player menu: compact info, catch-up seek bar, and a row of small option pills. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun PlayerOsd(
     vm: PlaybackViewModel,
@@ -291,9 +294,25 @@ fun PlayerOsd(
         var carrying by remember { mutableStateOf<String?>(null) }
         androidx.activity.compose.BackHandler(enabled = editing) { if (carrying != null) carrying = null else editing = false }
         val shortcutFocus = remember { FocusRequester() }
+        // Where the buttons start: Go live in catch-up (or paused), else Stop (the TV guide if Stop is hidden). Both
+        // when the controls open and when Down comes into the buttons from the seek bar.
+        val goLiveFocus = remember { FocusRequester() }
+        var stopShown by remember { mutableStateOf(false) }
         Row(
             // Scrolls sideways when there are more buttons than fit (extras added, or editing: every button shows).
-            Modifier.padding(top = 6.dp).horizontalScroll(androidx.compose.foundation.rememberScrollState()).onPreviewKeyEvent { e ->
+            Modifier.padding(top = 6.dp)
+                .focusProperties {
+                    enter = {
+                        when {
+                            editing -> FocusRequester.Default
+                            catchup != null || paused -> goLiveFocus
+                            stopShown -> btnFocus.getOrPut("stop") { FocusRequester() }
+                            else -> FocusRequester.Default
+                        }
+                    }
+                }
+                .focusGroup()
+                .horizontalScroll(androidx.compose.foundation.rememberScrollState()).onPreviewKeyEvent { e ->
                 // Down from the buttons: the shortcuts row.
                 if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown && editing) true
                 else if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown && shortcuts.isNotEmpty() && popup == null) { showShortcuts = true; true }
@@ -305,7 +324,9 @@ fun PlayerOsd(
         ) {
             if (catchup != null || paused) {
                 if (catchup != null) Pill(io.github.petebutty.viewarr.ui.common.AppIcons.Replay, "Start over") { vm.restartProgramme() }
-                Pill(io.github.petebutty.viewarr.ui.common.AppIcons.SkipNext, "Go live", groupEnd = true) { vm.goLive() }
+                Pill(io.github.petebutty.viewarr.ui.common.AppIcons.SkipNext, "Go live",
+                    // (Paused live TV has no seek bar: the controls open here.)
+                    (if (catchup == null) Modifier.focusRequester(firstFocus) else Modifier).focusRequester(goLiveFocus), groupEnd = true) { vm.goLive() }
             }
             // The buttons as arranged (hold OK on one: edit them here; see BarLayout).
             class LiveBtn(val id: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val label: String, val onClick: () -> Unit)
@@ -333,6 +354,8 @@ fun PlayerOsd(
                 onSettings?.let { add(LiveBtn("settings", io.github.petebutty.viewarr.ui.common.AppIcons.Settings, "Settings", it)) }
             }
             val arranged = io.github.petebutty.viewarr.ui.common.BarLayout.arrange(all, { it.id }, editing)
+            val startId = if (arranged.any { it.id == "stop" }) "stop" else "guide"
+            androidx.compose.runtime.SideEffect { stopShown = startId == "stop" }
             arranged.forEach { b ->
                 androidx.compose.runtime.key(b.id) {
                     val hidden = !io.github.petebutty.viewarr.ui.common.BarLayout.shown(b.id)
@@ -344,7 +367,7 @@ fun PlayerOsd(
                             editing && hidden -> "${b.label} (" + (if (b.id in io.github.petebutty.viewarr.ui.common.BarLayout.extras) "not added" else "hidden") + ")"
                             else -> b.label
                         },
-                        (if (b.id == "guide" && catchup == null) Modifier.focusRequester(firstFocus) else Modifier)
+                        (if (b.id == startId && catchup == null && !paused) Modifier.focusRequester(firstFocus) else Modifier)
                             .focusRequester(btnFocus.getOrPut(b.id) { FocusRequester() })
                             .onFocusChanged { if (it.isFocused && popup == null) popupFrom = b.id }
                             .alpha(if (editing && hidden) 0.4f else 1f)
@@ -898,16 +921,29 @@ private fun LiveProgress(program: GuideProgram, now: Long, highlighted: Boolean 
     // The bar takes all the room, "… min left" right after it at the end, whatever the info bar's width.
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         // The rewind marker: the bar up to it in the highlight colour, from it to live dimmed, and a white knob on it.
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).height(14.dp), contentAlignment = Alignment.CenterStart) {
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.weight(1f).height(20.dp), contentAlignment = Alignment.CenterStart) {
             Box(Modifier.fillMaxWidth().height(if (highlighted) 6.dp else 4.dp).background(Color(0x44FFFFFF), RoundedCornerShape(2.dp))) {
                 Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().background(AppColors.Accent.copy(alpha = if (marker != null) 0.35f else 1f), RoundedCornerShape(2.dp)))
                 if (marker != null) Box(Modifier.fillMaxWidth(marker).fillMaxHeight().background(AppColors.Accent, RoundedCornerShape(2.dp)))
             }
-            if (marker != null) Box(Modifier.padding(start = (maxWidth * marker - 7.dp).coerceAtLeast(0.dp)).size(14.dp).background(Color.White, androidx.compose.foundation.shape.CircleShape))
+            // Highlighted: a knob on the bar (at live until you rewind, then on the marker), so it's clear you're on it.
+            if (highlighted || marker != null) SeekKnob(maxWidth * (marker ?: fraction), big = highlighted)
         }
         Spacer(Modifier.width(12.dp))
         Text("${((program.endTime - now) / 60_000).coerceAtLeast(0)} min left", fontSize = 13.sp, color = AppColors.TextSecondary)
     }
+}
+
+/** Where you are on a seek bar: a white knob; larger with an accent ring while the bar is highlighted. */
+@Composable
+private fun SeekKnob(x: androidx.compose.ui.unit.Dp, big: Boolean) {
+    val size = if (big) 20.dp else 12.dp
+    Box(
+        Modifier.padding(start = (x - size / 2).coerceAtLeast(0.dp)).size(size)
+            .then(if (big) Modifier.border(3.dp, AppColors.Accent, CircleShape) else Modifier)
+            .padding(if (big) 3.dp else 0.dp)
+            .background(Color.White, CircleShape)
+    )
 }
 
 /** Focusable seek bar: Left/Right skip (faster when held), OK plays/pauses. */
@@ -941,7 +977,7 @@ private fun SeekBar(
                 true
             },
     ) {
-        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(14.dp), contentAlignment = Alignment.CenterStart) {
+        androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxWidth().height(20.dp), contentAlignment = Alignment.CenterStart) {
             val liveFraction = live?.let { (it.toFloat() / duration).coerceIn(0f, 1f) }
             Box(Modifier.fillMaxWidth().height(if (focused) 6.dp else 4.dp).background(Color(0x44FFFFFF), RoundedCornerShape(3.dp))) {
                 // Broadcast so far (up to live), then where you're playing.
@@ -949,7 +985,7 @@ private fun SeekBar(
                 Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().background(AppColors.Accent, RoundedCornerShape(3.dp)))
             }
             // Where you are: a knob. Live: a thin white mark.
-            Box(Modifier.padding(start = (maxWidth * fraction - 6.dp).coerceAtLeast(0.dp)).size(12.dp).background(Color.White, CircleShape))
+            SeekKnob(maxWidth * fraction, big = focused)
             liveFraction?.let { Box(Modifier.padding(start = (maxWidth * it - 1.dp).coerceAtLeast(0.dp)).size(width = 2.dp, height = 14.dp).background(Color(0xCCFFFFFF))) }
         }
         Spacer(Modifier.height(6.dp))

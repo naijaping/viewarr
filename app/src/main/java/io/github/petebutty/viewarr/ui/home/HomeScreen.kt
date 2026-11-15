@@ -459,7 +459,6 @@ fun HomeScreen(
         }
     }
     BackHandler(enabled = hs.fullscreen && !hs.osdVisible) {
-        ButtonMap.changed(remote, BtnScreen.Live, BtnPress.Back)?.let { hs.doButton(BtnScreen.Live, it); return@BackHandler }
         hs.fullscreen = false
         hs.bannerVisible = false
         hs.guideFromFullAt = System.currentTimeMillis()
@@ -808,7 +807,7 @@ fun HomeScreen(
                 hs.page == Page.Tv && hs.fullscreen && !hs.osdVisible && !hs.channelListOpen && !hs.multiView -> ButtonHint(
                     "live-back", "OK: controls  ·  ▲ ▼ channels  ·  Back: mini player  ·  hold Back: close the player")
                 hs.page == Page.Tv && !hs.fullscreen && session != null -> ButtonHint(
-                    if (playing != null) "guide-back" else "guide", "OK: watch  ·  ◀ menu  ·  hold ◀ catch-up  ·  Back: " + (if (playing != null) "full screen  ·  hold Back: close the player" else when (guideBack) { GuideBack.Menu -> "menu"; else -> "exit" }))
+                    if (playing != null) "guide-back" else "guide", "OK: watch  ·  " + (if (remote.guideLeft == io.github.petebutty.viewarr.data.settings.GuideLeft.NowMenu) "◀ menu  ·  hold ◀ catch-up" else "◀ catch-up") + "  ·  Back: " + (if (playing != null) "full screen  ·  hold Back: close the player" else when (guideBack) { GuideBack.Menu -> "menu"; else -> "exit" }))
                 hs.page == Page.Movies || hs.page == Page.Shows -> ButtonHint(
                     "media", "OK: open  ·  hold OK: options  ·  ◀ menu  ·  hold Back: " + ButtonMap.action(remote, BtnScreen.Pages, BtnPress.BackHold).label.lowercase())
                 else -> Unit
@@ -1525,40 +1524,11 @@ private fun androidx.compose.foundation.layout.BoxScope.PagesLayer(
                 // what's playing: full screen).
                 val inGuide = ButtonMap.action(remote, BtnScreen.Guide, BtnPress.Ok) == BtnAction.WatchInGuide
                 if (!inGuide) ButtonMap.changed(remote, BtnScreen.Guide, BtnPress.Ok)?.let { hs.doButton(BtnScreen.Guide, it); return@GuideScreen }
-                // Recorded on Dispatcharr (the guide shows it as recorded): OK plays the recording.
-                val rec = program?.let { dvr.recordingFor(channel.id, it) }
-                if (rec != null && rec.state == DvrState.Recorded && rec.hasFile) {
-                    fromStartScope.launch { dvr.playback(rec)?.let { hs.recordingPlayback = it } ?: hs.toast("That recording couldn't be played") }
-                    return@GuideScreen
-                }
-                val t = System.currentTimeMillis()
-                val live = program == null || (program.startTime <= t && program.endTime > t)
-                val replayable = program != null && program.endTime <= t && channel.catchupDays > 0 &&
-                    program.startTime >= t - channel.catchupDays * 86_400_000L
-                when {
-                    live -> {
-                        val alreadyLive = playing?.id == channel.id && catchup == null && playState !is PlaybackState.Error
-                        if (!alreadyLive) playback.play(channel, session)
-                        if (!inGuide || alreadyLive) { hs.fullscreen = true; hs.showBanner() }
-                    }
-                    replayable -> {
-                        val already = catchup?.rowId == program!!.rowId && playing?.id == channel.id
-                        if (!already) playback.playCatchup(channel, program, session)
-                        if (!inGuide || already) { hs.fullscreen = true; hs.showBanner() }
-                    }
-                    // A programme still to come: show its details (Record options from there).
-                    program != null && program.startTime > t ->
-                        // Already set to record: straight to cancelling it. Otherwise the details, with record / remind.
-                        if (dvr.recordingFor(channel.id, program) != null) hs.recordTarget = channel to program
-                        else hs.infoTarget = channel to program
-                    // Aired, with no catch-up for it: its details, rather than nothing happening.
-                    program != null -> hs.infoTarget = channel to program
-                }
+                hs.pickInGuide(channel, program, inGuide)
             },
             // Holding OK: the programme's options (record / remind, watch it from your library or addons), whether
             // it's on now, still to come or already aired.
             onLongSelect = { channel, program ->
-                android.util.Log.i("HoldDebug", "guide hold -> program=${program?.title} mapped=${ButtonMap.changed(remote, BtnScreen.Guide, BtnPress.OkHold)}")
                 ButtonMap.changed(remote, BtnScreen.Guide, BtnPress.OkHold)?.let { hs.doButton(BtnScreen.Guide, it); return@GuideScreen }
                 if (program != null) hs.recordTarget = channel to program
                 // No programme listed (nothing to record): hold OK just adds / removes the favourite.

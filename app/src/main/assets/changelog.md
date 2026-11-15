@@ -1,5 +1,45 @@
 # Viewarr changelog (built by tools/changelog.py from the GitHub releases; don't edit by hand)
 
+## 0.28.4 · 15 Nov 2026
+
+### A new Viewarr button layout
+**Use Viewarr buttons** (Settings → Remote buttons, and how Viewarr now comes) is TiviMate's layout with a few changes:
+- **TV guide**: **Left** goes back a programme and carries straight on into catch-up, with no hold needed (it stops at the start of catch-up). **Menu (≡)** opens the main menu, and so does Back on what's on now when nothing's playing. Hold OK opens the record options. **Red / Green / Yellow / Blue**: record options, channel groups, a day back, a day forward.
+- **Live TV**: **Up / Down change channel** (they used to open the channel list), OK opens the controls, Left / Right rewind and skip, **hold Play / pause** goes back to live, hold OK or Menu opens the main menu. Red / Green / Yellow / Blue: TV guide, channel groups, the controls, Settings.
+- Applying either preset now resets everything, including the Search button and any extra buttons you'd taught.
+
+### Button settings can't break the remote any more
+- OK keeps its main job (watching in the guide, the controls on live TV and in films) until Long OK, an arrow or Menu is given it.
+- Back and hold Back can't be changed where they work the mini player and close the player. OK can't be set to do nothing.
+- The Search button and extra buttons own their keys: those rows show what the key does instead of choices that would never run. Play / pause and the channel buttons can't be taken for either.
+- Holding OK in the TV guide opens the record options again, even when OK has been changed.
+- Fixed presses being swallowed: the OK after a long press on live TV, the button after browsing channels, the rest of a press that left a film.
+- Holding Back stops a film even with Audio & subtitles, Audio sync, TV settings or Transparency open.
+
+### Play order
+- **Settings → Playback → Streams → Play order**: where Play looks for a film or episode. As standard: your servers, then IPTV, then your addons.
+- **Hold OK on Play** (or on an episode) now searches your addons straight away and lists their streams with your own copies.
+
+### Also new
+- **Three more info bar styles**: Floating card, Slim strip and Frosted.
+- **TV guide timeline**: Settings → Appearance → TV guide → Timeline shows 1½ to 6 hours across the screen.
+- **Live TV controls** open on **Stop**. In catch-up, Down from the seek bar goes to **Go live**. The seek bar shows a dot when you're on it.
+- **Episodes row** in the film player shows the whole season, centred on the episode you're watching.
+- **Up next** works out where you're up to from all your watch history (Plex, Jellyfin / Emby, Trakt).
+- **Changelog** in Settings → About.
+- **Send a note** in Settings → Playback → Troubleshooting.
+- **Refresh guide** button on the live TV info bar.
+- Your library copies say where they're from and whether they direct play or transcode.
+- Settings drop-downs open in place under their row, and pop-ups have their own window, so the remote can't get stuck behind them.
+- Profiles are switched off for now (coming soon).
+
+### Fixes
+- In catch-up, pausing and then pressing Left no longer opens the channel list.
+- OK (or a button set to Watch) on an aired programme plays its catch-up, rather than tuning the channel live.
+- Frame rate matching remembers each channel's frame rate, so changing channel is quicker.
+- Film playback through mpv checks HTTPS certificates.
+- Guide data saved under the right Live TV source when switching sources quickly.
+
 ## 0.28.3 · 14 Nov 2026
 
 ### The remote works the same way everywhere
