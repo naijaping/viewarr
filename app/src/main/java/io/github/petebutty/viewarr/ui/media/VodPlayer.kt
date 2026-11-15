@@ -374,7 +374,8 @@ fun VodPlayer(
     // The controls close after a while without a key (not while paused).
     LaunchedEffect(paused) {
         pausedLong = false
-        if (paused) { delay(2_500); pausedLong = true } else detailsOn = false
+        // Paused (the Play / Pause button or the remote's): the film's info shows straight away; playing hides it.
+        if (paused) pausedLong = true else detailsOn = false
     }
     // (Not while a shortcut's menu is open or one is being moved: they'd be left behind.)
     LaunchedEffect(menu.open, menu.lastKey, paused, menu.scOptions, menu.scMoving, menu.scRows, io.github.petebutty.viewarr.ui.player.CardMenu.open) {
@@ -449,7 +450,7 @@ fun VodPlayer(
         )
         var started by remember(stream) { mutableStateOf(false) }
         if (!buffering && durationMs > 0) started = true
-        if (!mini && started && (detailsOn || (paused && pausedLong && !(tracksOpen || transOpen || syncOpen || tvOpen) && !scrub.active && !menu.open))) PlayerDetails(stream.title, art)
+        if (!mini && started && (detailsOn || (paused && pausedLong && !(tracksOpen || transOpen || syncOpen || tvOpen) && !scrub.active))) PlayerDetails(stream.title, art)
         if (!mini && started && (paused || buffering || now < osdUntil || scrub.active || menu.open)) PlayerOsd(
             stream.title, positionMs, durationMs, paused, buffering, scrub.targetMs, thumbs, Modifier.align(Alignment.BottomCenter), logo = art?.logo,
             from = stream.from,

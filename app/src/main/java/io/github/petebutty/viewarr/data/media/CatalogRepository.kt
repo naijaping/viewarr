@@ -1910,10 +1910,10 @@ class CatalogRepository @Inject constructor(
         val resume = m.long("viewOffset") ?: 0
         val target = (watch ?: WatchTarget(MediaType.Movie)).copy(plexRatingKey = ref)
         val quality = playbackStore.current().plexQuality
-        val transcode = VodStream(plexTranscodeUrl(a, p, ratingKey, quality.maxKbps ?: 20_000, idx), "$title (converted by Plex)", headers, resume, watch = target, thumbs = thumbs, markers = markers, from = "Plex · ${p.serverName}")
+        val transcode = VodStream(plexTranscodeUrl(a, p, ratingKey, quality.maxKbps ?: 20_000, idx), "$title (converted by Plex)", headers, resume, watch = target, thumbs = thumbs, markers = markers, from = "your library: ${p.serverName} · transcoding")
         // Settings → Playback → Plex quality: anything but Original always converts at that bitrate.
         if (quality.maxKbps != null) return transcode
-        val direct = VodStream("${p.serverUrl}$part?X-Plex-Token=${enc(p.token)}", title, headers, resume, fallback = transcode, watch = target, thumbs = thumbs, markers = markers, from = "Plex · ${p.serverName}")
+        val direct = VodStream("${p.serverUrl}$part?X-Plex-Token=${enc(p.token)}", title, headers, resume, fallback = transcode, watch = target, thumbs = thumbs, markers = markers, from = "your library: ${p.serverName} · direct play")
         val playable = DeviceCodecs.canPlay(media.str("videoCodec"), media.str("container"))
         Log.i(TAG, "plex $ratingKey video=${media.str("videoCodec")} container=${media.str("container")} direct=$playable")
         return if (playable) direct else transcode
@@ -2129,7 +2129,9 @@ class CatalogRepository @Inject constructor(
             .getOrNull()?.takeIf { it.ok }?.body
         val resumeMs = (info.child("UserData").long("PlaybackPositionTicks") ?: 0L) / 10_000
         return VodStream(
-            from = if (emby) "Emby" else "Jellyfin",
+            // Your own server: "from your library: Jellyfin" on the info bar (addons and IPTV keep their names).
+            // (Always the file itself, never converted: direct play.)
+            from = "your library: " + (if (emby) "Emby" else "Jellyfin") + " · direct play",
             markers = serverMarkers(s, emby, itemId, info),
             thumbs = serverThumbs(s, emby, itemId, info),
             // (A chosen version: its media source; otherwise the server's default.)

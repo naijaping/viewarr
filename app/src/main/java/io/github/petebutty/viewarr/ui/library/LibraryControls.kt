@@ -164,14 +164,17 @@ internal fun SidePanel(title: String, onClose: () -> Unit, onBack: () -> Unit = 
     androidx.activity.compose.BackHandler { onBack() }
     io.github.petebutty.viewarr.ui.common.BackLayer()
     LaunchedEffect(title) { awaitFrame(); awaitFrame(); runCatching { first.requestFocus() } }
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
-        Column(
-            Modifier.align(Alignment.CenterEnd).width(400.dp).fillMaxHeight().background(AppColors.Panel)
-                .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 12.dp)
-                .focusProperties { exit = { FocusRequester.Cancel } }.focusGroup(),
-        ) {
-            Text(title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(start = 12.dp, bottom = 12.dp))
-            androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(1.dp), contentPadding = PaddingValues(bottom = 24.dp)) { content(first) }
+    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onBack) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
+            Column(
+                Modifier.align(Alignment.CenterEnd).width(400.dp).fillMaxHeight().background(AppColors.Panel)
+                    .padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 12.dp)
+                    .focusProperties { exit = { FocusRequester.Cancel } }.focusGroup(),
+            ) {
+                Text(title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(start = 12.dp, bottom = 12.dp))
+                androidx.compose.foundation.lazy.LazyColumn(verticalArrangement = Arrangement.spacedBy(1.dp), contentPadding = PaddingValues(bottom = 24.dp)) { content(first) }
+            }
         }
     }
 }

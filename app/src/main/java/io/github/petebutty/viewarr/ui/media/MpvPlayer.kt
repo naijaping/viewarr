@@ -371,7 +371,8 @@ fun MpvPlayer(
     // The controls close after a while without a key (not while paused).
     LaunchedEffect(paused) {
         pausedLong = false
-        if (paused) { delay(2_500); pausedLong = true } else detailsOn = false
+        // Paused (the Play / Pause button or the remote's): the film's info shows straight away; playing hides it.
+        if (paused) pausedLong = true else detailsOn = false
     }
     // (Not while a shortcut's menu is open or one is being moved: they'd be left behind.)
     LaunchedEffect(menu.open, menu.lastKey, paused, menu.scOptions, menu.scMoving, menu.scRows, io.github.petebutty.viewarr.ui.player.CardMenu.open) {
@@ -462,7 +463,7 @@ fun MpvPlayer(
         // Until the first picture: the loading screen (backdrop, breathing logo); then the controls carry the logo.
         var started by remember(stream) { mutableStateOf(false) }
         if (!buffering && position > 0) started = true
-        if (!mini && started && (detailsOn || (paused && pausedLong && !(tracksOpen || transOpen || syncOpen || tvOpen) && !scrub.active && !menu.open))) PlayerDetails(stream.title, art)
+        if (!mini && started && (detailsOn || (paused && pausedLong && !(tracksOpen || transOpen || syncOpen || tvOpen) && !scrub.active))) PlayerDetails(stream.title, art)
         if (!mini && osdVisible && started) PlayerOsd(
             stream.title, (position * 1000).toLong(), (duration * 1000).toLong(), paused, buffering,
             scrub.targetMs, thumbs, Modifier.align(Alignment.BottomCenter), logo = art?.logo,
@@ -548,7 +549,11 @@ private fun configure(mpv: MpvHandle, context: android.content.Context, stream: 
     opt("ao", "audiotrack,opensles")
     // A bigger audio buffer stops dropouts while a weak box decodes TrueHD/DTS-HD in software.
     opt("audio-buffer", "1.0")
-    opt("tls-verify", "no")
+    // HTTPS streams (addons, debrid, servers away from home): checked against this TV's own trusted certificates,
+    // copied where mpv can read them (it can't see Android's list itself, which is why checking used to be off).
+    // A box without a readable list keeps the old way rather than failing every HTTPS stream.
+    val ca = caBundle(context)
+    if (ca != null) { opt("tls-ca-file", ca); opt("tls-verify", "yes") } else { opt("tls-verify", "no"); Log.w(TAG, "no CA bundle: HTTPS not verified") }
     opt("input-default-bindings", "no")
     opt("osd-level", "0")
     opt("keep-open", "no")
@@ -718,3 +723,27 @@ fun PlayerHost(
         }
     }
 }
+
+/**
+ * This TV's trusted certificates as one PEM file for mpv (tls-ca-file), built from Android's own store (Android 14
+ * keeps it in the Conscrypt APEX, older versions in /system) and rebuilt when the store changes. Null if none can be
+ * read (then mpv isn't told to check, as before).
+ */
+private fun caBundle(context: android.content.Context): String? = runCatching {
+    val dir = listOf("/apex/com.android.conscrypt/cacerts", "/system/etc/security/cacerts")
+        .map { java.io.File(it) }.firstOrNull { it.isDirectory && (it.listFiles()?.isNotEmpty() == true) } ?: return@runCatching null
+    val out = java.io.File(context.filesDir, "cacert.pem")
+    val files = dir.listFiles()?.filter { it.isFile }.orEmpty()
+    val stamp = "${dir.path}|${files.size}|${files.maxOfOrNull { it.lastModified() } ?: 0}"
+    val stampFile = java.io.File(context.filesDir, "cacert.stamp")
+    if (!out.exists() || out.length() == 0L || stampFile.takeIf { it.exists() }?.readText() != stamp) {
+        val pem = Regex("-----BEGIN CERTIFICATE-----[\\s\\S]+?-----END CERTIFICATE-----")
+        val certs = files.flatMap { f -> runCatching { pem.findAll(f.readText()).map { it.value }.toList() }.getOrDefault(emptyList()) }
+        // (A store this small isn't the real one: don't check against it.)
+        if (certs.size < 20) return@runCatching null
+        out.writeText(certs.joinToString("\n", postfix = "\n"))
+        stampFile.writeText(stamp)
+        Log.i(TAG, "CA bundle: ${certs.size} certificates from ${dir.path}")
+    }
+    out.absolutePath
+}.getOrNull()

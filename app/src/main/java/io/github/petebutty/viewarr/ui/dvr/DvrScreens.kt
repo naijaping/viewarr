@@ -154,25 +154,28 @@ internal fun ChoicePanel(
         runCatching { first.requestFocus() }
     }
     // On the glass (as the info bar): a light dim behind, the card in the middle.
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier.width(440.dp)
-                // Long lists (a show with many series) scroll with the focus rather than running off the screen.
-                .heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.92f).dp)
-                .glass(18.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())
-                .padding(horizontal = 22.dp, vertical = 20.dp).trapFocus()
-                .then(Modifier.ignoreHeldOk()),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(subtitle, fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
-            description?.takeIf { it.isNotBlank() }?.let {
-                Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary, maxLines = 7, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 14.dp))
+    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.3f)), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.width(440.dp)
+                    // Long lists (a show with many series) scroll with the focus rather than running off the screen.
+                    .heightIn(max = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.92f).dp)
+                    .glass(18.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())
+                    .padding(horizontal = 22.dp, vertical = 20.dp).trapFocus()
+                    .then(Modifier.ignoreHeldOk()),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(subtitle, fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
+                description?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary, maxLines = 7, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 14.dp))
+                }
+                choices.forEachIndexed { i, (label, action) ->
+                    MenuItem(text = label, selected = false, onClick = action, compact = true, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier)
+                }
+                message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp)) }
             }
-            choices.forEachIndexed { i, (label, action) ->
-                MenuItem(text = label, selected = false, onClick = action, compact = true, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier)
-            }
-            message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp)) }
         }
     }
 }

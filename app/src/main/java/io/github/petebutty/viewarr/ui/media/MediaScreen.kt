@@ -1552,33 +1552,36 @@ private fun TracksDialog(
     // What the server would pick by itself, when you haven't picked.
     val a = audio ?: t.audio.firstOrNull { it.default }?.ordinal ?: 0
     val sub = subtitle ?: t.subtitles.firstOrNull { it.default }?.ordinal
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
-        LazyColumn(
-            Modifier.width(560.dp).fillMaxHeight(0.85f).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus().ignoreHeldOk(),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            item { Text("Audio & subtitles", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary) }
-            item { Text("For this play, from ${t.source}.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp)) }
-            if (t.audio.isNotEmpty()) item { Text("Audio", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 6.dp, start = 12.dp)) }
-            itemsIndexed(t.audio) { i, c ->
-                io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = (if (c.ordinal == a) "✓  " else "     ") + c.label, selected = false,
-                    modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
-                    onClick = { onPick(c.ordinal, subtitle) },
-                )
+    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onDone) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
+            LazyColumn(
+                Modifier.width(560.dp).fillMaxHeight(0.85f).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus().ignoreHeldOk(),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                item { Text("Audio & subtitles", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary) }
+                item { Text("For this play, from ${t.source}.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp)) }
+                if (t.audio.isNotEmpty()) item { Text("Audio", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 6.dp, start = 12.dp)) }
+                itemsIndexed(t.audio) { i, c ->
+                    io.github.petebutty.viewarr.ui.common.MenuItem(
+                        text = (if (c.ordinal == a) "✓  " else "     ") + c.label, selected = false,
+                        modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                        onClick = { onPick(c.ordinal, subtitle) },
+                    )
+                }
+                item { Text("Subtitles", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 10.dp, start = 12.dp)) }
+                item {
+                    io.github.petebutty.viewarr.ui.common.MenuItem(
+                        text = (if (sub == null || sub < 0) "✓  " else "     ") + "Off", selected = false,
+                        modifier = if (t.audio.isEmpty()) Modifier.focusRequester(first) else Modifier,
+                        onClick = { onPick(audio, -1) },
+                    )
+                }
+                items(t.subtitles) { c ->
+                    io.github.petebutty.viewarr.ui.common.MenuItem(text = (if (c.ordinal == sub) "✓  " else "     ") + c.label, selected = false, onClick = { onPick(audio, c.ordinal) })
+                }
+                item { io.github.petebutty.viewarr.ui.common.MenuItem(text = "Done", selected = false, onClick = onDone, modifier = Modifier.padding(top = 10.dp)) }
             }
-            item { Text("Subtitles", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 10.dp, start = 12.dp)) }
-            item {
-                io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = (if (sub == null || sub < 0) "✓  " else "     ") + "Off", selected = false,
-                    modifier = if (t.audio.isEmpty()) Modifier.focusRequester(first) else Modifier,
-                    onClick = { onPick(audio, -1) },
-                )
-            }
-            items(t.subtitles) { c ->
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = (if (c.ordinal == sub) "✓  " else "     ") + c.label, selected = false, onClick = { onPick(audio, c.ordinal) })
-            }
-            item { io.github.petebutty.viewarr.ui.common.MenuItem(text = "Done", selected = false, onClick = onDone, modifier = Modifier.padding(top = 10.dp)) }
         }
     }
 }
@@ -1762,20 +1765,23 @@ private fun EpisodeActions(
 ) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
-        // Opened by holding OK on an episode: letting go of that OK mustn't pick the first source.
-        Column(Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus().ignoreHeldOk(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(title, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 10.dp))
-            var firstUsed = false
-            fun m(): Modifier = if (!firstUsed) { firstUsed = true; Modifier.focusRequester(first) } else Modifier
-            plexLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onPlex, modifier = m()) }
-            serverLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onServer, modifier = m()) }
-            onProvider?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = providerLabel, selected = false, onClick = it, modifier = m()) }
-            if (hasAddons) io.github.petebutty.viewarr.ui.common.MenuItem(text = if (searching) "Searching…" else "Search addons", selected = false, onClick = onSearch, modifier = m())
-            if (plexLabel == null && serverLabel == null && onProvider == null && !hasAddons) Text("This episode isn't in Plex or on IPTV, and no addon is connected.", fontSize = 13.sp, color = AppColors.TextSecondary)
-            markLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onMark, modifier = m()) }
-            io.github.petebutty.viewarr.ui.common.MenuItem(text = "Close", selected = false, onClick = onClose, modifier = m())
-            message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp)) }
+    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
+            // Opened by holding OK on an episode: letting go of that OK mustn't pick the first source.
+            Column(Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus().ignoreHeldOk(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 10.dp))
+                var firstUsed = false
+                fun m(): Modifier = if (!firstUsed) { firstUsed = true; Modifier.focusRequester(first) } else Modifier
+                plexLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onPlex, modifier = m()) }
+                serverLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onServer, modifier = m()) }
+                onProvider?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = providerLabel, selected = false, onClick = it, modifier = m()) }
+                if (hasAddons) io.github.petebutty.viewarr.ui.common.MenuItem(text = if (searching) "Searching…" else "Search addons", selected = false, onClick = onSearch, modifier = m())
+                if (plexLabel == null && serverLabel == null && onProvider == null && !hasAddons) Text("This episode isn't in Plex or on IPTV, and no addon is connected.", fontSize = 13.sp, color = AppColors.TextSecondary)
+                markLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onMark, modifier = m()) }
+                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Close", selected = false, onClick = onClose, modifier = m())
+                message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp)) }
+            }
         }
     }
 }
@@ -1886,64 +1892,67 @@ private fun QuickOptions(item: MediaItem, vm: MediaViewModel, onTrailer: () -> U
         }
         return
     }
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier.width(420.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(20.dp).trapFocus()
-                .then(Modifier.ignoreHeldOk()),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(item.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            val seerrAsk = seerrStatus == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.None ||
-                seerrStatus == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.Partial
-            listOfNotNull(item.year?.toString(), item.origin, seerrStatus?.takeIf { !seerrAsk }?.label).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let {
-                Text(it, fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp))
-            }
-            io.github.petebutty.viewarr.ui.common.MenuItem(
-                text = if (show) "Episodes" else if (item.progress != null) "Resume" else "Play",
-                selected = false,
-                modifier = Modifier.focusRequester(first),
-                onClick = { onClose(); if (show) vm.quickEpisodes(item) else vm.quickPlay(item) },
-            )
-            io.github.petebutty.viewarr.ui.common.MenuItem(text = "Details", selected = false, onClick = { onClose(); vm.open(item) })
-            if (trailerId != null) io.github.petebutty.viewarr.ui.common.MenuItem(text = "Watch trailer", selected = false, onClick = onTrailer)
-            watchlisted?.let { on ->
+    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.width(420.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(20.dp).trapFocus()
+                    .then(Modifier.ignoreHeldOk()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text(item.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val seerrAsk = seerrStatus == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.None ||
+                    seerrStatus == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.Partial
+                listOfNotNull(item.year?.toString(), item.origin, seerrStatus?.takeIf { !seerrAsk }?.label).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let {
+                    Text(it, fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp))
+                }
                 io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = if (on) "Remove from watchlist" else "Add to watchlist",
+                    text = if (show) "Episodes" else if (item.progress != null) "Resume" else "Play",
                     selected = false,
-                    onClick = { onClose(); vm.quickWatchlist(item, add = !on) },
+                    modifier = Modifier.focusRequester(first),
+                    onClick = { onClose(); if (show) vm.quickEpisodes(item) else vm.quickPlay(item) },
                 )
+                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Details", selected = false, onClick = { onClose(); vm.open(item) })
+                if (trailerId != null) io.github.petebutty.viewarr.ui.common.MenuItem(text = "Watch trailer", selected = false, onClick = onTrailer)
+                watchlisted?.let { on ->
+                    io.github.petebutty.viewarr.ui.common.MenuItem(
+                        text = if (on) "Remove from watchlist" else "Add to watchlist",
+                        selected = false,
+                        onClick = { onClose(); vm.quickWatchlist(item, add = !on) },
+                    )
+                }
+                seerrStatus?.takeIf { seerrAsk }?.let { st ->
+                    val canAsk = st == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.None ||
+                        st == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.Partial
+                    io.github.petebutty.viewarr.ui.common.MenuItem(
+                        text = st.label,
+                        selected = false,
+                        dim = !canAsk,
+                        onClick = { if (canAsk) { onClose(); vm.requestOnSeerr(item) } },
+                    )
+                }
+                // IPTV keeps no history: watched / not watched kept on the box (films; episodes on the title page).
+                val iptv by produceState(false, item.key) { value = !show && vm.hasIptv(item) }
+                val localEntries by vm.localWatch.entries.collectAsState()
+                if (iptv) {
+                    val done = remember(localEntries, item.key) { vm.localWatch.isWatched(item) }
+                    io.github.petebutty.viewarr.ui.common.MenuItem(
+                        text = if (done) "Mark as not watched" else "Mark as watched", selected = false,
+                        onClick = { onClose(); vm.markIptvWatched(item, !done) },
+                    )
+                    if (item.origin == "IPTV" && item.progress != null) io.github.petebutty.viewarr.ui.common.MenuItem(
+                        text = "Remove from Continue watching", selected = false,
+                        onClick = { onClose(); vm.hideIptv(item) },
+                    )
+                }
+                // A show you're done with: out of Continue watching (and Upcoming episodes) for good, and dropped on Trakt.
+                // Watching any episode of it again brings it back.
+                if (show && vm.inContinue(item)) io.github.petebutty.viewarr.ui.common.MenuItem(
+                    text = "Drop show", selected = false,
+                    onClick = { onClose(); vm.dropShow(item) },
+                )
+                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Close", selected = false, onClick = onClose)
             }
-            seerrStatus?.takeIf { seerrAsk }?.let { st ->
-                val canAsk = st == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.None ||
-                    st == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.Partial
-                io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = st.label,
-                    selected = false,
-                    dim = !canAsk,
-                    onClick = { if (canAsk) { onClose(); vm.requestOnSeerr(item) } },
-                )
-            }
-            // IPTV keeps no history: watched / not watched kept on the box (films; episodes on the title page).
-            val iptv by produceState(false, item.key) { value = !show && vm.hasIptv(item) }
-            val localEntries by vm.localWatch.entries.collectAsState()
-            if (iptv) {
-                val done = remember(localEntries, item.key) { vm.localWatch.isWatched(item) }
-                io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = if (done) "Mark as not watched" else "Mark as watched", selected = false,
-                    onClick = { onClose(); vm.markIptvWatched(item, !done) },
-                )
-                if (item.origin == "IPTV" && item.progress != null) io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = "Remove from Continue watching", selected = false,
-                    onClick = { onClose(); vm.hideIptv(item) },
-                )
-            }
-            // A show you're done with: out of Continue watching (and Upcoming episodes) for good, and dropped on Trakt.
-            // Watching any episode of it again brings it back.
-            if (show && vm.inContinue(item)) io.github.petebutty.viewarr.ui.common.MenuItem(
-                text = "Drop show", selected = false,
-                onClick = { onClose(); vm.dropShow(item) },
-            )
-            io.github.petebutty.viewarr.ui.common.MenuItem(text = "Close", selected = false, onClick = onClose)
         }
     }
 }

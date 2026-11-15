@@ -141,8 +141,9 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
                 beginScrub = { dir, rep -> scrub.begin(p.positionMs); scrub.step(dir, rep, p.durationMs); h.showOsd() },
                 press = h.press,
                 toggleButton = h.toggleButton, moveButton = h.moveButton,
-                // Up from the seek bar: pause, with what's playing (its synopsis) on screen.
-                upFromBar = { p.pause(); h.showDetails(); menu.open = false },
+                // (Up from the seek bar used to pause and show the synopsis: Play / Pause does that now, so Up does
+                // nothing there.)
+                upFromBar = {},
                 leftFromFirst = { VodHost.openMenu() },
                 downSizes = FilmShortcuts.downSizes(menu),
                 pickDown = { r, c -> FilmShortcuts.pickDown(menu, r, c) },

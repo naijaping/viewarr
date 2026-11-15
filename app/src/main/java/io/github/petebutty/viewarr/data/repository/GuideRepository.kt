@@ -26,6 +26,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.InputStream
 import java.io.InputStreamReader
@@ -77,12 +78,15 @@ class GuideRepository @Inject constructor(
     /** Fetches one past chunk for one guide key; only programmes starting inside the chunk and ending before
      *  the synced window are kept, so nothing overlaps what the full sync already stored. */
     suspend fun loadPastChunk(session: Session, tvgId: String, chunkStart: Long, chunkEnd: Long) = pastLimiter.withPermit {
+        // This source's own guide and stamps for the whole run: switching source meanwhile changes what's on screen,
+        // not where this writes (it used to follow the active source, mixing two sources' guides).
+        val db = dbs.get(sourceId(session)); val dao = db.guideDao(); fun k(key: String) = "$key|${sourceId(session)}"
         // IPTV providers: their guide file already includes the past days, loaded in the full sync.
         if (session.isDirect) return@withPermit Result.success(Unit)
         runCatching {
             val api = apiFactory.create(session.serverUrl, session.apiKey)
             imageBase = session.serverUrl
-            val syncedFrom = syncedFrom()
+            val syncedFrom = prefs.getLong(k(KEY_SYNCED_FROM), System.currentTimeMillis() - LOOKBACK_MS)
             val rows = ArrayList<ProgramEntity>()
             var page = api.searchPrograms(
                 tvgId = tvgId,
@@ -232,6 +236,9 @@ class GuideRepository @Inject constructor(
      * an IPTV login or playlist searches this TV's guide.
      */
     suspend fun searchPast(session: Session, q: String, from: Long, now: Long): List<Pair<String?, io.github.petebutty.viewarr.data.local.GuideProgram>> {
+        // This source's own guide and stamps for the whole run: switching source meanwhile changes what's on screen,
+        // not where this writes (it used to follow the active source, mixing two sources' guides).
+        val db = dbs.get(sourceId(session)); val dao = db.guideDao(); fun k(key: String) = "$key|${sourceId(session)}"
         if (session.isDirect) return dao.searchPast(q, from, now, 60).map { null to it }
         return runCatching {
             val api = apiFactory.create(session.serverUrl, session.apiKey)
@@ -267,6 +274,9 @@ class GuideRepository @Inject constructor(
     /** [maxAgeMs]: how old the guide may be (Settings → Live TV → TV guide refresh); null: only if it's empty. */
     suspend fun syncIfStale(session: Session, maxAgeMs: Long? = STALE_MS) {
         activate(session)
+        // This source's own guide and stamps for the whole run: switching source meanwhile changes what's on screen,
+        // not where this writes (it used to follow the active source, mixing two sources' guides).
+        val db = dbs.get(sourceId(session)); val dao = db.guideDao(); fun k(key: String) = "$key|${sourceId(session)}"
         val age = System.currentTimeMillis() - prefs.getLong(k(KEY_LAST_SYNC), 0)
         val count = dao.programCount()
         android.util.Log.i("Guide", "source ${activeSource.hashCode()}: guide ${age / 60_000} min old, $count programmes")
@@ -275,9 +285,36 @@ class GuideRepository @Inject constructor(
 
     private fun sourceId(s: Session) = "${s.serverUrl}|${s.username}|${s.isXc}|${s.isM3u}|${s.m3uEpg}"
 
-    suspend fun sync(session: Session) = mutex.withLock {
+    /** The full update running now, and the source it's for: switching source stops it (see sync). */
+    @Volatile private var running: Pair<String, kotlinx.coroutines.Job>? = null
+
+    /**
+     * A full guide update for [session]'s source. Another source's update still running is stopped first: it's no
+     * longer what's on screen, and this one would otherwise wait for it to finish. Only that update stops; whatever
+     * started it carries on.
+     */
+    suspend fun sync(session: Session) {
+        val id = sourceId(session)
+        running?.let { (src, job) -> if (src != id) job.cancel() }
+        val job = kotlinx.coroutines.Job(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+        try {
+            kotlinx.coroutines.withContext(job) { syncLocked(session, job) }
+        } catch (e: CancellationException) {
+            // Stopped for another source: the caller carries on. (The caller's own cancellation still goes through.)
+            if (!kotlinx.coroutines.currentCoroutineContext().isActive) throw e
+        } finally {
+            if (running?.second === job) running = null
+            job.complete()
+        }
+    }
+
+    private suspend fun syncLocked(session: Session, job: kotlinx.coroutines.Job) = mutex.withLock {
+        running = sourceId(session) to job
         // Each source fills its own database (another source's stays as it is, for switching back).
         activate(session)
+        // This source's own guide and stamps for the whole run: switching source meanwhile changes what's on screen,
+        // not where this writes (it used to follow the active source, mixing two sources' guides).
+        val db = dbs.get(sourceId(session)); val dao = db.guideDao(); fun k(key: String) = "$key|${sourceId(session)}"
         if (session.isXc) return@withLock syncXc(session)
         if (session.isM3u) return@withLock syncM3u(session)
         try {
@@ -347,6 +384,9 @@ class GuideRepository @Inject constructor(
      * channels and guide come together.) At most once every 20 seconds, so outside links can't hammer the server.
      */
     suspend fun syncChannels(session: Session) {
+        // This source's own guide and stamps for the whole run: switching source meanwhile changes what's on screen,
+        // not where this writes (it used to follow the active source, mixing two sources' guides).
+        val db = dbs.get(sourceId(session)); val dao = db.guideDao(); fun k(key: String) = "$key|${sourceId(session)}"
         val now = System.currentTimeMillis()
         if (now - lastChannelSync < 20_000) return
         lastChannelSync = now
@@ -395,6 +435,9 @@ class GuideRepository @Inject constructor(
 
     /** IPTV provider (Xtream Codes): channels and groups from player_api.php, the guide from xmltv.php. */
     private suspend fun syncXc(session: Session) {
+        // This source's own guide and stamps for the whole run: switching source meanwhile changes what's on screen,
+        // not where this writes (it used to follow the active source, mixing two sources' guides).
+        val db = dbs.get(sourceId(session)); val dao = db.guideDao(); fun k(key: String) = "$key|${sourceId(session)}"
         try {
             _sync.value = SyncState.Running("Updating channels…")
             val (channels, groups) = coroutineScope {
@@ -458,6 +501,9 @@ class GuideRepository @Inject constructor(
      * channel's uuid (what plays). No catch-up: plain playlists don't describe it reliably.
      */
     private suspend fun syncM3u(session: Session) {
+        // This source's own guide and stamps for the whole run: switching source meanwhile changes what's on screen,
+        // not where this writes (it used to follow the active source, mixing two sources' guides).
+        val db = dbs.get(sourceId(session)); val dao = db.guideDao(); fun k(key: String) = "$key|${sourceId(session)}"
         try {
             _sync.value = SyncState.Running("Updating channels…")
             val playlist = m3u.load(session.serverUrl)
@@ -650,6 +696,9 @@ class GuideRepository @Inject constructor(
      * one programme (a few ms) and keeps the answer in the guide database, so it's asked once.
      */
     suspend fun lookupImage(session: Session, p: io.github.petebutty.viewarr.data.local.GuideProgram): String? {
+        // This source's own guide and stamps for the whole run: switching source meanwhile changes what's on screen,
+        // not where this writes (it used to follow the active source, mixing two sources' guides).
+        val db = dbs.get(sourceId(session)); val dao = db.guideDao(); fun k(key: String) = "$key|${sourceId(session)}"
         if (session.isDirect || p.rowId in noImage) return null
         return runCatching {
             val tvgId = dao.tvgIdOf(p.rowId) ?: return null
