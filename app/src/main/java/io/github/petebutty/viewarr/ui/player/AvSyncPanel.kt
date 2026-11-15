@@ -1,6 +1,7 @@
 package io.github.petebutty.viewarr.ui.player
 
 import androidx.activity.compose.BackHandler
+import io.github.petebutty.viewarr.ui.common.popupScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,12 +32,15 @@ fun AvSyncPanel(onClose: () -> Unit, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
         Text("Audio sync", fontSize = 15.sp, color = AppColors.TextPrimary, modifier = Modifier.padding(start = 12.dp, bottom = 6.dp))
-        AvSync.steps.forEach { v ->
-            MenuItem(
-                text = AvSync.label(v), selected = v == AvSync.ms, compact = true,
-                onClick = { AvSync.set(v); onClose() },
-                modifier = if (v == AvSync.ms) Modifier.focusRequester(current) else Modifier,
-            )
+        // (Scrolls inside the pop-up: long lists stay reachable, see popupScroll.)
+        androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.6f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+            AvSync.steps.forEach { v ->
+                MenuItem(
+                    text = AvSync.label(v), selected = v == AvSync.ms, compact = true,
+                    onClick = { AvSync.set(v); onClose() },
+                    modifier = if (v == AvSync.ms) Modifier.focusRequester(current) else Modifier,
+                )
+            }
         }
     }
 }

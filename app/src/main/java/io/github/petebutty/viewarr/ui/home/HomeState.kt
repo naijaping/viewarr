@@ -640,6 +640,9 @@ class HomeState(
         val type = if (showMenuRows.rows.any { RowSets.matches(key, it) }) MediaType.Show else MediaType.Movie
         val mvm = if (type == MediaType.Show) showsVm else moviesVm
         if (mvm.currentRowSet.value != key) { mvm.openLibrary(null, type); mvm.jumpTo(null) }
+        // A title page open on that page (e.g. the one whose film is in the mini player) would cover the service's rows:
+        // close it (the film carries on; the menu's other entries change page instead, so they were fine).
+        mvm.closeTitlePages()
         // Its rows from the other page follow, in that page's order without the ones hidden (the menu's rows list
         // can change both, so this is redone each time).
         val (other, otherHidden) = (if (type == MediaType.Show) moviesVm else showsVm).orderedRows.value

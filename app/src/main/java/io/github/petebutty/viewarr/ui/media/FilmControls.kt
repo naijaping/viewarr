@@ -106,6 +106,17 @@ fun pressFilmButton(
     return true
 }
 
+/**
+ * Full screen to the mini player (Back's last step, or the remote's minimise): always the menu, open on Live TV,
+ * with the TV guide behind (not the film's title page, or wherever it was started from). Peter's rule; live TV's
+ * Back goes to the guide instead. Buttons that open something over the film (a page, Settings, Search, the guide) go there instead.
+ */
+fun minimiseToLiveTv(onClose: () -> Unit) {
+    VodHost.minimise()
+    if (!VodHost.active) { onClose(); return }
+    LiveShortcutsBridge.openMenuOnLiveTv()
+}
+
 /** The TV guide over a film (its button, or a remote button set to TV guide): the film carries on in the mini player. */
 fun openGuideOverFilm(menu: PlayerMenu) { toCorner(menu); LiveShortcutsBridge.openGuide() }
 
@@ -127,7 +138,7 @@ fun filmBackStep(panels: FilmPanels, menu: PlayerMenu, scrub: Scrubber, skip: In
         // The next episode's countdown: Back keeps watching this one (after anything open over it).
         skip.cancelNext() -> Unit
         // (The info bar showing by itself, after the start or a skip, doesn't take a Back: Back shrinks the film.)
-        else -> { VodHost.minimise(); if (!VodHost.active) onClose() }
+        else -> minimiseToLiveTv(onClose)
     }
 }
 
@@ -162,7 +173,7 @@ fun filmHooks(
         // Back: the mini player (its last step); hold Back: close the player (as live TV).
         backMode = 3,
         atTop = { !panels.anyPanel && !scrub.active && !panels.detailsOn && !menu.open && !(osdShowing() && p.playing) },
-        minimise = { VodHost.minimise(); if (!VodHost.active) onClose() },
+        minimise = { minimiseToLiveTv(onClose) },
         stepBack = backStep,
         skipOk = { skip.ok({ p.seekTo(it) }, onNext = { NextUp.play() }) },
         // The shortcuts and their rows (FilmShortcuts.kt). (No shortcut row under the buttons: the menu on the left

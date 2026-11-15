@@ -1,6 +1,7 @@
 package io.github.petebutty.viewarr.ui.settings
 
 import io.github.petebutty.viewarr.ui.common.instantFocusScale
+import io.github.petebutty.viewarr.ui.common.popupScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -140,9 +141,12 @@ fun NetworkSetupScreen(onDone: (List<String>) -> Unit, onClose: () -> Unit, vm: 
             )
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("Popular in:", fontSize = 14.sp, color = AppColors.TextSecondary)
-                NetworkSetup.Region.entries.forEachIndexed { i, r ->
-                    Box(Modifier.width(120.dp)) {
-                        MenuItem(text = r.label, selected = r == region, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier, onClick = { region = r })
+                // (Scrolls inside the pop-up: long lists stay reachable, see popupScroll.)
+                androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.6f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+                    NetworkSetup.Region.entries.forEachIndexed { i, r ->
+                        Box(Modifier.width(120.dp)) {
+                            MenuItem(text = r.label, selected = r == region, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier, onClick = { region = r })
+                        }
                     }
                 }
             }

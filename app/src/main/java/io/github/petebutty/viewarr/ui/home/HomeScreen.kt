@@ -654,6 +654,13 @@ fun HomeScreen(
         LiveShortcutsBridge.openSettings = { hs.settingsFromFilm = true; hs.menuOnSettings = true; hs.menuOpen = true }
         LiveShortcutsBridge.openPage = { name -> hs.buttonRequest = when (name) { "Movies" -> BtnAction.Movies; "Shows" -> BtnAction.Shows; else -> BtnAction.Recordings } }
         LiveShortcutsBridge.openGuide = { hs.menuOpen = false; hs.quickSearch = false; if (hs.page != Page.Tv) hs.openPage(Page.Tv) else hs.fullscreen = false }
+        // A film minimised (Back's last step): the guide behind, the menu open on Live TV (Peter's rule: the same
+        // starting point every time, ready to browse; live TV's own Back goes to the guide instead).
+        LiveShortcutsBridge.openMenuOnLiveTv = {
+            hs.quickSearch = false
+            if (hs.page != Page.Tv) hs.openPage(Page.Tv, closeMenu = false) else hs.fullscreen = false
+            hs.menuOnSettings = false; hs.menuOnMain = true; hs.menuOpen = true
+        }
     }
     // Settings opened from a film: closing it brings the film back full screen.
     LaunchedEffect(hs.menuOpen) {
@@ -1063,6 +1070,11 @@ private fun androidx.compose.foundation.layout.BoxScope.LiveTvLayer(
                         if (channel.uuid in favsNow) io.github.petebutty.viewarr.ui.common.AppIcons.Star else io.github.petebutty.viewarr.ui.common.AppIcons.StarOutline,
                         if (channel.uuid in favsNow) "Remove from favourites" else "Add to favourites") {
                         hs.toast(if (vm.toggleFavourite(channel)) "${channel.name} added to favourites" else "${channel.name} removed from favourites")
+                    },
+                    // Refresh guide: Dispatcharr's (or the provider's) TV guide fetched again now, as viewarr://refresh?guide=1.
+                    io.github.petebutty.viewarr.ui.player.BarExtra("refreshguide", io.github.petebutty.viewarr.ui.common.AppIcons.Refresh, "Refresh guide") {
+                        hs.toast("Updating the TV guide…")
+                        hs.fromStartScope.launch { vm.refreshGuide(); hs.toast("TV guide updated") }
                     },
                     io.github.petebutty.viewarr.ui.player.BarExtra("lastchannel", io.github.petebutty.viewarr.ui.common.AppIcons.History, "Last channel") { hs.osdVisible = false; hs.doButton(BtnScreen.Live, BtnAction.LastChannel) },
                     io.github.petebutty.viewarr.ui.player.BarExtra("movies", io.github.petebutty.viewarr.ui.common.AppIcons.Movie, "Movies") { hs.osdVisible = false; hs.doButton(BtnScreen.Live, BtnAction.Movies) },

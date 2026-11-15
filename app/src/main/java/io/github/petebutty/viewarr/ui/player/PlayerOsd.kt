@@ -1,6 +1,7 @@
 package io.github.petebutty.viewarr.ui.player
 
 import androidx.compose.foundation.horizontalScroll
+import io.github.petebutty.viewarr.ui.common.popupScroll
 import androidx.compose.ui.draw.alpha
 import io.github.petebutty.viewarr.ui.common.instantFocusScale
 import kotlinx.coroutines.delay
@@ -645,10 +646,13 @@ fun CardMenuHost(onActivity: () -> Unit = {}, beforeRun: (plays: Boolean) -> Uni
         ) {
             Text(p.title, fontSize = 18.sp, color = AppColors.TextPrimary, maxLines = 2)
             p.subtitle?.let { Text(it, fontSize = 13.sp, color = AppColors.TextSecondary, maxLines = 1) }
-            p.options.forEachIndexed { i, o ->
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = o.label, selected = false,
-                    modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
-                    onClick = { CardMenu.open = null; beforeRun(o.plays); o.run() })
+            // (Scrolls inside the pop-up: long lists stay reachable, see popupScroll.)
+            androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.55f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+                p.options.forEachIndexed { i, o ->
+                    io.github.petebutty.viewarr.ui.common.MenuItem(text = o.label, selected = false,
+                        modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                        onClick = { CardMenu.open = null; beforeRun(o.plays); o.run() })
+                }
             }
             io.github.petebutty.viewarr.ui.common.MenuItem(text = "Cancel", selected = false, onClick = ::close)
         }
@@ -751,11 +755,12 @@ fun OsdCardContent(p: OsdPoster) {
 /** A row card's name and subtitle under it (the same on live TV and in the film player). */
 @Composable
 fun OsdCardCaption(p: OsdPoster, highlighted: Boolean) {
-    Text(p.title, fontSize = 12.sp, color = if (highlighted) Color.White else AppColors.TextSecondary, maxLines = 1,
-        overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 5.dp))
-    p.subtitle?.let { Text(it, fontSize = 11.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+    // Big and bright enough to read from the sofa over the glass (12 / 11 pt in grey was too small and faint).
+    Text(p.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = if (highlighted) Color.White else Color.White.copy(alpha = 0.88f), maxLines = 1,
+        overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp))
+    p.subtitle?.let { Text(it, fontSize = 13.sp, color = Color.White.copy(alpha = 0.78f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
     // A line of its own (an episode's release date): it was cut off at the end of the subtitle.
-    p.note?.let { Text(it, fontSize = 11.sp, color = if (p.unreleased) AppColors.Accent else AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+    p.note?.let { Text(it, fontSize = 13.sp, color = if (p.unreleased) AppColors.Accent else Color.White.copy(alpha = 0.78f), maxLines = 1, overflow = TextOverflow.Ellipsis) }
 }
 
 /** A row's heading: its name, then the next row's (or that there are more on the shortcut's own page). */
@@ -991,14 +996,17 @@ private fun OptionPopup(
             Text(emptyText, fontSize = 13.sp, color = Color.White, modifier = Modifier.padding(12.dp).focusRequester(focus).focusable())
         }
         val selectedIndex = options.indexOfFirst { it.second }.coerceAtLeast(0)
-        options.forEachIndexed { i, (label, selected) ->
-            MenuItem(
-                text = label,
-                selected = selected,
-                onClick = { onPick(i) },
-                trailing = if (selected) "✓" else null,
-                modifier = if (i == selectedIndex) Modifier.focusRequester(focus) else Modifier,
-            )
+        // (Scrolls inside the pop-up: long lists stay reachable, see popupScroll.)
+        androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.55f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+            options.forEachIndexed { i, (label, selected) ->
+                MenuItem(
+                    text = label,
+                    selected = selected,
+                    onClick = { onPick(i) },
+                    trailing = if (selected) "✓" else null,
+                    modifier = if (i == selectedIndex) Modifier.focusRequester(focus) else Modifier,
+                )
+            }
         }
     }
 }

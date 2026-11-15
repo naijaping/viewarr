@@ -22,12 +22,12 @@ import io.github.petebutty.viewarr.ui.theme.AppColors
 import io.github.petebutty.viewarr.ui.theme.UiOpts
 
 /**
- * A small pill at the bottom of the screen saying what the buttons do here ("OK: watch · hold Back: groups"),
+ * A small pill at the top centre of the screen (always the same place) saying what the buttons do here ("OK: watch · hold Back: groups"),
  * for a few seconds when [screen] comes up (again when [text] changes). Settings → Appearance → Menu → Button hints:
  * the first few times on each screen (counted on this TV), always, or off.
  */
 @Composable
-fun ButtonHint(screen: String, text: String, modifier: Modifier = Modifier, top: Boolean = false) {
+fun ButtonHint(screen: String, text: String, modifier: Modifier = Modifier) {
     val mode = AppColors.palette.opt(UiOpts.BUTTON_HINTS)
     if (mode == 2 || text.isBlank()) return
     val ctx = LocalContext.current
@@ -48,11 +48,11 @@ fun ButtonHint(screen: String, text: String, modifier: Modifier = Modifier, top:
         kotlinx.coroutines.delay(8_000)
         shown = false
     }
-    Box(modifier.fillMaxSize(), contentAlignment = if (top) Alignment.TopCenter else Alignment.BottomCenter) {
+    Box(modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         AnimatedVisibility(shown, enter = EnterTransition.None, exit = ExitTransition.None) {
             Text(
                 text, fontSize = 13.sp, color = AppColors.TextPrimary, maxLines = 1,
-                modifier = Modifier.padding(top = if (top) 18.dp else 0.dp, bottom = if (top) 0.dp else 18.dp)
+                modifier = Modifier.padding(top = 18.dp)
                     .glass(16.dp)
                     .padding(horizontal = 16.dp, vertical = 6.dp),
             )

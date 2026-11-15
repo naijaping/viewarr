@@ -12,10 +12,14 @@ import io.github.petebutty.viewarr.ui.theme.AppColors
 object BarLayout {
     private const val BAR = "all"
 
-    /** Every button either bar can have, in the order they come without changes. */
+    /**
+     * Every button either bar can have, in the order they come without changes. Each bar only shows its own: live TV
+     * only (as the live info bar builds them): source, aspect, record, multiview, refreshguide, favourite, lastchannel;
+     * films only (FilmControls.filmButtons): details, switch, prevepisode, nextepisode, episodes.
+     */
     val defaultOrder = listOf(
         "guide", "playpause", "stop", "details", "audio", "subtitles", "aspect", "source", "info", "switch",
-        "record", "multiview", "favourite", "lastchannel", "prevepisode", "nextepisode", "episodes", "sync", "sleep", "movies", "shows", "recordings",
+        "record", "multiview", "refreshguide", "favourite", "lastchannel", "prevepisode", "nextepisode", "episodes", "sync", "sleep", "movies", "shows", "recordings",
         "search", "transparency", "barstyle", "tvsettings", "settings",
     )
 

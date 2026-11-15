@@ -1133,6 +1133,9 @@ class MediaViewModel @Inject constructor(
     /** Audio & subtitles picked on a film's page, for when Play starts it (null = the usual choice). */
     fun pickTracks(audio: Int?, subtitle: Int?) = _detail.update { it?.copy(pickedAudio = audio, pickedSubtitle = subtitle) }
 
+    /** Every title page closed at once (what's playing carries on: it isn't the page's). A service opening over them. */
+    fun closeTitlePages() { detailStack.clear(); close() }
+
     fun close() {
         detailJob?.cancel()
         val previous = detailStack.removeLastOrNull()

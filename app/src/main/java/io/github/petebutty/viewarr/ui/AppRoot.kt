@@ -197,10 +197,9 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
                 }
                 // Films, episodes and recordings: above every page, full screen or shrunk to a corner.
                 io.github.petebutty.viewarr.ui.media.VodHostLayer()
-                // A film or episode on full screen: Back makes it the mini player, holding Back closes it. At the top,
-                // clear of the film's controls along the bottom.
+                // A film or episode on full screen: Back makes it the mini player, holding Back closes it.
                 if (io.github.petebutty.viewarr.ui.media.VodHost.covering) io.github.petebutty.viewarr.ui.common.ButtonHint(
-                    "film-full", "Back: mini player  ·  hold Back: close the player", top = true)
+                    "film-full", "Back: mini player  ·  hold Back: close the player")
                 // Music: the Now Playing screen, or the small now-playing bar while you browse.
                 io.github.petebutty.viewarr.ui.music.MusicLayer()
                 // Settings → Appearance → Clock.

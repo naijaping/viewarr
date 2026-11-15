@@ -1,6 +1,7 @@
 package io.github.petebutty.viewarr.ui.player
 
 import androidx.activity.compose.BackHandler
+import io.github.petebutty.viewarr.ui.common.popupScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -74,16 +75,19 @@ fun TvSettingsPanel(onClose: () -> Unit, modifier: Modifier = Modifier, vm: Play
     ) {
         Text("TV settings", fontSize = 15.sp, color = AppColors.TextPrimary, modifier = Modifier.padding(start = 12.dp))
         if (mode.isNotEmpty()) Text("TV now: $mode", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, bottom = 6.dp))
-        rows.forEachIndexed { i, r ->
-            @Suppress("UNCHECKED_CAST") val all = r[2] as List<RemoteChoice>
-            val current = r[3] as RemoteChoice
-            val note = r[4] as String?
-            MenuItem(
-                text = r[0] as String + (note?.let { "  ($it)" } ?: ""),
-                trailing = current.label, selected = false, compact = true,
-                onClick = { vm.set(r[1] as String, all[(all.indexOf(current) + 1) % all.size]) },
-                modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
-            )
+        // (Scrolls inside the pop-up: long lists stay reachable, see popupScroll.)
+        androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.6f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+            rows.forEachIndexed { i, r ->
+                @Suppress("UNCHECKED_CAST") val all = r[2] as List<RemoteChoice>
+                val current = r[3] as RemoteChoice
+                val note = r[4] as String?
+                MenuItem(
+                    text = r[0] as String + (note?.let { "  ($it)" } ?: ""),
+                    trailing = current.label, selected = false, compact = true,
+                    onClick = { vm.set(r[1] as String, all[(all.indexOf(current) + 1) % all.size]) },
+                    modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                )
+            }
         }
         Text("OK: next choice  ·  Back: close", fontSize = 11.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, top = 6.dp))
     }

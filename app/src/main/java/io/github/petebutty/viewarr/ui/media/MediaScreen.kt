@@ -1,6 +1,7 @@
 package io.github.petebutty.viewarr.ui.media
 
 import io.github.petebutty.viewarr.ui.common.instantFocusScale
+import io.github.petebutty.viewarr.ui.common.popupScroll
 import io.github.petebutty.viewarr.ui.common.followingSetting
 import io.github.petebutty.viewarr.ui.theme.appBackground
 
@@ -2223,12 +2224,15 @@ private fun SourcesDialog(ui: DetailUi, vm: MediaViewModel, onSearch: () -> Unit
             var firstUsed = false
             fun mod(): Modifier = if (!firstUsed) { firstUsed = true; Modifier.focusRequester(first) } else Modifier
             if (ranked == null) Text("Checking your copies…", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 6.dp))
-            ranked.orEmpty().forEach { r ->
-                io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = (if (r.best) "★ " else "") + vm.copyLabel(r.copy), selected = false,
-                    trailing = if (r.best) "Best for this TV" else r.note, dim = r.note != null && !r.best,
-                    onClick = { onDone(); vm.playCopy(r.copy) }, modifier = mod(),
-                )
+            // (Scrolls inside the pop-up: long lists stay reachable, see popupScroll.)
+            androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.6f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
+                ranked.orEmpty().forEach { r ->
+                    io.github.petebutty.viewarr.ui.common.MenuItem(
+                        text = (if (r.best) "★ " else "") + vm.copyLabel(r.copy), selected = false,
+                        trailing = if (r.best) "Best for this TV" else r.note, dim = r.note != null && !r.best,
+                        onClick = { onDone(); vm.playCopy(r.copy) }, modifier = mod(),
+                    )
+                }
             }
             if (ui.hasAddons) io.github.petebutty.viewarr.ui.common.MenuItem(text = "Search addons", selected = false, onClick = onSearch, modifier = mod())
             io.github.petebutty.viewarr.ui.common.MenuItem(text = "Cancel", selected = false, onClick = onDone, modifier = mod())

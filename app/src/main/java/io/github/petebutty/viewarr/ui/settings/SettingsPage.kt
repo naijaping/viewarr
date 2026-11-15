@@ -1,6 +1,7 @@
 package io.github.petebutty.viewarr.ui.settings
 
 import io.github.petebutty.viewarr.ui.common.followingSetting
+import io.github.petebutty.viewarr.ui.common.popupScroll
 import kotlinx.coroutines.launch
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.onKeyEvent
@@ -12,6 +13,7 @@ import io.github.petebutty.viewarr.ui.theme.appBackground
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
@@ -271,6 +273,8 @@ fun SettingsPage(
                     c.header?.let { h -> item(key = c.name + "#header") { h() } }
                     itemsIndexed(c.items, key = { _, it -> c.name + it.title }) { index, item ->
                         val rowFocusReq = rowFocus.getOrPut(item.title) { FocusRequester() }
+                        // The row, and its choices opening right under it (a dropdown, as on Windows) when picked.
+                        androidx.compose.foundation.layout.Column {
                         SettingRow(
                             item, enabled = choosing == null, focus = rowFocusReq,
                             moving = moving == item.title,
@@ -302,12 +306,13 @@ fun SettingsPage(
                             }
                             else choosing = item
                         }
+                        if (choosing?.title == item.title) InlineChoices(item, onDone = ::closeChoices)
+                        }
                     }
                 }
                 }
             }
         }
-        choosing?.let { item -> ChoiceList(item, onDone = ::closeChoices) }
     }
 }
 
@@ -392,19 +397,27 @@ private fun Toggle(on: Boolean) {
     }
 }
 
+/**
+ * A setting's choices as a dropdown under its row (in the settings list itself, not a pop-up over it): opens on the
+ * current choice, scrolls when long, and keeps the highlight inside (every other row is switched off while it's open).
+ * OK picks; Back closes it unchanged (SettingsPage's Back). Nothing sits on top of the page, so focus can't be left
+ * behind it or blocked by the page's traps (the pop-up it replaced had both problems).
+ */
 @Composable
-private fun ChoiceList(item: SettingItem, onDone: () -> Unit) {
+private fun InlineChoices(item: SettingItem, onDone: () -> Unit) {
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { awaitFrame(); runCatching { focus.requestFocus() } }
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier.width(560.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus(),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(item.title, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-            Text(item.description, fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 12.dp))
-            // Focus starts on the current choice; when it isn't one of them (e.g. a "Custom" theme), on the first.
-            val start = item.choices.indexOf(item.current).coerceAtLeast(0)
+    // Focus starts on the current choice; when it isn't one of them (e.g. a "Custom" theme), on the first.
+    val start = item.choices.indexOf(item.current).coerceAtLeast(0)
+    LaunchedEffect(Unit) { repeat(3) { awaitFrame(); runCatching { focus.requestFocus() } } }
+    Column(
+        Modifier
+            .padding(start = 28.dp, end = 4.dp, top = 4.dp, bottom = 6.dp)
+            .fillMaxWidth()
+            .background(AppColors.Panel, RoundedCornerShape(12.dp))
+            .border(1.dp, AppColors.Accent.copy(alpha = 0.55f), RoundedCornerShape(12.dp))
+            .padding(6.dp),
+    ) {
+        Column(Modifier.popupScroll(0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             item.choices.forEachIndexed { i, choice ->
                 MenuItem(
                     text = (if (choice == item.current) "✓  " else "     ") + choice.label,
@@ -413,7 +426,6 @@ private fun ChoiceList(item: SettingItem, onDone: () -> Unit) {
                     onClick = { item.onSelect(choice); onDone() },
                 )
             }
-            Spacer(Modifier.height(4.dp))
         }
     }
 }

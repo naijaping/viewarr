@@ -2,6 +2,8 @@ package io.github.petebutty.viewarr.ui.update
 
 import android.content.Context
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -52,7 +54,6 @@ import androidx.tv.material3.Text
 import io.github.petebutty.viewarr.BuildConfig
 import io.github.petebutty.viewarr.ui.common.MenuItem
 import io.github.petebutty.viewarr.ui.common.glass
-import io.github.petebutty.viewarr.ui.common.trapFocus
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.launch
@@ -81,12 +82,13 @@ fun readChangelog(context: Context): List<ChangelogVersion> = runCatching {
 }.getOrDefault(emptyList())
 
 /** Drawn at the root (AppRoot) while [Changelog.open]. */
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun ChangelogHost() {
     if (!Changelog.open) return
     val context = LocalContext.current
     val versions = remember { readChangelog(context) }
-    androidx.activity.compose.BackHandler { Changelog.open = false }
+    // (Back closes it: the dialog window's own dismiss, below.)
     // The version that's running starts highlighted (or the newest, on a build newer than the notes).
     val start = remember(versions) { versions.indexOfFirst { it.version == BuildConfig.VERSION_NAME }.coerceAtLeast(0) }
     var shown by remember { mutableIntStateOf(start) }
@@ -96,73 +98,95 @@ fun ChangelogHost() {
     val notesScroll = rememberScrollState()
     var notesFocused by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(Unit) { awaitFrame(); awaitFrame(); runCatching { firstFocus.requestFocus() } }
+    // Focus inside the changelog. The page it opened over (Settings → About, or the What's new card) can still hold
+    // the remote for a moment and take it back: keep asking until it's really here (as the profile screens do).
+    var inside by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        repeat(40) {
+            awaitFrame()
+            if (inside) return@LaunchedEffect
+            runCatching { firstFocus.requestFocus() }
+            kotlinx.coroutines.delay(60)
+            if (inside) return@LaunchedEffect
+        }
+    }
     LaunchedEffect(shown) { notesScroll.scrollTo(0) }
 
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.72f))) {
-        Row(
-            Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 36.dp).glass(radius = 18.dp).padding(24.dp).trapFocus(),
-            horizontalArrangement = Arrangement.spacedBy(28.dp),
-        ) {
-            // The versions.
-            Column(Modifier.width(230.dp).fillMaxHeight()) {
-                Text("Changelog", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-                Text("You have ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
-                if (versions.isEmpty()) {
-                    Text("The changelog isn't in this build.", fontSize = 14.sp, color = AppColors.TextSecondary)
-                    MenuItem(text = "Close", selected = false, onClick = { Changelog.open = false }, modifier = Modifier.focusRequester(firstFocus))
-                } else LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    itemsIndexed(versions, key = { _, v -> v.version }) { i, v ->
-                        val current = v.version == BuildConfig.VERSION_NAME
-                        MenuItem(
-                            text = v.version + if (current) "  · yours" else "",
-                            selected = i == shown,
-                            // OK or Right: into the notes, to scroll them.
-                            onClick = { shown = i; runCatching { notesFocus.requestFocus() } },
-                            modifier = Modifier
-                                .then(if (i == start) Modifier.focusRequester(firstFocus) else Modifier)
-                                .onFocusChanged { if (it.isFocused) shown = i }
-                                .onPreviewKeyEvent { e ->
-                                    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight) { runCatching { notesFocus.requestFocus() }; true } else false
-                                },
-                        )
-                    }
-                }
-            }
-            // The highlighted version's notes. Right (or OK) on a version comes here; Up / Down scroll, Left goes back.
-            val v = versions.getOrNull(shown)
-            Column(
-                Modifier.weight(1f).fillMaxHeight()
-                    .focusRequester(notesFocus)
-                    .onFocusChanged { notesFocused = it.isFocused }
-                    .onPreviewKeyEvent { e ->
-                        if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                        when (e.key) {
-                            Key.DirectionDown -> { scope.launch { notesScroll.animateScrollTo(notesScroll.value + 260) }; true }
-                            Key.DirectionUp -> { scope.launch { notesScroll.animateScrollTo((notesScroll.value - 260).coerceAtLeast(0)) }; true }
-                            Key.DirectionLeft, Key.Back -> {
-                                if (e.key == Key.Back) return@onPreviewKeyEvent false
-                                scope.launch { listState.animateScrollToItem((shown - 3).coerceAtLeast(0)) }
-                                runCatching { firstFocus.requestFocus() }
-                                true
-                            }
-                            Key.DirectionRight -> true
-                            else -> false
+    // Its own window (a dialog): Android gives it the remote outright. Drawn in the main window, it lost the remote to
+    // the page it opened over (Settings fences focus in, so the changelog could never take it).
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = { Changelog.open = false },
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
+    ) {
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.72f))) {
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 36.dp).glass(radius = 18.dp).padding(24.dp)
+                    // The remote stays in here until it's closed (the page underneath can't take it).
+                    .onFocusChanged { inside = it.hasFocus }
+                    .focusProperties { exit = { FocusRequester.Cancel } }
+                    .focusGroup(),
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+            ) {
+                // The versions.
+                Column(Modifier.width(230.dp).fillMaxHeight()) {
+                    Text("Changelog", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+                    Text("You have ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 12.dp))
+                    if (versions.isEmpty()) {
+                        Text("The changelog isn't in this build.", fontSize = 14.sp, color = AppColors.TextSecondary)
+                        MenuItem(text = "Close", selected = false, onClick = { Changelog.open = false }, modifier = Modifier.focusRequester(firstFocus))
+                    } else LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        itemsIndexed(versions, key = { _, v -> v.version }) { i, v ->
+                            val current = v.version == BuildConfig.VERSION_NAME
+                            MenuItem(
+                                text = v.version + if (current) "  · yours" else "",
+                                selected = i == shown,
+                                // OK or Right: into the notes, to scroll them.
+                                onClick = { shown = i; runCatching { notesFocus.requestFocus() } },
+                                modifier = Modifier
+                                    .then(if (i == start) Modifier.focusRequester(firstFocus) else Modifier)
+                                    .onFocusChanged { if (it.isFocused) shown = i }
+                                    .onPreviewKeyEvent { e ->
+                                        if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight) { runCatching { notesFocus.requestFocus() }; true } else false
+                                    },
+                            )
                         }
                     }
-                    .focusable()
-                    .then(if (notesFocused) Modifier.border(1.dp, AppColors.Accent.copy(alpha = 0.6f), RoundedCornerShape(12.dp)) else Modifier)
-                    .padding(horizontal = 18.dp, vertical = 12.dp),
-            ) {
-                if (v != null) {
-                    Text("Viewarr ${v.version}", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-                    Text(
-                        listOfNotNull(v.date.takeIf { it.isNotEmpty() }, if (notesFocused) "▲ ▼ scroll  ·  ◀ versions  ·  Back: close" else "▶ read  ·  Back: close").joinToString("   ·   "),
-                        fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
-                    )
-                    Column(Modifier.fillMaxWidth().verticalScroll(notesScroll), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Notes(v.notes)
-                        Spacer(Modifier.height(40.dp))
+                }
+                // The highlighted version's notes. Right (or OK) on a version comes here; Up / Down scroll, Left goes back.
+                val v = versions.getOrNull(shown)
+                Column(
+                    Modifier.weight(1f).fillMaxHeight()
+                        .focusRequester(notesFocus)
+                        .onFocusChanged { notesFocused = it.isFocused }
+                        .onPreviewKeyEvent { e ->
+                            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            when (e.key) {
+                                Key.DirectionDown -> { scope.launch { notesScroll.animateScrollTo(notesScroll.value + 260) }; true }
+                                Key.DirectionUp -> { scope.launch { notesScroll.animateScrollTo((notesScroll.value - 260).coerceAtLeast(0)) }; true }
+                                Key.DirectionLeft, Key.Back -> {
+                                    if (e.key == Key.Back) return@onPreviewKeyEvent false
+                                    scope.launch { listState.animateScrollToItem((shown - 3).coerceAtLeast(0)) }
+                                    runCatching { firstFocus.requestFocus() }
+                                    true
+                                }
+                                Key.DirectionRight -> true
+                                else -> false
+                            }
+                        }
+                        .focusable()
+                        .then(if (notesFocused) Modifier.border(1.dp, AppColors.Accent.copy(alpha = 0.6f), RoundedCornerShape(12.dp)) else Modifier)
+                        .padding(horizontal = 18.dp, vertical = 12.dp),
+                ) {
+                    if (v != null) {
+                        Text("Viewarr ${v.version}", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+                        Text(
+                            listOfNotNull(v.date.takeIf { it.isNotEmpty() }, if (notesFocused) "▲ ▼ scroll  ·  ◀ versions  ·  Back: close" else "▶ read  ·  Back: close").joinToString("   ·   "),
+                            fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+                        )
+                        Column(Modifier.fillMaxWidth().verticalScroll(notesScroll), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Notes(v.notes)
+                            Spacer(Modifier.height(40.dp))
+                        }
                     }
                 }
             }

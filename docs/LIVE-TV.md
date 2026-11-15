@@ -74,7 +74,7 @@ The guide shows **3 days** ahead by default. Change it in **Settings → Live TV
 
 ## Watching live TV
 
-- **OK** shows the info bar with the controls: TV guide, stop, audio, subtitles, aspect, source, stream info, record, **Multi-view**, **Transparency** (adjust the see-through levels over the picture), **Settings** and more.
+- **OK** shows the info bar with the controls: TV guide, stop, audio, subtitles, aspect, source, stream info, record, **Multi-view**, **Refresh guide** (fetches the TV guide again now), **Transparency** (adjust the see-through levels over the picture), **Settings** and more.
 - **Up / Down** opens the channel list over the picture. **Left** from there shows the channel groups.
 - **Right** on a channel in the list shows its programmes, earlier and coming up. Earlier ones play from catch-up.
 - **Channel + / −** changes channel.

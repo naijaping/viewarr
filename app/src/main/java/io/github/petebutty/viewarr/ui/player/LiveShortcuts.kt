@@ -85,6 +85,8 @@ object LiveShortcutsBridge {
     var openSettings: () -> Unit = {}
     /** The film player's TV guide button: the guide (the film in the corner). */
     var openGuide: () -> Unit = {}
+    /** A film minimised: the menu, on Live TV (main list), with the TV guide behind it. */
+    var openMenuOnLiveTv: () -> Unit = {}
     /** The film player's Movies / Shows / Recordings buttons ("Movies", "Shows", "Recordings"): that page. */
     var openPage: (String) -> Unit = {}
     /**
