@@ -26,8 +26,15 @@ object NextUp {
     /** For which stream (its address), so a late answer for the previous episode is ignored. */
     var forUrl: String? = null
     var play: () -> Unit = {}
-    /** The episodes after the one playing (the rest of its season, then the start of the next): Down in the player. */
+    /**
+     * The season playing, every episode (then the start of the next season near its end): the Episodes row under the
+     * film bar, opening on the one playing ([startAt]) so an earlier one missed is a Left away.
+     */
     var upcoming by mutableStateOf<List<io.github.petebutty.viewarr.data.media.EpisodeInfo>>(emptyList())
+    /** Where the playing episode is in [upcoming] (the row opens there, in the middle). */
+    var startAt by androidx.compose.runtime.mutableIntStateOf(0)
+    /** The episode playing (season, number): its card is marked ▶. */
+    var current by mutableStateOf<Pair<Int, Int>?>(null)
     var playEpisode: (io.github.petebutty.viewarr.data.media.EpisodeInfo) -> Unit = {}
     /** The episode before the one playing (into the previous season at a season's start), for the Previous episode
      *  button; null: the first episode, or not a show. */
@@ -37,8 +44,9 @@ object NextUp {
     fun cards(): List<io.github.petebutty.viewarr.ui.player.OsdPoster> = upcoming.map { ep ->
         io.github.petebutty.viewarr.ui.player.OsdPoster(
             key = "ep-${ep.season}-${ep.number}",
-            title = "${ep.number}. ${ep.name}",
-            subtitle = listOfNotNull("S${ep.season} · E${ep.number}", ep.runtimeMin?.takeIf { it > 0 }?.let { "${it}m" }).joinToString("  ·  "),
+            // Just the season and episode, and when it came out (Peter: no name or running time). ▶ the one playing.
+            title = (if (current == ep.season to ep.number) "▶  " else "") + "S${ep.season} · E${ep.number}",
+            subtitle = null,
             note = released(ep.airDate),
             image = ep.still ?: fallbackArt,
             fallbackImage = fallbackArt,

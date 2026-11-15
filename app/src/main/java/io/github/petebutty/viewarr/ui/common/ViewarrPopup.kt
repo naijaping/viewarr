@@ -28,6 +28,7 @@ fun ViewarrPopup(onClose: () -> Unit, content: @Composable BoxScope.() -> Unit) 
         // (The pop-ups draw their own backdrop; the window's grey dim on top of it made everything muddy.)
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         SideEffect { window?.setDimAmount(0f) }
-        Box(Modifier.fillMaxSize(), content = content)
+        // (OK ignored until a fresh press: the hold that opened it, or its release, mustn't pick a choice.)
+        Box(Modifier.fillMaxSize().ignoreHeldOk(), content = content)
     }
 }

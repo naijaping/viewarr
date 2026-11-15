@@ -130,65 +130,68 @@ private fun UpdateDialog(
     val first = remember { FocusRequester() }
     // Refocus whenever the buttons change (e.g. download finished, permission needed).
     LaunchedEffect(state::class) { awaitFrame(); runCatching { first.requestFocus() } }
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                if (release.prerelease) "Test version available" else "Update available",
-                fontSize = 12.sp, color = AppColors.Accent,
-            )
-            Text("Viewarr ${release.version}", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-            Text("You have $current. Your settings are kept.", fontSize = 12.sp, color = AppColors.TextSecondary)
-            if (release.notes.isNotBlank()) {
-                Box(Modifier.fillMaxWidth().heightIn(max = 140.dp).background(AppColors.PanelAlt, RoundedCornerShape(8.dp)).padding(12.dp)) {
-                    Text(
-                        release.notes, fontSize = 12.sp, lineHeight = 17.sp, color = AppColors.TextPrimary,
-                        modifier = Modifier.verticalScroll(rememberScrollState()),
-                    )
-                }
-            }
-            when (state) {
-                is UpdateState.Downloading -> {
-                    Text("Downloading… ${(state.progress * 100).toInt()}%", fontSize = 15.sp, color = AppColors.TextPrimary)
-                    Box(Modifier.fillMaxWidth().height(6.dp).background(AppColors.PanelAlt, RoundedCornerShape(3.dp))) {
-                        Box(Modifier.fillMaxHeight().fillMaxWidth(state.progress.coerceIn(0f, 1f)).background(AppColors.Accent, RoundedCornerShape(3.dp)))
+    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onLater) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    if (release.prerelease) "Test version available" else "Update available",
+                    fontSize = 12.sp, color = AppColors.Accent,
+                )
+                Text("Viewarr ${release.version}", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+                Text("You have $current. Your settings are kept.", fontSize = 12.sp, color = AppColors.TextSecondary)
+                if (release.notes.isNotBlank()) {
+                    Box(Modifier.fillMaxWidth().heightIn(max = 140.dp).background(AppColors.PanelAlt, RoundedCornerShape(8.dp)).padding(12.dp)) {
+                        Text(
+                            release.notes, fontSize = 12.sp, lineHeight = 17.sp, color = AppColors.TextPrimary,
+                            modifier = Modifier.verticalScroll(rememberScrollState()),
+                        )
                     }
-                    // Something must hold focus inside the box while downloading.
-                    Row { OutlinedButton(onClick = {}, modifier = Modifier.focusRequester(first)) { Text("Please wait") } }
                 }
-                is UpdateState.NeedsPermission -> {
-                    Text(
-                        "One-time step: Android needs your OK for Viewarr to install apps. Open the setting, switch Viewarr on, " +
-                            "then press Back to return here and the update installs.",
-                        fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = onPermission, modifier = Modifier.focusRequester(first)) { Text("Open the setting") }
-                        OutlinedButton(onClick = onInstall) { Text("I've done it") }
+                when (state) {
+                    is UpdateState.Downloading -> {
+                        Text("Downloading… ${(state.progress * 100).toInt()}%", fontSize = 15.sp, color = AppColors.TextPrimary)
+                        Box(Modifier.fillMaxWidth().height(6.dp).background(AppColors.PanelAlt, RoundedCornerShape(3.dp))) {
+                            Box(Modifier.fillMaxHeight().fillMaxWidth(state.progress.coerceIn(0f, 1f)).background(AppColors.Accent, RoundedCornerShape(3.dp)))
+                        }
+                        // Something must hold focus inside the box while downloading.
+                        Row { OutlinedButton(onClick = {}, modifier = Modifier.focusRequester(first)) { Text("Please wait") } }
+                    }
+                    is UpdateState.NeedsPermission -> {
+                        Text(
+                            "One-time step: Android needs your OK for Viewarr to install apps. Open the setting, switch Viewarr on, " +
+                                "then press Back to return here and the update installs.",
+                            fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = onPermission, modifier = Modifier.focusRequester(first)) { Text("Open the setting") }
+                            OutlinedButton(onClick = onInstall) { Text("I've done it") }
+                            OutlinedButton(onClick = onLater) { Text("Later") }
+                        }
+                    }
+                    is UpdateState.Installing -> {
+                        Text("Installing… Android will ask you to confirm. Viewarr restarts by itself when it's done.", fontSize = 14.sp, color = AppColors.TextPrimary)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            OutlinedButton(onClick = onInstall, modifier = Modifier.focusRequester(first)) { Text("Show the install screen again") }
+                            OutlinedButton(onClick = onLater) { Text("Later") }
+                        }
+                    }
+                    is UpdateState.Failed -> {
+                        Text(state.message, fontSize = 14.sp, color = AppColors.Accent)
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = onUpdate, modifier = Modifier.focusRequester(first)) { Text("Try again") }
+                            OutlinedButton(onClick = onLater) { Text("Later") }
+                        }
+                    }
+                    else -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onUpdate, modifier = Modifier.focusRequester(first)) {
+                            Text("Update now" + (release.apkSize.takeIf { it > 0 }?.let { "  ·  ${it / 1_000_000} MB" } ?: ""))
+                        }
                         OutlinedButton(onClick = onLater) { Text("Later") }
                     }
-                }
-                is UpdateState.Installing -> {
-                    Text("Installing… Android will ask you to confirm. Viewarr restarts by itself when it's done.", fontSize = 14.sp, color = AppColors.TextPrimary)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        OutlinedButton(onClick = onInstall, modifier = Modifier.focusRequester(first)) { Text("Show the install screen again") }
-                        OutlinedButton(onClick = onLater) { Text("Later") }
-                    }
-                }
-                is UpdateState.Failed -> {
-                    Text(state.message, fontSize = 14.sp, color = AppColors.Accent)
-                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Button(onClick = onUpdate, modifier = Modifier.focusRequester(first)) { Text("Try again") }
-                        OutlinedButton(onClick = onLater) { Text("Later") }
-                    }
-                }
-                else -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = onUpdate, modifier = Modifier.focusRequester(first)) {
-                        Text("Update now" + (release.apkSize.takeIf { it > 0 }?.let { "  ·  ${it / 1_000_000} MB" } ?: ""))
-                    }
-                    OutlinedButton(onClick = onLater) { Text("Later") }
                 }
             }
         }

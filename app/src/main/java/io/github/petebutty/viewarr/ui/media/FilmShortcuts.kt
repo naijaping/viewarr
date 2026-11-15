@@ -45,7 +45,7 @@ internal object FilmShortcuts {
         card(menu, r, c)?.let { if (it.options.isNotEmpty()) CardMenu.open = it else open(menu, it) }
     }
 
-    private const val NEXT_TITLE = "Next episodes"
+    private const val NEXT_TITLE = "Episodes"
 
     /**
      * The rows under the film bar, in the order chosen (Settings → Rows under the info bar): next episodes (an episode
@@ -70,8 +70,9 @@ internal object FilmShortcuts {
     /** Opens the rows on next episodes (the Episodes button / remote action). */
     fun openEpisodes(menu: PlayerMenu, only: Boolean) {
         menu.withNext = true
-        menu.onEpisodes = true; menu.episodesOnly = only; menu.episode = 0
+        menu.onEpisodes = true; menu.episodesOnly = only
         menu.downRow = nextIndex(true).coerceAtLeast(0)
+        menu.episode = NextUp.startAt
     }
 
     /** OK on a card under the bar: an episode plays next; anything else opens (the film makes way, or stops). */

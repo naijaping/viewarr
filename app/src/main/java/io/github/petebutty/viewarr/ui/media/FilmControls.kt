@@ -163,6 +163,8 @@ fun filmHooks(
     barAppearance: io.github.petebutty.viewarr.ui.settings.AppearanceViewModel,
 ): VodHooks {
     val remoteSettings = io.github.petebutty.viewarr.data.settings.LocalRemote.current
+    // The Episodes row opens on the episode playing; the other rows on their first card.
+    menu.rowStart = { r -> if (r == FilmShortcuts.nextIndex(menu.withNext)) NextUp.startAt else 0 }
     return VodHooks(
         buttons = buttons, press = press,
         toggleButton = { b -> BarLayout.filmId(b.name).let { id -> BarLayout.setShown(id, !BarLayout.shown(id), barAppearance::setTitlePart) } },

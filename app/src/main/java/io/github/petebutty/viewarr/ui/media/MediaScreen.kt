@@ -1361,7 +1361,7 @@ private fun DetailScreen(
         reading?.let { r -> ReviewDialog(r) { reading = null } }
         if (ui.episodesOpen) EpisodesPanel(ui, vm, onPlex)
         else if (ui.streams.isNullOrEmpty()) EpisodeActionsFor(ui, vm)
-        ui.streams?.takeIf { it.isNotEmpty() }?.let { StreamPicker(it, onPickStream, Modifier.align(Alignment.CenterEnd)) }
+        ui.streams?.takeIf { it.isNotEmpty() }?.let { StreamPicker(it, onPickStream, Modifier.align(Alignment.CenterEnd), onClose = { if (ui.episode != null) vm.closeEpisodeStreams() else onCloseStreams() }) }
         ui.tracks?.takeIf { tracksOpen }?.let { t -> TracksDialog(t, ui.pickedAudio, ui.pickedSubtitle, onPick = { a, sub -> vm.pickTracks(a, sub) }, onDone = { tracksOpen = false }) }
         if (trailerOpen) {
             TrailerPlayer(item = item, trailers = vm.trailers, onClose = { trailerOpen = false })
@@ -1787,34 +1787,39 @@ private fun EpisodeActions(
 }
 
 @Composable
-private fun StreamPicker(streams: List<StreamOption>, onPick: (StreamOption) -> Unit, modifier: Modifier) {
+private fun StreamPicker(streams: List<StreamOption>, onPick: (StreamOption) -> Unit, modifier: Modifier, onClose: () -> Unit) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         awaitFrame()
         runCatching { first.requestFocus() }
     }
-    Column(
-        modifier.fillMaxHeight().fillMaxWidth(0.46f).background(AppColors.Panel.copy(alpha = 0.97f)).padding(horizontal = 20.dp, vertical = 28.dp).trapFocus(),
-    ) {
-        Text("${streams.size} stream${if (streams.size == 1) "" else "s"} found", fontSize = 18.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary)
-        Text("Back to close", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 12.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            itemsIndexed(streams) { i, s ->
-                Surface(
-                    onClick = { onPick(s) },
-                    modifier = (if (i == 0) Modifier.focusRequester(first) else Modifier).fillMaxWidth(),
-                    scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor = AppColors.PanelAlt,
-                        contentColor = AppColors.TextPrimary,
-                        focusedContainerColor = AppColors.Accent,
-                        focusedContentColor = AppColors.OnAccent,
-                    ),
-                ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                        Text(s.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        if (s.description.isNotBlank()) Text(s.description, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    // Its own window (ViewarrPopup), on the right of the title page: the remote can't be left on the page.
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
+            Column(
+                Modifier.fillMaxHeight().fillMaxWidth(0.46f).background(AppColors.Panel.copy(alpha = 0.97f)).padding(horizontal = 20.dp, vertical = 28.dp).trapFocus(),
+            ) {
+                Text("${streams.size} stream${if (streams.size == 1) "" else "s"} found", fontSize = 18.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary)
+                Text("Back to close", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 12.dp))
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    itemsIndexed(streams) { i, s ->
+                        Surface(
+                            onClick = { onPick(s) },
+                            modifier = (if (i == 0) Modifier.focusRequester(first) else Modifier).fillMaxWidth(),
+                            scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
+                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                            colors = ClickableSurfaceDefaults.colors(
+                                containerColor = AppColors.PanelAlt,
+                                contentColor = AppColors.TextPrimary,
+                                focusedContainerColor = AppColors.Accent,
+                                focusedContentColor = AppColors.OnAccent,
+                            ),
+                        ) {
+                            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                                Text(s.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (s.description.isNotBlank()) Text(s.description, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
                     }
                 }
             }

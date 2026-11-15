@@ -121,6 +121,8 @@ fun PlayerButton.osd(paused: Boolean, infoOn: Boolean, otherPlayer: String) = Os
  * (not while paused), or with Back.
  */
 class PlayerMenu {
+    /** Where the highlight starts in row [r] under the bar (the Episodes row: the episode playing). */
+    var rowStart: (Int) -> Int = { 0 }
     var open by mutableStateOf(false)
     var onBar by mutableStateOf(true)
     var button by androidx.compose.runtime.mutableIntStateOf(0)
@@ -176,7 +178,8 @@ class PlayerMenu {
      * Opens on the TV guide button, as live TV's controls do (no TV guide button: on the seek bar, with Play / Pause
      * highlighted below it); not the button used last time.
      */
-    fun show() { editing = false; carrying = false; carried = null; btnOkDown = false; onEpisodes = false; episodesOnly = false; downRow = 0; withNext = false; cardOkDown = false; scOkDown = false; open = true; onBar = guideAt < 0; button = if (guideAt >= 0) guideAt else home; onShortcuts = false; onRows = false; scMoving = false; scOptions = null; scRows = null; touch() }
+    // OK on a film: the controls open on Play / Pause (Peter: it used to open on the TV guide button).
+    fun show() { editing = false; carrying = false; carried = null; btnOkDown = false; onEpisodes = false; episodesOnly = false; downRow = 0; withNext = false; cardOkDown = false; scOkDown = false; open = true; onBar = false; button = home; onShortcuts = false; onRows = false; scMoving = false; scOptions = null; scRows = null; touch() }
     fun touch() { lastKey = System.currentTimeMillis() }
 
     /**
@@ -217,11 +220,11 @@ class PlayerMenu {
                 io.github.petebutty.viewarr.ui.common.RemoteAction.Right -> if (down) episode = (episode + 1).coerceAtMost((count - 1).coerceAtLeast(0))
                 io.github.petebutty.viewarr.ui.common.RemoteAction.Ok -> if (down && repeat == 0) { val r = downRow; open = false; onEpisodes = false; pickDown(r, episode) }
                 io.github.petebutty.viewarr.ui.common.RemoteAction.Up -> if (down) {
-                    if (downRow > 0) { downRow--; episode = 0 } else { onEpisodes = false; if (episodesOnly) open = false }
+                    if (downRow > 0) { downRow--; episode = rowStart(downRow) } else { onEpisodes = false; if (episodesOnly) open = false }
                 }
                 io.github.petebutty.viewarr.ui.common.RemoteAction.Back -> if (down) { onEpisodes = false; if (episodesOnly) open = false }
                 io.github.petebutty.viewarr.ui.common.RemoteAction.Down -> if (down) {
-                    if (downRow < downSizes.lastIndex) { downRow++; episode = 0 }
+                    if (downRow < downSizes.lastIndex) { downRow++; episode = rowStart(downRow) }
                     // Past the last row: the live TV shortcuts, when there are any (Live TV hub).
                     else if (shortcutCount > 0 && !episodesOnly) { onEpisodes = false; onShortcuts = true; shortcut = shortcut.coerceAtMost(shortcutCount - 1) }
                 }
@@ -296,7 +299,7 @@ class PlayerMenu {
             !onBar && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Right -> if (down) button = (button + 1).coerceAtMost(buttons.lastIndex)
             !onBar && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Up -> if (down) onBar = true
             !onBar && a == io.github.petebutty.viewarr.ui.common.RemoteAction.Down -> if (down) {
-                if (downSizes.isNotEmpty()) { onEpisodes = true; episodesOnly = false; episode = 0; downRow = 0 }
+                if (downSizes.isNotEmpty()) { onEpisodes = true; episodesOnly = false; downRow = 0; episode = rowStart(0) }
                 else if (shortcutCount > 0) { onShortcuts = true; shortcut = shortcut.coerceAtMost(shortcutCount - 1) }
             }
             // A tap presses the button (on release); a hold starts editing, or while editing picks it up / puts it down.
@@ -569,7 +572,17 @@ fun PlayerOsd(
             val r = curIndex
             io.github.petebutty.viewarr.ui.player.OsdRowHeading(curRow.title, null, position = if (downRows.size > 1) "${r + 1} of ${downRows.size}" else null)
             val epState = androidx.compose.foundation.lazy.rememberLazyListState()
-            androidx.compose.runtime.LaunchedEffect(r, episodeFocus) { runCatching { epState.scrollToItem((episodeFocus - 1).coerceAtLeast(0)) } }
+            androidx.compose.runtime.LaunchedEffect(r, episodeFocus) {
+                // The highlighted card in the middle of the row (earlier ones to the left, later to the right).
+                // (A row just opened isn't measured yet: a frame or two first.)
+                runCatching {
+                    repeat(3) { if (epState.layoutInfo.visibleItemsInfo.isEmpty()) androidx.compose.runtime.withFrameNanos { } }
+                    val info = epState.layoutInfo
+                    val card = info.visibleItemsInfo.firstOrNull()?.size ?: 0
+                    val width = info.viewportSize.width
+                    if (card > 0 && width > 0) epState.scrollToItem(episodeFocus, -((width - card) / 2)) else epState.scrollToItem((episodeFocus - 1).coerceAtLeast(0))
+                }
+            }
             androidx.compose.runtime.key(r) {
                 androidx.compose.foundation.lazy.LazyRow(
                     state = epState,

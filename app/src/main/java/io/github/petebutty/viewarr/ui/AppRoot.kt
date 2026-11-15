@@ -156,7 +156,8 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
             StartState.Loading -> Unit
             StartState.NeedsSetup -> if (!splashShown) {
                 // A new install: running your own server, or invited by someone who does.
-                var role by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(null) }
+                // (Profiles off for now: no "invited by someone" choice, straight to setting up your own.)
+                var role by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(if (io.github.petebutty.viewarr.ui.profiles.ProfileUi.ENABLED) null else "admin") }
                 androidx.compose.runtime.LaunchedEffect(Unit) { vm.sawSetup = true }
                 when (role) {
                     null -> io.github.petebutty.viewarr.ui.onboarding.RoleScreen(onAdmin = { role = "admin" }, onInvited = { role = "invited" })

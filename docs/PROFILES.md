@@ -1,5 +1,7 @@
 # Profiles and sharing
 
+> **Coming soon.** Profiles, PINs and sharing with friends are switched off for now while they're finished. In Settings they show as **Profiles · Coming soon**. Everyone on a TV uses its main sign-in in the meantime; saving your setup on Dispatcharr still works. The rest of this page describes how they'll work.
+
 Everyone on the TV can have their own profile. A profile is a user on your Dispatcharr server, so profiles need Dispatcharr (not an IPTV login or a playlist).
 
 ## What a profile keeps

@@ -78,6 +78,13 @@ import javax.inject.Inject
 
 /** Which profile screen is up (opened from Settings or on start). */
 object ProfileUi {
+    /**
+     * Profiles (Who's watching?, Users & profiles, PINs, friends in another house, invites) are switched off for now:
+     * Settings shows "Profiles · Coming soon" instead. Peter (2026-11-15), until the sharing page is made safe
+     * (it served a friend's API key as plain text on the home Wi-Fi). Set true to bring it all back.
+     */
+    const val ENABLED = false
+
     var picker by mutableStateOf(false)
     var users by mutableStateOf(false)
     /** Settings → Profile PIN. */
@@ -619,6 +626,8 @@ private fun ConfirmDialog(title: String, body: String, action: String, onCancel:
 /** On top of Home: "Who's watching?" on start (when there's more than one person) and from Settings, and the admin page. */
 @Composable
 fun ProfileHost(vm: ProfilesViewModel = hiltViewModel()) {
+    // Profiles off for now (ProfileUi.ENABLED): no picker on start, no Users page, no PIN.
+    if (!ProfileUi.ENABLED) return
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val ask by vm.askOnStart.collectAsStateWithLifecycle()
     val has by vm.hasProfiles.collectAsStateWithLifecycle()
@@ -639,6 +648,11 @@ fun ProfileHost(vm: ProfilesViewModel = hiltViewModel()) {
 /** Settings rows: Switch profile for everyone signed in to Dispatcharr; Users & profiles only for its admins. */
 @Composable
 fun ProfileSettingsItems(modifier: Modifier = Modifier, vm: ProfilesViewModel = hiltViewModel()) {
+    // Profiles off for now: one row saying they're coming (OK does nothing).
+    if (!ProfileUi.ENABLED) {
+        MenuItem(text = "Profiles", trailing = "Coming soon", selected = false, onClick = {}, modifier = modifier)
+        return
+    }
     val has by vm.hasProfiles.collectAsStateWithLifecycle()
     val admin by vm.admin.collectAsStateWithLifecycle()
     val profiles by vm.profiles.collectAsStateWithLifecycle()

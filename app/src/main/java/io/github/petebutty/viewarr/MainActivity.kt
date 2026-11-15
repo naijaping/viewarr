@@ -23,7 +23,21 @@ class MainActivity : ComponentActivity() {
      * Holding Back with a film in the corner brings it back full screen, handled here, before any screen sees the
      * press: right after the film shrank nothing on screen had the remote yet, so the first hold went nowhere.
      */
+    /** OK is being held (a repeat came): its release isn't a press (see dispatchKeyEvent). */
+    private var okHeld = false
+
     override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        // Holding OK opens things (record options, an episode's menu): the hold is decided on its first repeat, so the
+        // release that ends it means nothing. Dropped here, app-wide: with pop-ups in their own windows it reached the
+        // page behind (still focused for a moment) as a plain OK, pressing Play on the episode, or Watch in the guide.
+        if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
+            event.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            when {
+                event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0 -> okHeld = false
+                event.action == android.view.KeyEvent.ACTION_DOWN -> okHeld = true
+                event.action == android.view.KeyEvent.ACTION_UP && okHeld -> { okHeld = false; return true }
+            }
+        }
         if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
             val host = io.github.petebutty.viewarr.ui.media.VodHost
             // The rest of a hold that just sent the film to the corner.

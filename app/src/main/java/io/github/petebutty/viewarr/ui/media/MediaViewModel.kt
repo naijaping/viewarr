@@ -413,6 +413,9 @@ class MediaViewModel @Inject constructor(
                     if (io.github.petebutty.viewarr.ui.media.NextUp.forUrl != stream.url) return@launch
                     io.github.petebutty.viewarr.ui.media.NextUp.fallbackArt = _detail.value?.detail?.item?.backdrop
                     io.github.petebutty.viewarr.ui.media.NextUp.playEpisode = { ep -> playNextEpisode(ep) }
+                    io.github.petebutty.viewarr.ui.media.NextUp.current = s to e
+                    io.github.petebutty.viewarr.ui.media.NextUp.startAt = list.indexOfFirst { it.season == s && it.number == e }
+                        .takeIf { it >= 0 } ?: list.indexOfFirst { it.season > s || (it.season == s && it.number > e) }.coerceAtLeast(0)
                     io.github.petebutty.viewarr.ui.media.NextUp.upcoming = list
                 }
                 val next = runCatching { findNext(s, e) }.getOrNull() ?: return@collect
@@ -1535,14 +1538,16 @@ class MediaViewModel @Inject constructor(
     /** The episodes after S/E: the rest of its season, then the start of the next (a dozen at most). */
     private suspend fun findUpcoming(season: Int, episode: Int): List<io.github.petebutty.viewarr.data.media.EpisodeInfo> {
         val d = _detail.value ?: return emptyList()
+        // The whole season (Peter: roll back to one you missed), then the start of the next near the season's end.
         val inSeason = ((if (d.season == season) d.episodes else null)
             ?: runCatching { repo.seasonEpisodes(d.detail.item, season, d.plexShowKey) }.getOrDefault(emptyList()))
-            .filter { it.number > episode }.sortedBy { it.number }
-        if (inSeason.size >= 6) return inSeason.take(12)
+            .sortedBy { it.number }
+        val after = inSeason.count { it.number > episode }
+        if (after >= 6) return inSeason
         val next = d.seasons.map { it.number }.filter { it > season }.minOrNull()?.let { ns ->
             runCatching { repo.seasonEpisodes(d.detail.item, ns, d.plexShowKey) }.getOrDefault(emptyList()).sortedBy { it.number }
         }.orEmpty()
-        return (inSeason + next).take(12)
+        return inSeason + next.take(6 - after)
     }
 
     /** Plays [next] straight away (Skip credits → Next episode, or the countdown over the credits ran out). */

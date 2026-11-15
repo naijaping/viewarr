@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -134,21 +135,26 @@ fun QueuePanel(onClose: () -> Unit) {
     val list = rememberLazyListState(initialFirstVisibleItemIndex = (MusicPlayer.index - 2).coerceAtLeast(0))
     val nowFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { nowFocus.requestFocus() } }
-    Box(Modifier.fillMaxHeight().width(460.dp).glass(0.dp).padding(horizontal = 18.dp, vertical = 28.dp)) {
-        Column {
-            Text("QUEUE", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Accent, letterSpacing = 2.sp)
-            Text("${MusicPlayer.queue.size} songs  ·  OK: play from here  ·  Hold OK: move or remove", fontSize = 11.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
-            LazyColumn(state = list, verticalArrangement = Arrangement.spacedBy(2.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-                itemsIndexed(MusicPlayer.queue, key = { i, s -> "$i:${s.id}" }) { i, s ->
-                    val now = i == MusicPlayer.index
-                    MenuItem(
-                        text = (if (now) "♪  " else "${i + 1}.  ") + s.title,
-                        trailing = s.artist.take(18),
-                        selected = now,
-                        onClick = { MusicPlayer.jumpTo(i) },
-                        onLongClick = { picked = i },
-                        modifier = if (now) Modifier.focusRequester(nowFocus) else Modifier,
-                    )
+    // Its own window (ViewarrPopup), on the right of Now Playing: the remote can't be left behind it.
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
+        Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.CenterEnd) {
+            Box(Modifier.fillMaxHeight().width(460.dp).glass(0.dp).padding(horizontal = 18.dp, vertical = 28.dp)) {
+                Column {
+                    Text("QUEUE", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Accent, letterSpacing = 2.sp)
+                    Text("${MusicPlayer.queue.size} songs  ·  OK: play from here  ·  Hold OK: move or remove", fontSize = 11.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+                    LazyColumn(state = list, verticalArrangement = Arrangement.spacedBy(2.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
+                        itemsIndexed(MusicPlayer.queue, key = { i, s -> "$i:${s.id}" }) { i, s ->
+                            val now = i == MusicPlayer.index
+                            MenuItem(
+                                text = (if (now) "♪  " else "${i + 1}.  ") + s.title,
+                                trailing = s.artist.take(18),
+                                selected = now,
+                                onClick = { MusicPlayer.jumpTo(i) },
+                                onLongClick = { picked = i },
+                                modifier = if (now) Modifier.focusRequester(nowFocus) else Modifier,
+                            )
+                        }
+                    }
                 }
             }
         }

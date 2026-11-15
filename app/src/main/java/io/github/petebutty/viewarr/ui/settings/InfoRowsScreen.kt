@@ -107,8 +107,11 @@ fun InfoRowsScreen(start: String, onClose: () -> Unit) {
                     RemoteAction.Down -> if (down) {
                         if (onTabs) onTabs = false else if (moving) move(1) else if (index < kinds.lastIndex) index++
                     }
-                    RemoteAction.Left, RemoteAction.Right -> if (down && onTabs && !moving) {
-                        player = if (player == InfoRows.LIVE) InfoRows.FILM else InfoRows.LIVE; index = 0
+                    RemoteAction.Left, RemoteAction.Right -> if (down) when {
+                        onTabs && !moving -> { player = if (player == InfoRows.LIVE) InfoRows.FILM else InfoRows.LIVE; index = 0 }
+                        // As the home rows editor: Right picks the row up (as holding OK), Left or Right puts it down.
+                        moving -> moving = false
+                        RemoteKeys.action(e) == RemoteAction.Right && kinds.getOrNull(index) != null -> moving = true
                     }
                     RemoteAction.Ok -> {
                         if (down && repeat == 0) okHeld = false
@@ -217,7 +220,7 @@ fun InfoRowsScreen(start: String, onClose: () -> Unit) {
                 Text(
                     if (onTabs) "◀ ▶ switch between live TV and films  ·  ▼ the rows  ·  Back: close"
                     else if (moving) "▲ ▼ move it  ·  OK: put it down"
-                    else "OK: on / off  ·  hold OK: move it  ·  ▲ at the top: switch player  ·  Back: close",
+                    else "OK: on / off  ·  ▶ or hold OK: move it  ·  ▲ at the top: switch player  ·  Back: close",
                     fontSize = 13.sp, color = AppColors.TextSecondary,
                 )
             }

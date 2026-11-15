@@ -35,7 +35,7 @@ Viewarr doesn't provide any content. It plays only what your own servers and acc
 - **An info bar you arrange yourself**, in **11 styles** from glass to a soft fade: show, hide and move its buttons, and add extras such as Favourite, Last channel, Audio sync, a Sleep timer and TV settings. Browse channels in it without changing until you press OK. Press Down for **rows you choose** under it: next episodes, Continue watching, favourite or recent channels, what's on now and more.
 - **Frame rate matching** for films and live TV (the TV switches to 50 Hz for UK channels), with frame-rate badges on the info bar.
 - **Every remote button your way**, with TiviMate and Viewarr presets.
-- **Profiles** for everyone in the house, sharing with friends in another house, and your setup saved on Dispatcharr.
+- **Your setup saved on Dispatcharr**, so a new TV picks it up. *(Profiles for everyone in the house, and sharing with friends in another house, are coming soon.)*
 - **Easy setup** from your phone with a QR code, and **Search settings** to find any option by name.
 
 ## The remote in a nutshell
@@ -84,7 +84,7 @@ The full walkthrough, with what each step needs and troubleshooting tips, is in 
 - **[Music](docs/MUSIC.md)**: sources, Now Playing, the queue, artist pages and music settings
 - **[Remote control](docs/REMOTE.md)**: what every button does, and changing them
 - **[Settings](docs/SETTINGS.md)**: every Settings page, briefly
-- **[Profiles and sharing](docs/PROFILES.md)**: profiles, PINs, friends in another house, setup saved on Dispatcharr
+- **[Profiles and sharing](docs/PROFILES.md)**: coming soon (switched off for now); setup saved on Dispatcharr
 - **[Troubleshooting](docs/TROUBLESHOOTING.md)**: channels, playback, a slow box, music
 - **[Privacy](docs/PRIVACY.md)**: what's stored and what's sent where
 - **[Controlling Viewarr from outside](docs/AUTOMATION.md)**: `viewarr://` links for ADB and home automation

@@ -18,7 +18,7 @@ object InfoRows {
 
     /** One kind of row: which players can have it, and whether it's there without being chosen. */
     enum class Kind(val id: String, val label: String, val about: String, val live: Boolean, val film: Boolean, val onLive: Boolean = false, val onFilm: Boolean = false) {
-        NEXT("next", "Next episodes", "The episodes after the one playing (episodes only).", live = false, film = true, onFilm = true),
+        NEXT("next", "Episodes", "The season playing, opening on the episode you're watching (episodes only).", live = false, film = true, onFilm = true),
         CONTINUE("continue", "Continue watching", "Everything you're part way through: your servers, Trakt and IPTV together.", live = true, film = true),
         CONTINUE_IPTV("continue_iptv", "Continue watching (IPTV)", "Films and episodes from IPTV, kept on this box.", live = true, film = true),
         CONTINUE_TRAKT("continue_trakt", "Continue watching (Trakt)", "Shows you've watched lately on Trakt (from any app), at the next episode.", live = true, film = true),
