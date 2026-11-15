@@ -53,11 +53,26 @@ object InfoRows {
         if (player == LIVE && kind == Kind.RECENT_CHANNELS && show) setOpt(UiOpts.INFOBAR_RECENT, 0)
     }
 
-    /** [player]'s rows in your order (every kind it can have, shown or not). */
+    /** [player]'s rows in your order (every kind it can have): the ones switched on first, then the rest. */
     fun ordered(player: String): List<Kind> {
         val saved = PendingOrder.get("rows_$player", AppColors.palette.barOrder["rows_$player"].orEmpty())
         val all = kinds(player)
-        return saved.mapNotNull { id -> all.firstOrNull { it.id == id } } + all.filter { it.id !in saved }
+        val base = saved.mapNotNull { id -> all.firstOrNull { it.id == id } } + all.filter { it.id !in saved }
+        return base.filter { shown(player, it) } + base.filterNot { shown(player, it) }
+    }
+
+    /**
+     * The order with [kind] switched [on]: on, it joins the end of the rows switched on (it jumps up the list, Peter);
+     * off, it goes to the top of the rest. Save it with saveBarOrder("rows_<player>"). Its new place is the number of
+     * other rows switched on.
+     */
+    fun toggledOrder(player: String, kind: Kind, on: Boolean): List<String> {
+        val all = ordered(player)
+        val picked = all.filter { it != kind && shown(player, it) }
+        val rest = all.filter { it != kind && !shown(player, it) }
+        val ids = (picked + kind + rest).map { it.id }
+        PendingOrder.set("rows_$player", ids)
+        return ids
     }
 
     /** The rows switched on, in order. */

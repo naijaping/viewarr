@@ -32,6 +32,8 @@ class MainActivity : ComponentActivity() {
         // page behind (still focused for a moment) as a plain OK, pressing Play on the episode, or Watch in the guide.
         if (event.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode == android.view.KeyEvent.KEYCODE_ENTER ||
             event.keyCode == android.view.KeyEvent.KEYCODE_NUMPAD_ENTER) {
+            // TEMP (hold-OK in the guide): what the remote sends.
+            android.util.Log.i("HoldDebug", "activity OK action=${event.action} repeat=${event.repeatCount} longPress=${event.isLongPress} okHeld=$okHeld")
             when {
                 event.action == android.view.KeyEvent.ACTION_DOWN && event.repeatCount == 0 -> okHeld = false
                 event.action == android.view.KeyEvent.ACTION_DOWN -> okHeld = true

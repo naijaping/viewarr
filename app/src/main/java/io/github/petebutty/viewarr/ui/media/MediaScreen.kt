@@ -1227,7 +1227,7 @@ private fun DetailScreen(
                 if (meta.isNotEmpty()) Text(meta, fontSize = 13.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 TitleBadges(item, d, ui.media)
                 RatingsLine(item.rating, d.voteCount, ui.ratings)
-                item.subtitle?.takeIf { parts.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.UP_NEXT) }?.let { Text("Up next: $it", fontSize = 13.sp, color = AppColors.Accent, maxLines = 1) }
+                (ui.upTo()?.let { "S${it.first} · E${it.second}" } ?: item.subtitle)?.takeIf { parts.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.UP_NEXT) }?.let { Text("Up next: $it", fontSize = 13.sp, color = AppColors.Accent, maxLines = 1) }
                 (if (hovered != null) hovered.second else item.overview)?.let { Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary, maxLines = if (show) 2 else 3, overflow = TextOverflow.Ellipsis) }
                 Text(
                     listOfNotNull(
@@ -1260,7 +1260,7 @@ private fun DetailScreen(
                         // Play / Resume: continue watching's episode, else where Plex / Jellyfin / Trakt say you're up to,
                         // else S1 E1; from the best source (as a film's Play). Episodes for picking one.
                         val canPlay = onPlex || onServer || onProvider || ui.hasAddons
-                        val next = item.nextSeason?.let { sn -> item.nextEpisode?.let { en -> Triple(sn, en, item.progress != null) } } ?: ui.nextUp
+                        val next = ui.upTo()
                         // The episode you're up to not out yet (a new season part-way through): the button says when it
                         // is, rather than trying to play it and failing. Its air date is in the season's episodes,
                         // which the page loads for that season.
@@ -1388,7 +1388,7 @@ private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel, onPlex: Boolean) {
         localEps[s to e]?.watched == true
     val episodeFocus = remember { FocusRequester() }
     val target = ui.episodes?.let { eps ->
-        val next = if (item.nextSeason == ui.season) eps.indexOfFirst { it.number == item.nextEpisode } else -1
+        val next = if (ui.upTo()?.first == ui.season) eps.indexOfFirst { it.number == ui.upTo()?.second } else -1
         if (next >= 0) next else eps.indexOfFirst { e -> !watched(e.season, e.number) }.coerceAtLeast(0)
     } ?: -1
     var highlighted by remember(ui.season) { mutableStateOf<io.github.petebutty.viewarr.data.media.EpisodeInfo?>(null) }
@@ -1634,7 +1634,7 @@ private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entr
         if (ui.seasons.isEmpty() || ui.season != null) return@LaunchedEffect
         // After the wait, the current state (not the one this started with): a season chosen meanwhile stays.
         if (!ui.nextUpChecked && item.nextSeason == null) { kotlinx.coroutines.delay(4_000); if (latest.season != null) return@LaunchedEffect }
-        val want = item.nextSeason ?: ui.nextUp?.first
+        val want = ui.upTo()?.first
         vm.selectSeason(want?.takeIf { n -> ui.seasons.any { it.number == n } } ?: ui.seasons.minOf { it.number })
     }
     val seasonFocus = remember { FocusRequester() }
@@ -1650,7 +1650,7 @@ private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entr
     var lastEpisodes by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.media.EpisodeInfo>?>(null) }
     LaunchedEffect(ui.episodes) { ui.episodes?.let { lastEpisodes = it } }
     val target = ui.episodes?.let { eps ->
-        val next = if (item.nextSeason == ui.season) eps.indexOfFirst { it.number == item.nextEpisode }
+        val next = if (ui.upTo()?.first == ui.season) eps.indexOfFirst { it.number == ui.upTo()?.second }
             else if (ui.nextUp?.first == ui.season) eps.indexOfFirst { it.number == ui.nextUp?.second } else -1
         if (next >= 0) next else eps.indexOfFirst { e -> !watched(e.season, e.number) }.coerceAtLeast(0)
     } ?: -1

@@ -635,7 +635,7 @@ class HomeState(
     }
 
 
-    fun openService(name: String, closeMenu: Boolean, rowId: String? = null) {
+    fun openService(name: String, closeMenu: Boolean, rowId: String? = null, keepLive: Boolean = false) {
         val key = "name:$name"
         val type = if (showMenuRows.rows.any { RowSets.matches(key, it) }) MediaType.Show else MediaType.Movie
         val mvm = if (type == MediaType.Show) showsVm else moviesVm
@@ -651,7 +651,7 @@ class HomeState(
         mvm.showRowSet(key, extra)
         // A row picked in the menu (Popular, New…): the page opens on it.
         rowId?.let { mvm.jumpWithin(it) }
-        hs.openPage(if (type == MediaType.Show) Page.Shows else Page.Movies, closeMenu = closeMenu)
+        hs.openPage(if (type == MediaType.Show) Page.Shows else Page.Movies, keepLive = keepLive, closeMenu = closeMenu)
     }
 
     /** OK on Live now: the TV guide, on the events group most of what's on now is in. */

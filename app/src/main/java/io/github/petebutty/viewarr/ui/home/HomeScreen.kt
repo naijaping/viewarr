@@ -1377,7 +1377,9 @@ private fun androidx.compose.foundation.layout.BoxScope.MenuLayer(
             // (Moving through the menu changes the page behind it, except over full-screen video. A film in the mini
             // player doesn't count: it keeps playing in the corner while the page changes, as when browsing.)
             onHoverPage = { p ->
-                if (!hs.fullscreen && !hs.liveBehind && !filmFullScreen()) {
+                // (Over full-screen live TV too, Peter: the channel moves to the top-left window and keeps playing while
+                // the page shows; it used to stay full screen with nothing changing behind the menu.)
+                if (!hs.liveBehind && !filmFullScreen()) {
                     hs.sportsOpen = false
                     // Back on Movies / Shows from a service: the page's own rows again, not the service's.
                     // (A library left open from My Library is closed by the menu's Movies / Shows entries instead:
@@ -1388,7 +1390,7 @@ private fun androidx.compose.foundation.layout.BoxScope.MenuLayer(
                     // the mini player) closes, so the page itself shows. (Already on one: its title page stays.)
                     if (p != hs.page && p == Page.Movies) moviesVm.closeTitlePages()
                     if (p != hs.page && p == Page.Shows) showsVm.closeTitlePages()
-                    if (p != hs.page) hs.openPage(p, closeMenu = false)
+                    if (p != hs.page) hs.openPage(p, keepLive = hs.fullscreen, closeMenu = false)
                 }
             },
             services = menuServices,
@@ -1401,7 +1403,7 @@ private fun androidx.compose.foundation.layout.BoxScope.MenuLayer(
             },
             onLiveEntry = { label, into -> if (into || (!hs.fullscreen && !hs.liveBehind && !filmFullScreen())) hs.openLiveEntry(label, closeMenu = into) },
             // Moving onto a service: its page behind (not over full-screen video); Right / OK: into it.
-            onService = { name, rowId, into -> if (into || (!hs.fullscreen && !hs.liveBehind && !filmFullScreen())) { hs.sportsOpen = false; hs.openService(name, closeMenu = into, rowId = rowId) } },
+            onService = { name, rowId, into -> if (into || (!hs.liveBehind && !filmFullScreen())) { hs.sportsOpen = false; hs.openService(name, closeMenu = into, rowId = rowId, keepLive = !into && hs.fullscreen) } },
         )
     }
 }
@@ -1556,6 +1558,7 @@ private fun androidx.compose.foundation.layout.BoxScope.PagesLayer(
             // Holding OK: the programme's options (record / remind, watch it from your library or addons), whether
             // it's on now, still to come or already aired.
             onLongSelect = { channel, program ->
+                android.util.Log.i("HoldDebug", "guide hold -> program=${program?.title} mapped=${ButtonMap.changed(remote, BtnScreen.Guide, BtnPress.OkHold)}")
                 ButtonMap.changed(remote, BtnScreen.Guide, BtnPress.OkHold)?.let { hs.doButton(BtnScreen.Guide, it); return@GuideScreen }
                 if (program != null) hs.recordTarget = channel to program
                 // No programme listed (nothing to record): hold OK just adds / removes the favourite.

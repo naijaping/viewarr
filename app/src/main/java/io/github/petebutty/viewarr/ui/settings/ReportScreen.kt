@@ -2,6 +2,10 @@ package io.github.petebutty.viewarr.ui.settings
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,6 +46,8 @@ internal data class ReportLabel(override val label: String) : io.github.petebutt
 /** Settings → Troubleshooting → Send a report (shown over everything by the app's root; see [ReportUi]). */
 object ReportUi {
     var open by mutableStateOf(false)
+    /** Send a note: just a message (and the box and version), no log. */
+    var noteMode by mutableStateOf(false)
 }
 
 /**
@@ -61,16 +67,20 @@ fun ReportScreen(onClose: () -> Unit) {
     var sending by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
+    // What the tester writes: the whole of a note, or an optional line with a report.
+    var note by remember { mutableStateOf("") }
+    val noteMode = ReportUi.noteMode
     val scope = rememberCoroutineScope()
     val first = remember { FocusRequester() }
+    val noteField = remember { FocusRequester() }
     BackHandler(onBack = onClose)
     LaunchedEffect(Unit) { report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ReportSender.build(context, kinds, null, names) } }
-    LaunchedEffect(report != null, code) { kotlinx.coroutines.android.awaitFrame(); runCatching { first.requestFocus() } }
+    LaunchedEffect(report != null, code) { kotlinx.coroutines.android.awaitFrame(); runCatching { if (noteMode && code == null) noteField.requestFocus() else first.requestFocus() } }
     // Its own window, so the Settings page behind (which pulls the highlight back to itself) lets go while it's up.
     androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
     Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
         Column(Modifier.width(820.dp).background(AppColors.MenuPanel, RoundedCornerShape(16.dp)).padding(28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Send a report", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+            Text(if (noteMode) "Send a note" else "Send a report", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
             val c = code
             if (c != null) {
                 // (VR- codes are on the 3-day host; VC- is the backup host, which keeps files: still locked, only the developer can open it.)
@@ -80,11 +90,31 @@ fun ReportScreen(onClose: () -> Unit) {
                 MenuItem(text = "Done", selected = false, onClick = onClose, modifier = Modifier.focusRequester(first))
                 return@Column
             }
-            Text("What this box and Viewarr were doing: the box's model and memory, which kinds of sources you use, and the last part of Viewarr's log. " +
+            Text(if (noteMode) "Found a bug, or have an idea? Write it here and it goes to the developer, with just this box's model and the Viewarr version (no log). It's locked so only the developer can read it."
+                else "What this box and Viewarr were doing: the box's model and memory, which kinds of sources you use, and the last part of Viewarr's log. " +
                 "Passwords, keys, server addresses, IPs, emails and usernames are taken out, and it's locked so only the developer can read it.",
                 fontSize = 14.sp, color = AppColors.TextSecondary)
-            // A look at what will be sent (the first lines; it's all cleaned the same way).
-            Box(Modifier.fillMaxWidth().height(260.dp).background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp)).padding(12.dp)) {
+            // The note: OK opens the keyboard; Down goes to Send.
+            Box(
+                Modifier.fillMaxWidth().height(if (noteMode) 150.dp else 56.dp)
+                    .background(AppColors.Panel, RoundedCornerShape(10.dp))
+                    .border(1.dp, AppColors.Accent.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+            ) {
+                if (note.isEmpty()) Text(if (noteMode) "What happened, or what would you like? (OK to type)" else "Add a note: what went wrong? (optional, OK to type)", fontSize = 15.sp, color = AppColors.TextSecondary)
+                androidx.compose.foundation.text.BasicTextField(
+                    value = note,
+                    onValueChange = { note = it.take(2_000) },
+                    maxLines = if (noteMode) 6 else 2,
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(AppColors.Accent),
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 15.sp, color = AppColors.TextPrimary),
+                    modifier = Modifier.fillMaxWidth().focusRequester(noteField).onPreviewKeyEvent { e ->
+                        if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && e.key == androidx.compose.ui.input.key.Key.DirectionDown) { runCatching { first.requestFocus() }; true } else false
+                    },
+                )
+            }
+            // A look at what will be sent (the first lines; it's all cleaned the same way). Not for a note.
+            if (!noteMode) Box(Modifier.fillMaxWidth().height(220.dp).background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.35f), RoundedCornerShape(8.dp)).padding(12.dp)) {
                 Text(report?.lines()?.take(40)?.joinToString("\n") ?: "Getting it ready…", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = AppColors.TextSecondary,
                     modifier = Modifier.verticalScroll(rememberScrollState()))
             }
@@ -92,10 +122,13 @@ fun ReportScreen(onClose: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.width(240.dp)) {
                     MenuItem(text = if (sending) "Sending…" else "Send", selected = false, modifier = Modifier.focusRequester(first), onClick = {
-                        val r = report ?: return@MenuItem
                         if (sending) return@MenuItem
+                        if (noteMode && note.isBlank()) { error = "Write your note first (OK on the box above to type)."; return@MenuItem }
+                        if (!noteMode && report == null) return@MenuItem
                         sending = true; error = null
                         scope.launch {
+                            // Built again now with the note in it (a note: no log at all).
+                            val r = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ReportSender.build(context, kinds, note.ifBlank { null }, names, withLog = !noteMode) }
                             ReportSender.send(r).onSuccess { code = it }.onFailure { error = it.message ?: "Couldn't send it" }
                             sending = false
                         }

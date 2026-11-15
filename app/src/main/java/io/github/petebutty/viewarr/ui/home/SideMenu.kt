@@ -516,7 +516,7 @@ internal fun MenuOverlay(
             // Edit mode: every list in the menu can be changed (the main list here; a service's rows, Movies' and
             // Shows' lists beside it). Off: what's switched off is hidden and the editing panels go.
             Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                // Settings straight from the top (it's otherwise last in the list), left of Edit menus,
+                // Settings: only here, at the top (it used to be last in the list too), left of Edit menus,
                 // which takes the rest of the row.
                 if (!editingMain) Box(Modifier.width(48.dp)) {
                     MenuItem(
@@ -525,7 +525,8 @@ internal fun MenuOverlay(
                             section = Section.Settings; serviceOn = null; settingsFromGear = true
                             menuScope.launch { awaitFrame(); awaitFrame(); runCatching { settingsFirst.requestFocus() } }
                         },
-                        modifier = Modifier.focusRequester(gearFocus).onPreviewKeyEvent { e -> e.key == Key.DirectionUp },
+                        // (Also Settings' own place in the menu: everything returning to "Settings" lands here.)
+                        modifier = Modifier.focusRequester(gearFocus).focusRequester(navFocus.getValue(Section.Settings)).onPreviewKeyEvent { e -> e.key == Key.DirectionUp },
                     )
                 }
                 MenuItem(
@@ -623,7 +624,7 @@ internal fun MenuOverlay(
                     }
                 }
             }
-            sectionItem(Section.Settings)
+            // (No Settings entry at the bottom: the ⚙ at the top opens it, Peter.)
             if (editingMain) MenuItem(text = "✓  Done", selected = false, onClick = { endEditMain() }, modifier = Modifier.padding(top = 8.dp))
                     }
         } 

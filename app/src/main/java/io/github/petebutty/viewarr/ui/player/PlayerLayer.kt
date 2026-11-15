@@ -92,6 +92,7 @@ fun PlayerLayer(
     var liveFps by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Float?>(null) }
     val streamPlaying = state is PlaybackState.Playing
     val streamPlayingNow = androidx.compose.runtime.rememberUpdatedState(streamPlaying)
+    KnownFps.init(androidx.compose.ui.platform.LocalContext.current)
     androidx.compose.runtime.LaunchedEffect(playerVersion, channel?.id, catchup) {
         // A channel seen before: its rate straight away (it doesn't change between tunes).
         val key = channel?.uuid?.let { if (catchup == null) it else "$it:cu" }
@@ -102,14 +103,15 @@ fun PlayerLayer(
         var tick = 0; var nextAsk = 1
         while (tick < 60) {
             kotlinx.coroutines.delay(500); tick++
-            if (!streamPlayingNow.value) { counter.reset(); continue }
-            val p = vm.player ?: continue
-            p.videoFormat?.frameRate?.takeIf { it > 0 }?.let { liveFps = it; KnownFps.put(key, it); return@LaunchedEffect }
-            // Dispatcharr's probe (admins): asked every couple of seconds for the first ten, as it probes on starting.
+            // Dispatcharr's probe (admins): asked straight away, before the picture starts (it probes as the stream
+            // opens), then every couple of seconds for the first ten.
             if (catchup == null && tick >= nextAsk && tick <= 20) {
                 nextAsk = tick + 4
                 runCatching { vm.sourceFps() }.getOrNull()?.let { liveFps = it; KnownFps.put(key, it); return@LaunchedEffect }
             }
+            if (!streamPlayingNow.value) { counter.reset(); continue }
+            val p = vm.player ?: continue
+            p.videoFormat?.frameRate?.takeIf { it > 0 }?.let { liveFps = it; KnownFps.put(key, it); return@LaunchedEffect }
             val frames = FpsCounter.frames(p) ?: continue
             counter.feed(frames, android.os.SystemClock.elapsedRealtime())?.let { liveFps = it; KnownFps.put(key, it); return@LaunchedEffect }
         }
@@ -205,10 +207,21 @@ fun PlayerLayer(
 }
 
 /** Channels' frame rates once known (by uuid), so a channel tuned again has its rate at once. */
+/**
+ * Each channel's frame rate once measured, kept on the TV (a channel's rate doesn't change): after the first time, frame
+ * rate matching switches the moment it starts, even after Viewarr restarts (it used to measure again every time).
+ */
 private object KnownFps {
     private val map = java.util.concurrent.ConcurrentHashMap<String, Float>()
+    private var prefs: android.content.SharedPreferences? = null
+    fun init(context: android.content.Context) {
+        if (prefs != null) return
+        prefs = context.getSharedPreferences("known_fps", android.content.Context.MODE_PRIVATE).also { p ->
+            p.all.forEach { (k, v) -> (v as? Float)?.let { map[k] = it } }
+        }
+    }
     fun get(k: String) = map[k]
-    fun put(k: String, v: Float) { map[k] = v }
+    fun put(k: String, v: Float) { map[k] = v; prefs?.edit()?.putFloat(k, v)?.apply() }
 }
 
 /** What the live stream is: picture height, frames per second, sound channels (the info bar's badges). */

@@ -142,7 +142,10 @@ fun playbackCategories(vm: PlaybackSettingsViewModel = hiltViewModel(), opts: Ui
             listOf(
                 // Locked and uploaded only on Send; the code it gives is what to share in Discord.
                 SettingItem("Send a report", "Something not working? This sends what Viewarr was doing to the developer, with passwords, keys, addresses and names taken out, and gives you a short code to share in Discord.",
-                    listOf(ReportLabel("")), ReportLabel(""), action = { ReportUi.open = true }, onSelect = {}),
+                    listOf(ReportLabel("")), ReportLabel(""), action = { ReportUi.noteMode = false; ReportUi.open = true }, onSelect = {}),
+                // Just a message (no log): a bug that doesn't need one, or an idea.
+                SettingItem("Send a note", "Found a bug that doesn't need a log, or have an idea? Write a message to the developer and get a short code to share in Discord.",
+                    listOf(ReportLabel("")), ReportLabel(""), action = { ReportUi.noteMode = true; ReportUi.open = true }, onSelect = {}),
                 item("Show playback info", "Shows the video and audio format, decoder and dropped frames while playing.", k.STATS, choices<io.github.petebutty.viewarr.data.settings.StatsOverlay>(), s.stats),
                 optItem(opts, "Low-memory mode", "For boxes with 1–2 GB. Turns off the heavy extras across the app (box-made seek previews, guide pictures, logos, wallpaper, artwork, trailers, multi-view, extra ratings); their settings show as locked until it's off. Try it if Viewarr is slow or closes.", io.github.petebutty.viewarr.ui.theme.UiOpts.LOW_MEMORY),
             ),

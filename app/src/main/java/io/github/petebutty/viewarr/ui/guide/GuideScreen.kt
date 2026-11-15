@@ -215,6 +215,8 @@ fun GuideScreen(
                 }
                 // OK: a tap selects (play / info); holding it opens the record options.
                 if (e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter) {
+                    // TEMP (hold-OK): what the guide sees.
+                    android.util.Log.i("HoldDebug", "guide OK type=${e.type} repeat=${e.nativeKeyEvent.repeatCount} pending=${okPending.value}")
                     when {
                         e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 -> okPending.value = true
                         e.type == KeyEventType.KeyDown && okPending.value -> {

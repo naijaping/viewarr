@@ -36,7 +36,7 @@ You can change all of these in **Settings → Appearance → Menu** (see below).
 
 ### Edit menus
 
-**Edit menus** sits at the top of the menu, with a **⚙** beside it that opens Settings without going to the bottom of the list. **Up** from Live TV lands on the ⚙; Right from there reaches Edit menus. Use Edit menus to tidy things up right there, with the page changing as you go:
+**Edit menus** sits at the top of the menu, with a **⚙** beside it: that's where **Settings** lives (it isn't in the list itself). **Up** from Live TV lands on the ⚙; Right from there reaches Edit menus. Use Edit menus to tidy things up right there, with the page changing as you go:
 
 - Show, hide and reorder the menu's entries and streaming services.
 - Show or hide a service's rows.

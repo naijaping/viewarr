@@ -25,6 +25,16 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+/**
+ * Where you're up to on a show (season, episode, part-watched): the furthest of the card it was opened from and what
+ * all your history says ([DetailUi.nextUp]), so neither a stale card nor one stray play of an earlier episode wins.
+ */
+fun DetailUi.upTo(): Triple<Int, Int, Boolean>? {
+    val item = detail.item
+    val card = item.nextSeason?.let { s -> item.nextEpisode?.let { e -> Triple(s, e, item.progress != null) } }
+    return listOfNotNull(card, nextUp).maxWithOrNull(compareBy({ it.first }, { it.second }))
+}
+
 data class DetailUi(
     val detail: MediaDetail,
     val loading: Boolean = true,
@@ -1088,18 +1098,27 @@ class MediaViewModel @Inject constructor(
                 // Where you're up to: what Plex / Jellyfin / Trakt say, else worked out from the ticks (Plex can mark an
                 // episode watched yet name nothing "on deck", and Trakt may not know: the next was S1 E1 after E1).
                 launch {
+                    // From ALL your history (Peter): every server, Trakt and this box's IPTV record, taking the furthest
+                    // point reached. What a server calls "on deck" (or this box's last play) only wins when it's further:
+                    // one stray play of an earlier episode (S3 E3 after E5) used to drag Up next back to it.
                     val said = runCatching { repo.nextEpisodeFor(full.item, copies) }.getOrNull()
-                    // Watched from IPTV on this box: carry on from the last episode played here.
                     val local = localWatch.nextUp(full.item)
-                    val next = said ?: local ?: run {
+                    val worked = run {
                         val plex = plexEps.await(); val server = serverEps.await()
                         val trakt = runCatching { repo.traktWatched(); repo.traktEpisodesOf(full.item) }.getOrDefault(emptySet())
-                        val all = (plex.keys + server.keys).filter { it.first > 0 }.sortedWith(compareBy({ it.first }, { it.second }))
+                        val all = (plex.keys + server.keys + trakt).filter { it.first > 0 }.distinct().sortedWith(compareBy({ it.first }, { it.second }))
                         fun watched(k: Pair<Int, Int>) = plex[k]?.watched == true || server[k]?.watched == true || k in trakt
-                        val last = all.lastOrNull(::watched) ?: return@run null
+                        fun offset(k: Pair<Int, Int>) = (plex[k]?.viewOffsetMs ?: 0).coerceAtLeast(server[k]?.viewOffsetMs ?: 0)
+                        val last = all.lastOrNull(::watched)
+                        // The furthest episode started but not finished, past the last one finished: carry on with it.
+                        val started = all.lastOrNull { !watched(it) && offset(it) > 0 }
+                            ?.takeIf { s -> last == null || compareValuesBy(s, last, { p -> p.first }, { p -> p.second }) > 0 }
+                        if (started != null) return@run Triple(started.first, started.second, true)
+                        last ?: return@run null
                         val after = all.firstOrNull { compareValuesBy(it, last, { p -> p.first }, { p -> p.second }) > 0 && !watched(it) } ?: return@run null
-                        Triple(after.first, after.second, ((plex[after] ?: server[after])?.viewOffsetMs ?: 0) > 0)
+                        Triple(after.first, after.second, offset(after) > 0)
                     }
+                    val next = listOfNotNull(said, local, worked).maxWithOrNull(compareBy({ it.first }, { it.second }))
                     took("up to")
                     _detail.update { if (same(it)) it!!.copy(nextUp = next, nextUpChecked = true) else it }
                 }
@@ -1149,7 +1168,7 @@ class MediaViewModel @Inject constructor(
 
     fun openEpisodes() {
         val d = _detail.value ?: return
-        val start = d.detail.item.nextSeason?.takeIf { n -> d.seasons.any { it.number == n } } ?: d.seasons.minOfOrNull { it.number }
+        val start = d.upTo()?.first?.takeIf { n -> d.seasons.any { it.number == n } } ?: d.seasons.minOfOrNull { it.number }
         if (start == null) {
             _detail.update { it?.copy(message = if (d.loading || d.copies == null) "Still loading. Try again in a moment." else "No episode list was found for this show.") }
             return
@@ -1275,8 +1294,8 @@ class MediaViewModel @Inject constructor(
     fun pickNextUp() {
         val d = _detail.value ?: return
         val item = d.detail.item
-        val s = item.nextSeason ?: d.nextUp?.first ?: d.seasons.map { it.number }.filter { it > 0 }.minOrNull() ?: 1
-        val e = (if (item.nextSeason != null) item.nextEpisode else d.nextUp?.second) ?: 1
+        val s = d.upTo()?.first ?: d.seasons.map { it.number }.filter { it > 0 }.minOrNull() ?: 1
+        val e = d.upTo()?.second ?: 1
         viewModelScope.launch {
             if (d.season != s || d.episodes == null) selectSeason(s)
             val eps = kotlinx.coroutines.withTimeoutOrNull(10_000) { _detail.first { it == null || (it.season == s && it.episodes != null) }?.episodes }
@@ -1288,8 +1307,8 @@ class MediaViewModel @Inject constructor(
         val d = _detail.value ?: return
         val item = d.detail.item
         // Continue watching's episode, else where your servers / Trakt say you're up to, else the first episode.
-        val s = item.nextSeason ?: d.nextUp?.first ?: d.seasons.map { it.number }.filter { it > 0 }.minOrNull() ?: 1
-        val e = (if (item.nextSeason != null) item.nextEpisode else d.nextUp?.second) ?: 1
+        val s = d.upTo()?.first ?: d.seasons.map { it.number }.filter { it > 0 }.minOrNull() ?: 1
+        val e = d.upTo()?.second ?: 1
         playBestEpisode(s, e)
     }
 

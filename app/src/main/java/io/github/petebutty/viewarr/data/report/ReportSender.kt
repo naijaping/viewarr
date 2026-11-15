@@ -35,7 +35,7 @@ object ReportSender {
     private const val PUBLIC_KEY = "MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA0yjalM9OUZ5KlrIICKKncgq7GlTYdOKcxyWPiAhhQzmjssF0dPqhxt5fyqmnTTPeRd96JIdRb4+H+4R6nqzEWeXYIk0oFB5VZ3KDUiLMIqjgzPhnFNZj2MiwplluA8cmNisNTgju2hW32NjhJvtNb8Z6vtQ1mUqHsqrmmhtc63iY58e++8AixNd0nd5i5KlI0GNlQ7yNYDW2kYRL0gNU0DoEiRcb7S5ANSujYXQGHVOgsKvgpR8J2DoN/36jlNULMXotx228sR8Zpbq9PPjirpYGVVPlaKBU4Ju0aGicrWrtvttMxeWfWC8nEttK0Wln21X67LmD2JTBn88rrDpJywSrDPVm+WXm23u1hmesUJCoXwtsjI/SMXpoubb3SR7XFphHb9LEb/LRXgBPTrHTOplRpQDoXZeQkrW1CA3sUrAQqAGTtAi1JXMWbt6xlfyZpw4JLubUn0r3b/IKGr7EmB3m1SzrNZmSq8O23Eu4uwYQNXLA0yognXGw4RutD5SJAgMBAAE="
 
     /** What the tester sees before sending: the report as it will be sent (already cleaned). */
-    fun build(context: Context, sources: List<String>, note: String?, names: List<String> = emptyList()): String {
+    fun build(context: Context, sources: List<String>, note: String?, names: List<String> = emptyList(), withLog: Boolean = true): String {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
         val mem = ActivityManager.MemoryInfo().also { am?.getMemoryInfo(it) }
         val dm = context.resources.displayMetrics
@@ -46,9 +46,9 @@ object ReportSender {
             appendLine("Screen: ${dm.widthPixels}x${dm.heightPixels} at ${dm.densityDpi} dpi")
             appendLine("Sources: ${sources.ifEmpty { listOf("none") }.joinToString(", ")}")
             note?.takeIf { it.isNotBlank() }?.let { appendLine("Tester's note: $it") }
-            appendLine("----- log -----")
+            appendLine(if (withLog) "----- log -----" else "----- a note: no log -----")
         }
-        var text = clean(head + recentLog())
+        var text = clean(head + if (withLog) recentLog() else "")
         // Usernames (yours, your profiles') out too.
         names.filter { it.length >= 3 }.distinct().forEach { n -> text = text.replace(n, "[user]", ignoreCase = true) }
         return text

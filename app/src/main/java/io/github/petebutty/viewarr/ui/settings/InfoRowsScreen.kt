@@ -121,7 +121,13 @@ fun InfoRowsScreen(start: String, onClose: () -> Unit) {
                             if (onTabs) { player = if (player == InfoRows.LIVE) InfoRows.FILM else InfoRows.LIVE; index = 0 }
                             else if (moving) moving = false
                             else kinds.getOrNull(index)?.let { k ->
-                                InfoRows.setShown(player, k, !InfoRows.shown(player, k), appearance::setTitlePart, opts::set)
+                                val on = !InfoRows.shown(player, k)
+                                // Switched on: up to the end of the rows that are on; off: the top of the rest. The
+                                // highlight follows it there.
+                                val ids = InfoRows.toggledOrder(player, k, on)
+                                appearance.setBarOrder("rows_$player", ids)
+                                index = kinds.count { it != k && InfoRows.shown(player, it) }
+                                InfoRows.setShown(player, k, on, appearance::setTitlePart, opts::set)
                             }
                         }
                     }

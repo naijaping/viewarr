@@ -626,8 +626,21 @@ private fun ConfirmDialog(title: String, body: String, action: String, onCancel:
 /** On top of Home: "Who's watching?" on start (when there's more than one person) and from Settings, and the admin page. */
 @Composable
 fun ProfileHost(vm: ProfilesViewModel = hiltViewModel()) {
-    // Profiles off for now (ProfileUi.ENABLED): no picker on start, no Users page, no PIN.
-    if (!ProfileUi.ENABLED) return
+    // Profiles off for now (ProfileUi.ENABLED): no picker on start, no Users page, no PIN, and the TV back on its main
+    // sign-in (the first profile: whoever set it up). A TV left on someone else's profile kept their limits with no
+    // way to switch back: on Anne's, recording was hidden, so holding OK in the guide just tuned the channel.
+    if (!ProfileUi.ENABLED) {
+        val profiles by vm.profiles.collectAsStateWithLifecycle()
+        val active by vm.activeId.collectAsStateWithLifecycle()
+        LaunchedEffect(profiles.firstOrNull()?.id, active) {
+            val main = profiles.firstOrNull() ?: return@LaunchedEffect
+            if (active != null && active != main.id) {
+                android.util.Log.i("Profiles", "profiles off: back to the main sign-in")
+                vm.switchTo(main) {}
+            }
+        }
+        return
+    }
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val ask by vm.askOnStart.collectAsStateWithLifecycle()
     val has by vm.hasProfiles.collectAsStateWithLifecycle()
