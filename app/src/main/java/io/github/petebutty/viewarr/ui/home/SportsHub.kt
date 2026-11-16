@@ -1,6 +1,8 @@
 package io.github.petebutty.viewarr.ui.home
 
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.setValue
 import io.github.petebutty.viewarr.data.local.ChannelListItem
 import io.github.petebutty.viewarr.data.local.GuideProgram
 import io.github.petebutty.viewarr.data.media.ServiceLogo
@@ -27,14 +29,34 @@ import kotlinx.coroutines.async
  * [watch]: play a channel full screen; [toast]: a short message.
  */
 internal class SportsHub(
-    private val sportsVm: SportsViewModel,
+    internal val sportsVm: SportsViewModel,
     private val guide: GuideViewModel,
-    private val dvr: DvrViewModel,
-    private val watch: (ChannelListItem) -> Unit,
-    private val toast: (String) -> Unit,
+    internal val dvr: DvrViewModel,
+    internal val watch: (ChannelListItem) -> Unit,
+    internal val toast: (String) -> Unit,
 ) {
     /** Each followed team's / league's games, with the channel showing it (from the guide) where one's found. */
     val games = mutableStateMapOf<String, List<Pair<SportGame, Pair<ChannelListItem, GuideProgram>?>>>()
+    /** The game whose page is open (OK on a game), with its channel if found; null: none. */
+    var openGame by androidx.compose.runtime.mutableStateOf<Pair<SportGame, Pair<ChannelListItem, GuideProgram>?>?>(null)
+
+    /**
+     * Reminders / recordings asked for before [g] was in the guide, and "record all of a team's games": done now that
+     * its channel is known (each once).
+     */
+    fun resolvePending(g: SportGame, ch: Pair<ChannelListItem, GuideProgram>) {
+        val gw = sportsVm.gameWatch
+        if (g.state != "pre" || ch.second.startTime < System.currentTimeMillis()) return
+        val remind = gw.wantsReminder(g.id)
+        val team = gw.recordsTeam(g.home) || gw.recordsTeam(g.away)
+        // Already recording in Dispatcharr (by hand, a series rule, or before): never a second recording.
+        val record = (gw.wantsRecording(g.id) || (team && !gw.done(g.id))) && dvr.recordingFor(ch.first.id, ch.second) == null
+        if (!remind && !record) { if (gw.wantsRecording(g.id)) gw.resolved(g.id); return }
+        if (remind && dvr.reminderFor(ch.first.id, ch.second) == null) { dvr.remind(ch.first, ch.second); toast("Reminder set: ${g.title} on ${ch.first.name}") }
+        if (record) { dvr.record(ch.first, ch.second); toast("Recording ${g.title} on ${ch.first.name}") }
+        gw.resolved(g.id)
+    }
+
     /** Games your guide doesn't reach yet: the channels showing them (the UK Sport on TV plugin, else TheSportsDB). */
     val tv = mutableStateMapOf<String, List<String>>()
 
@@ -83,6 +105,8 @@ internal class SportsHub(
                 guide.syncIfOlderThan(30 * 60_000L)
                 lookedUp.removeAll(missing)
             }
+            // Games already matched to a channel: any reminder / recording waiting for them.
+            follows.flatMap { games[it.shortcutId].orEmpty() }.forEach { (g, ch) -> if (ch != null) resolvePending(g, ch) }
             // 2: where each is on, one game at a time with a pause between (a guide search each, and the UK listings, all
             // at once made a small box stop responding). Soonest first; games already looked for skipped.
             val todo = follows.flatMap { games[it.shortcutId].orEmpty() }
@@ -93,6 +117,7 @@ internal class SportsHub(
                 if (g.start < t0 + 7 * DAY) {
                     val ch = runCatching { guide.channelForGame(g) }.getOrNull()
                     if (ch != null) {
+                        resolvePending(g, ch)
                         games.keys.toList().forEach { k ->
                             if (games[k].orEmpty().any { it.first.id == g.id }) games[k] = games[k].orEmpty().map { if (it.first.id == g.id) g to ch else it }
                         }
@@ -120,12 +145,24 @@ internal class SportsHub(
         val on = if (notOnTv) emptyList() else tvRaw
         val started = ch != null && (g.state == "in" || ch.second.startTime <= System.currentTimeMillis())
         // Hold OK: a reminder or a recording (once it's in your guide), and pin / unpin the team or league.
+        val gw = sportsVm.gameWatch
+        val pagesOn = io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.SPORTS_GAME_PAGE) == 0
         val options = listOfNotNull(
+            if (pagesOn) CardOption("Game info") { openGame = g to ch } else null,
+            // Not in the guide yet: kept, and done once the guide lists it.
+            if (ch == null && g.state == "pre") CardOption(if (gw.wantsReminder(g.id)) "Cancel reminder" else "Remind me when it's on") {
+                val on = !gw.wantsReminder(g.id); gw.setReminder(g.id, on)
+                toast(if (on) "We'll remind you of ${g.title} once it's in your TV guide" else "Reminder cancelled")
+            } else null,
+            if (ch == null && g.state == "pre") CardOption(if (gw.wantsRecording(g.id)) "Don't record" else "Record when it's in the guide") {
+                val on = !gw.wantsRecording(g.id); gw.setRecording(g.id, on)
+                toast(if (on) "${g.title} will be recorded once it's in your TV guide" else "Won't record ${g.title}")
+            } else null,
             if (ch != null && !started) CardOption("Remind me") {
                 dvr.remind(ch.first, ch.second); toast("We'll remind you: ${g.title} on ${ch.first.name}")
             } else null,
             if (ch != null && !started) CardOption("Record") {
-                dvr.record(ch.first, ch.second); toast("Recording ${g.title} on ${ch.first.name}")
+                dvr.record(ch.first, ch.second); gw.markDone(g.id); toast("Recording ${g.title} on ${ch.first.name}")
             } else null,
             f?.let { fl ->
                 CardOption(if (fl.pinned) "Unpin ${fl.name}" else "Pin ${fl.name}: its own shortcut") {
@@ -148,6 +185,8 @@ internal class SportsHub(
             when {
                 // On now (or its programme has started): watch it.
                 started && ch != null -> watch(ch.first)
+                // Settings → Sports → Game page: the game's page (line-ups, form, remind / record).
+                pagesOn -> openGame = g to ch
                 ch != null -> toast("${g.title}: ${Dates.dayTime(g.start)} on ${ch.first.name}  ·  hold OK to be reminded or record it")
                 g.state == "post" -> toast("${g.home} ${g.score ?: ""} ${g.away}")
                 on.isNotEmpty() -> toast("${g.title}: on ${on.joinToString(", ")}, not in your TV guide yet (it lists a few days ahead)")

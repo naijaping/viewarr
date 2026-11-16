@@ -5,6 +5,7 @@ package io.github.petebutty.viewarr.ui.home
 import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -58,6 +59,7 @@ import io.github.petebutty.viewarr.data.local.GroupWithCount
 import io.github.petebutty.viewarr.data.repository.SyncState
 import io.github.petebutty.viewarr.data.session.Session
 import io.github.petebutty.viewarr.ui.common.MenuItem
+import io.github.petebutty.viewarr.ui.common.instantFocusScale
 import io.github.petebutty.viewarr.ui.guide.GuideViewModel
 import io.github.petebutty.viewarr.data.media.MediaType
 import io.github.petebutty.viewarr.data.media.VodStream
@@ -184,11 +186,21 @@ internal fun MenuOverlay(
     val musicMenuOn by hiltViewModel<io.github.petebutty.viewarr.ui.music.MusicViewModel>().enabled.collectAsStateWithLifecycle()
     val remote = LocalRemote.current
     val navFocus = remember { Section.entries.associateWith { FocusRequester() } }
+    // Someone without Live TV (Profiles → What they can do): no Live TV entry; Movies is the menu's home instead.
+    val liveOn = io.github.petebutty.viewarr.data.profiles.Access.liveTv
+    val homeSection = if (liveOn) Section.Tv else Section.Movies
     val editMenusFocus = remember { FocusRequester() }
     // Live TV (the top of the main list) highlighted: Back from anywhere else in the list goes there first.
     var liveTvFocused by remember { mutableStateOf(false) }
     // The ⚙ beside Edit menus (Settings without going to the bottom of the list); Back from Settings returns to it.
     val gearFocus = remember { FocusRequester() }
+    // Where focus goes when the entry it wanted isn't there: Live TV, else Movies, else the ⚙ (or Done editing),
+    // so the menu is never left with nothing highlighted (Movies can be switched off).
+    fun focusHome() {
+        if (runCatching { navFocus.getValue(homeSection).requestFocus() }.isSuccess) return
+        if (runCatching { gearFocus.requestFocus() }.isSuccess) return
+        runCatching { editMenusFocus.requestFocus() }
+    }
     var settingsFromGear by remember { mutableStateOf(false) }
     val settingsFirst = remember { FocusRequester() }
     val groupsFocus = remember { FocusRequester() }
@@ -261,12 +273,12 @@ internal fun MenuOverlay(
                     if (runCatching { recentFocus.requestFocus() }.isFailure) { showMain = true; awaitFrame(); navFocus.getValue(Section.Library).requestFocus() }
                 }
                 // (The page's own entry switched off in the menu: Live TV, never nothing highlighted.)
-                onMain -> if (runCatching { navFocus.getValue(section).requestFocus() }.isFailure) navFocus.getValue(Section.Tv).requestFocus()
+                onMain -> if (runCatching { navFocus.getValue(section).requestFocus() }.isFailure) focusHome()
                 channelsPanel != null -> groupsFocus.requestFocus()
                 // The guide (and the remote's "Channel groups menu"): the channel groups; Left again, the main list.
-                (onGroups || page == Page.Tv) && session != null -> if (runCatching { groupsFocus.requestFocus() }.isFailure) revealMain()
+                liveOn && (onGroups || page == Page.Tv) && session != null -> if (runCatching { groupsFocus.requestFocus() }.isFailure) revealMain()
                 // Every other page: the main list, on its entry (Left there opens that entry's own list).
-                else -> if (runCatching { navFocus.getValue(section).requestFocus() }.isFailure) navFocus.getValue(Section.Tv).requestFocus()
+                else -> if (runCatching { navFocus.getValue(section).requestFocus() }.isFailure) focusHome()
             }
         }
     }
@@ -334,7 +346,7 @@ internal fun MenuOverlay(
     var carryingRow by remember { mutableStateOf<String?>(null) }
     fun endEditMain() {
         editingMain = false; carryingMain = null; mainFollow = null; menuEditing = false; carryingRow = null
-        menuScope.launch { awaitFrame(); awaitFrame(); runCatching { navFocus.getValue(Section.Tv).requestFocus() } }
+        menuScope.launch { awaitFrame(); awaitFrame(); runCatching { focusHome() } }
     }
     BackHandler {
         // (A page switch still waiting from the highlight resting on an entry mustn't land after Back.)
@@ -451,15 +463,19 @@ internal fun MenuOverlay(
 
             // Hints sit at the top of each panel, under the logo here (fixed: the list scrolls under it, not the hint).
             if (!editingMain && AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MENU_HINTS) == 0)
-                Text(rightHint, fontSize = 12.sp, color = AppColors.TextSecondary, maxLines = 1, modifier = Modifier.padding(start = 12.dp, bottom = 10.dp).offset(y = (-10).dp))
+                Column(Modifier.padding(start = 12.dp, bottom = 10.dp).offset(y = (-10).dp)) {
+                    Text(rightHint, fontSize = 12.sp, color = AppColors.TextSecondary, maxLines = 1)
+                    // (The ✎ Edit menus button went: hold OK on an entry edits the menu.)
+                    Text("Hold OK on an entry to edit the menu", fontSize = 12.sp, color = AppColors.TextSecondary, maxLines = 1)
+                }
             Column(Modifier.weight(1f).verticalScroll(MenuScrolls.main), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             // Settings → Appearance → Movies & Shows off: a live-TV-only menu.
             // The main list: Live TV, then the rest in your order (hold OK on one to edit the menu here), then Settings.
             // (Settings → Appearance → Main menu switches entries on and off too.)
             val appearanceVm: io.github.petebutty.viewarr.ui.settings.AppearanceViewModel = androidx.hilt.navigation.compose.hiltViewModel()
             val movable = buildList {
-                addAll(liveEntries)
-                if (!AppColors.palette.hideMedia) { add(Section.Movies.name); add(Section.Shows.name); add(Section.Library.name) }
+                if (liveOn) addAll(liveEntries)
+                if (!AppColors.palette.hideMedia || !liveOn) { add(Section.Movies.name); add(Section.Shows.name); add(Section.Library.name) }
                 services.forEach { add("svc:" + it.first) }
                 if (musicMenuOn) add(Section.Music.name)
                 add(Section.Recordings.name); add(Section.Search.name)
@@ -515,7 +531,15 @@ internal fun MenuOverlay(
             }
             // Edit mode: every list in the menu can be changed (the main list here; a service's rows, Movies' and
             // Shows' lists beside it). Off: what's switched off is hidden and the editing panels go.
-            Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            // Search from the menu: typed or said here, the search page opens on it straight away (results fill in there).
+            val menuSearching: String? = null
+            fun runMenuSearch(raw: String) = onSearchFor(raw.trim().ifEmpty { null })
+            val menuVoice = io.github.petebutty.viewarr.ui.common.rememberVoiceSearch(
+                onResult = { said -> runMenuSearch(said) },
+                // No speech recogniser on this box: the search page and its keyboard's mic, as before.
+                onKeyboard = { onVoiceSearch() },
+            )
+            Row(Modifier.padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 // Settings: only here, at the top (it used to be last in the list too), left of Edit menus,
                 // which takes the rest of the row.
                 if (!editingMain) Box(Modifier.width(48.dp)) {
@@ -529,24 +553,101 @@ internal fun MenuOverlay(
                         modifier = Modifier.focusRequester(gearFocus).focusRequester(navFocus.getValue(Section.Settings)).onPreviewKeyEvent { e -> e.key == Key.DirectionUp },
                     )
                 }
-                MenuItem(
-                    text = if (editingMain) "✓  Done editing" else "✎  Edit menus",
-                    selected = editingMain, dim = !editingMain,
-                    onClick = { if (editingMain) endEditMain() else { editingMain = true; carryingMain = null; mainFollow = null } },
-                    // (Up from the top of the menu stays here: it fell into the folded-away channel groups.)
-                    // Right: on into the page beside the menu (the one showing), as Right does on every entry; while
-                    // editing, down onto the list being edited. (It went nowhere: Peter, 2026-11-15.)
+                // Voice and search, beside Settings, as the search page's own bar: a round mic, then a slim pill that
+                // opens search (the ✎ Edit menus button they replace: hold OK on an entry instead). Menu-row height.
+                if (!editingMain) {
+                    val searchKeys = Modifier.onPreviewKeyEvent { e ->
+                        if (e.key == Key.DirectionUp) return@onPreviewKeyEvent true
+                        false
+                    }
+                    androidx.tv.material3.Surface(
+                        onClick = { if (menuSearching == null) menuVoice.toggle() },
+                        modifier = Modifier.padding(start = 2.dp).size(34.dp).instantFocusScale(1.08f).then(searchKeys),
+                        shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.CircleShape),
+                        scale = io.github.petebutty.viewarr.ui.common.focusScale(1.08f),
+                        colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
+                            containerColor = if (menuVoice.listening) AppColors.Accent else AppColors.Panel, contentColor = if (menuVoice.listening) AppColors.OnAccent else AppColors.TextPrimary,
+                            focusedContainerColor = AppColors.Accent, focusedContentColor = AppColors.OnAccent,
+                        ),
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            androidx.tv.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Mic, contentDescription = "Voice search", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    // The search box itself: OK starts typing here (the keyboard only then: passing through doesn't
+                    // bring it up); the keyboard's search key opens the search page with what was typed.
+                    var menuQuery by remember { mutableStateOf("") }
+                    var menuTyping by remember { mutableStateOf(false) }
+                    var menuBoxFocused by remember { mutableStateOf(false) }
+                    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+                    fun startSearch() {
+                        keyboard?.hide(); menuTyping = false
+                        val q = menuQuery.trim(); menuQuery = ""
+                        runMenuSearch(q)
+                    }
+                    val lit = menuBoxFocused && !menuTyping
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = menuQuery,
+                        onValueChange = { menuQuery = it },
+                        singleLine = true,
+                        readOnly = !menuTyping,
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(AppColors.Accent),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = AppColors.TextPrimary),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { startSearch() }, onDone = { startSearch() }),
+                        modifier = Modifier.weight(1f).height(34.dp)
+                            .onFocusChanged { menuBoxFocused = it.isFocused; if (!it.isFocused) { menuTyping = false; keyboard?.hide() } }
+                            .onPreviewKeyEvent { e ->
+                                if (e.key == Key.DirectionUp) return@onPreviewKeyEvent true
+                                if (!menuTyping && (e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter)) {
+                                    if (e.type == KeyEventType.KeyUp) { menuTyping = true; menuScope.launch { awaitFrame(); keyboard?.show() } }
+                                    return@onPreviewKeyEvent true
+                                }
+                                if (!menuTyping && e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight) { openEntryPage(section); return@onPreviewKeyEvent true }
+                                false
+                            },
+                        decorationBox = { inner ->
+                            Box(
+                                Modifier.fillMaxSize()
+                                    .background(if (lit) AppColors.Accent else AppColors.Panel, androidx.compose.foundation.shape.RoundedCornerShape(17.dp))
+                                    .then(if (menuTyping) Modifier.border(2.dp, AppColors.Accent, androidx.compose.foundation.shape.RoundedCornerShape(17.dp)) else Modifier)
+                                    .padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.CenterStart,
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Search, contentDescription = null, modifier = Modifier.size(16.dp), tint = if (lit) AppColors.OnAccent else AppColors.TextSecondary)
+                                    Spacer(Modifier.width(8.dp))
+                                    Box {
+                                        val hint = when {
+                                            menuSearching != null -> "Searching “$menuSearching”…"
+                                            menuVoice.listening -> "Listening…"
+                                            menuTyping -> "Type, then search"
+                                            else -> "Search…"
+                                        }
+                                        if (menuQuery.isEmpty()) Text(hint, fontSize = 14.sp, maxLines = 1, color = if (lit) AppColors.OnAccent else if (menuSearching != null || menuVoice.listening) AppColors.Accent else AppColors.TextSecondary)
+                                        inner()
+                                    }
+                                }
+                            }
+                        },
+                    )
+                }
+                // Editing the menu: the way out.
+                if (editingMain) MenuItem(
+                    text = "✓  Done editing",
+                    selected = true,
+                    onClick = { endEditMain() },
                     modifier = Modifier.weight(1f).focusRequester(editMenusFocus).onPreviewKeyEvent { e ->
                         if (e.key == Key.DirectionUp) return@onPreviewKeyEvent true
                         if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionRight) {
-                            if (editingMain) runCatching { navFocus.getValue(Section.Tv).requestFocus() } else openEntryPage(section)
+                            runCatching { focusHome() }
                             return@onPreviewKeyEvent true
                         }
                         false
                     },
                 )
             }
-            sectionItem(Section.Tv)
+            if (liveOn) sectionItem(Section.Tv)
             (if (editingMain) ordered else ordered.filter(::visible)).forEach { id ->
                 androidx.compose.runtime.key(id) {
                     // A picked-up entry moving past the top or bottom: the list follows it (focus staying on the same

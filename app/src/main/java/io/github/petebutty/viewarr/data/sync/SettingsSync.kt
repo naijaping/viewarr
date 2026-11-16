@@ -211,6 +211,27 @@ class SettingsSync @Inject constructor(
         pending = null
     }
 
+    /**
+     * The saved copy for [s]'s user, telling apart "nothing saved" (success null: Dispatcharr says there's none) from
+     * "couldn't find out" (failure: no answer, or an error). Changes to someone's setup must stop on a failure, or a
+     * blip would replace their setup with a fresh one.
+     */
+    suspend fun copyResult(s: Session): Result<JsonObject?> = runCatching {
+        val r = http.get(url(s), headers(s))
+        when {
+            r.code in 200..299 -> r.body as? JsonObject ?: error("Dispatcharr sent an unreadable copy.")
+            r.code == 404 -> null
+            else -> error("Dispatcharr answered ${r.code}.")
+        }
+    }
+
+    /** A copy's sign-ins: null when it has none; a failure when they're there but can't be read (another key). */
+    fun signInsOf(copy: JsonObject, s: Session): Result<Accounts?> {
+        val enc = copy.str("signIns") ?: return Result.success(null)
+        val plain = runCatching { decrypt(enc, s) }.getOrNull() ?: return Result.failure(IllegalStateException("their saved sign-ins can't be read"))
+        return runCatching { json.decodeFromString(Accounts.serializer(), plain) }
+    }
+
     /** The saved copy on Dispatcharr for [s]'s user, or null. */
     suspend fun savedCopy(s: Session): JsonObject? = runCatching { fetch(s) }.getOrNull()
 
@@ -240,6 +261,25 @@ class SettingsSync @Inject constructor(
         }
         val r = http.put(admin.serverUrl.trimEnd('/') + "/api/accounts/users/$userId/app-data/$APP_KEY/", body, headers(admin))
         return r.code in 200..299
+    }
+
+    /** This TV's whole setup as a backup: settings and sign-ins (encrypted with [s]'s key), as a saved copy is. */
+    suspend fun backupBody(s: Session): JsonObject = buildJsonObject {
+        put("v", 1)
+        put("savedAt", System.currentTimeMillis())
+        put("device", deviceName())
+        put("deviceId", accounts.current().deviceId)
+        put("prefs", exportPrefs())
+        put("signIns", encrypt(accountsJson(), s))
+    }
+
+    /** Puts a backup ([backupBody]) back on this TV. True when its sign-ins came back too. */
+    suspend fun restoreBackup(copy: JsonObject, s: Session): Boolean {
+        val restored = lock.withLock { apply(copy, s) }
+        if (restored) accounts.setSetupComplete(true)
+        // Saved again from here, so the live copy on Dispatcharr matches what's now on this TV.
+        forgetLastPush(); scope.launch { runCatching { pushIfChanged(force = true) } }
+        return restored
     }
 
     /** This TV's settings and sign-ins as they'd be saved (for an admin to hand a copy to someone else). */

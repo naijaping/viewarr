@@ -34,9 +34,13 @@ Other ways to reach the menu:
 
 You can change all of these in **Settings → Appearance → Menu** (see below).
 
-### Edit menus
+### The top of the menu: ⚙, mic and search
 
-**Edit menus** sits at the top of the menu, with a **⚙** beside it: that's where **Settings** lives (it isn't in the list itself). **Up** from Live TV lands on the ⚙; Right from there reaches Edit menus. Use Edit menus to tidy things up right there, with the page changing as you go:
+The top of the menu has a **⚙** (that's where **Settings** lives; it isn't in the list itself), a **mic** for voice search and a small **search box**: highlight it and press OK to type straight there, and the search page opens with your results as soon as you send it (it closes again once you pick something). **Up** from Live TV lands on these.
+
+### Editing the menu
+
+**Hold OK on any entry** to edit the menu in place, with the page changing as you go:
 
 - Show, hide and reorder the menu's entries and streaming services.
 - Show or hide a service's rows.
@@ -44,7 +48,7 @@ You can change all of these in **Settings → Appearance → Menu** (see below).
 
 When you're done, anything switched off is hidden.
 
-Only want live TV? Switch Movies, Shows and the services off in **Edit menus** or in **Settings → Menu & navigation → What the menu lists**.
+Only want live TV? Switch Movies, Shows and the services off while editing the menu (hold OK on an entry) or in **Settings → Menu & navigation → What the menu lists**.
 
 ## The top-left window
 

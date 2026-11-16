@@ -79,7 +79,7 @@ The full walkthrough, with what each step needs and troubleshooting tips, is in 
 ## Guides
 
 - **[Setup](docs/SETUP.md)**: installing, what to have ready, the first run and setting up on your phone
-- **[Getting around](docs/GETTING-AROUND.md)**: the glass menu, Edit menus, the top-left window and the info bar
+- **[Getting around](docs/GETTING-AROUND.md)**: the glass menu, editing it, search, the top-left window and the info bar
 - **[Live TV](docs/LIVE-TV.md)**: the TV guide, catch-up, recordings, multi-view, sport and several sources
 - **[Films & shows](docs/FILMS-AND-SHOWS.md)**: rows, libraries, streaming services, title pages, players, search, Seerr and Trakt
 - **[Music](docs/MUSIC.md)**: sources, Now Playing, the queue, artist pages and music settings

@@ -294,6 +294,8 @@ class GuideRepository @Inject constructor(
      * started it carries on.
      */
     suspend fun sync(session: Session) {
+        // Someone without Live TV: no guide to fetch (it's big, and slow from far away).
+        if (!session.isDirect && !io.github.petebutty.viewarr.data.profiles.Access.liveTv) return
         val id = sourceId(session)
         running?.let { (src, job) -> if (src != id) job.cancel() }
         val job = kotlinx.coroutines.Job(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])

@@ -36,6 +36,8 @@ data class Palette(val main: Color, val highlight: Color, val transparency: Floa
     /** Low-memory mode: the heavy extras are off whatever their own settings say. */
     val lowMemory get() = opt(UiOpts.LOW_MEMORY) == 1
     val guideArt get() = opt(UiOpts.GUIDE_ART) == 0 && !lowMemory
+    /** The guide's top: the programme's title logo (TMDB) in place of its name, when it has one. */
+    val guideTitleLogos get() = opt(UiOpts.GUIDE_TITLE_LOGO) == 0 && !lowMemory
     /** The wallpaper in use: none in low-memory mode (plain Viewarr colours), whatever's chosen. */
     val wallpaperMode get() = if (lowMemory) 0 else wallpaper
     /** Trailer previews, multi-view, title-page artwork: not in low-memory mode. */
@@ -293,6 +295,7 @@ object UiOpts {
     const val BADGE_SOURCE = "badge_source"
     const val BADGE_PROGRESS = "badge_progress"
     const val GUIDE_ART = "guide_art"
+    const val GUIDE_TITLE_LOGO = "guide_title_logo"
     const val CHANNEL_LOGOS = "channel_logos"
     const val MINI_SIZE = "mini_size"
     const val MINI_CORNER = "mini_corner"
@@ -351,6 +354,21 @@ object UiOpts {
     const val UP_NEXT_S = "up_next_s"
     /** Live TV: how long a channel must stay chosen while zapping before its stream is asked for (tenths of a second). */
     const val ZAP_DELAY = "zap_delay"
+    /**
+     * Live TV source switching: Smooth (the new source opened alongside, swapped in once it has pictures) or the
+     * classic switch on the same connection (for a provider allowing one connection at a time).
+     */
+    const val SMOOTH_SWITCH = "smooth_switch"
+    /** Sports: OK on a game opens its page (line-ups, form, remind / record), or just a note (as before). */
+    const val SPORTS_GAME_PAGE = "sports_game_page"
+    /** The news ticker (ui/common/NewsTicker): with the live info bar, in the TV guide, on the Movies / Shows / Sports pages. */
+    const val NEWS_INFOBAR = "news_infobar"
+    const val NEWS_GUIDE = "news_guide"
+    const val NEWS_PAGES = "news_pages"
+    const val NEWS_SPEED = "news_speed"
+    /** Per feed: 0 as it comes, 1 on, 2 off; and its look (0 the feed's own, else TickerStyle + 1). */
+    fun newsFeedKey(id: String) = "news_on_$id"
+    fun newsStyleKey(id: String) = "news_style_$id"
     const val STILL_WATCHING = "still_watching"
     const val LOW_MEMORY = "low_memory"
     const val DATE_ORDER = "date_order"
@@ -369,6 +387,12 @@ object UiOpts {
         FONT to listOf("Standard", "Condensed", "Light", "Medium", "Serif", "Thin", "Bold", "Condensed light", "Casual", "Typewriter", "Small caps", "Handwritten"),
         GLASS_TINT to GlassTints.map { it.first },
         GUIDE_EPISODE to listOf("On", "Off"),
+        SMOOTH_SWITCH to listOf("Automatic", "Classic only (one connection at a time)"),
+        SPORTS_GAME_PAGE to listOf("On", "Off"),
+        NEWS_INFOBAR to listOf("Off", "On"),
+        NEWS_GUIDE to listOf("Off", "On"),
+        NEWS_PAGES to listOf("Off", "On"),
+        NEWS_SPEED to listOf("Normal", "Slow", "Fast"),
         MENU_HEADINGS to listOf("Heading", "Off", "Path (Live TV › Channel groups)"),
         MENU_EDGE to listOf("Off", "On"),
         MENU_TINT to listOf("Off", "On"),
@@ -404,6 +428,7 @@ object UiOpts {
         BADGE_SOURCE to listOf("On", "Off"),
         BADGE_PROGRESS to listOf("On", "Off"),
         GUIDE_ART to listOf("On", "Off"),
+        GUIDE_TITLE_LOGO to listOf("On", "Off"),
         CHANNEL_LOGOS to listOf("On", "Off"),
         MINI_SIZE to listOf("Medium", "Small", "Large"),
         MINI_CORNER to listOf("Bottom right", "Bottom left", "Top right", "Top left"),

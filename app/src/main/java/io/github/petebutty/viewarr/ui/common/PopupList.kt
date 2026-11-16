@@ -15,4 +15,10 @@ import androidx.compose.ui.unit.dp
  */
 @Composable
 fun Modifier.popupScroll(maxFraction: Float = 0.7f): Modifier =
-    heightIn(max = (LocalConfiguration.current.screenHeightDp * maxFraction).dp).verticalScroll(rememberScrollState())
+    heightIn(max = (popupScreenHeightDp() * maxFraction).dp).verticalScroll(rememberScrollState())
+
+/** The screen's height in Viewarr's own units (its layout size can differ from the system's: AppRoot's TV sizing). */
+@Composable
+private fun popupScreenHeightDp(): Float = with(androidx.compose.ui.platform.LocalDensity.current) {
+    androidx.compose.ui.platform.LocalContext.current.resources.displayMetrics.heightPixels.toFloat().toDp().value
+}

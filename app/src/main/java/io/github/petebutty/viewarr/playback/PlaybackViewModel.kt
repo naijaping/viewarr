@@ -34,6 +34,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import java.util.Locale
 import javax.inject.Inject
 
@@ -155,14 +156,44 @@ class PlaybackViewModel @Inject constructor(
      * stays connected, Viewarr asks Dispatcharr until it says the new stream is the one playing, and only then
      * reconnects, once. Presses meanwhile, or within a few seconds of the last switch, are turned away with a note.
      */
-    fun switchSource(src: LiveSource) {
+    fun switchSource(src: LiveSource, allowDirect: Boolean = true, lineChecked: Boolean = false) {
         val s = session ?: return
         val ch = _channel.value ?: return
         val now = System.currentTimeMillis()
         if (switching) { _sourceNote.value = "Still switching…"; return }
-        if (now - lastSwitchAt < SWITCH_GAP_MS) { _sourceNote.value = "One moment: the last switch is still settling."; return }
+        // (Dispatcharr's own switch needs a breather between two; playing a source by its handle doesn't.)
+        if (allowDirect && !lineChecked && direct?.first != ch.id && now - lastSwitchAt < SWITCH_GAP_MS) { _sourceNote.value = "One moment: the last switch is still settling."; return }
+        // Another source from the provider already playing: with no second connection there (a one-line account, or
+        // all in use), Dispatcharr's own switch opens the new stream while its retry of the old one is still going,
+        // two at once, and the provider cuts the new one off (TRex to TRex, Peter and Gtunney, 2026-11-16). So
+        // that's done in turn instead (see oneLineSwitch), whatever Source switching is set to.
+        // Already playing a source by its own handle (after a one-line or smooth switch): the channel itself isn't
+        // running in Dispatcharr, so its switch answers "channel not found" and nothing happened (Peter's AM9,
+        // 14:38, 2026-11-16). The next one is done the same way: let go, then the new source by its handle.
+        if (allowDirect && direct?.first == ch.id && !s.isDirect && _catchup.value == null && livePausedAt == null) {
+            if (src.hash != null) oneLineSwitch(src, ch, s)
+            else { direct = null; directProvider = null; _sourceNote.value = "Back to the channel: switch again from there"; restart() }
+            return
+        }
+        val playingFrom = _sources.value?.firstOrNull { it.current }?.provider
+        if (allowDirect && !lineChecked && src.hash != null && !s.isDirect && _catchup.value == null && livePausedAt == null &&
+            src.provider.isNotEmpty() && src.provider == playingFrom) {
+            switching = true
+            switchJob = viewModelScope.launch {
+                val oneLine = src.provider in singleConnection || freeConnection(s, src.provider) == false
+                switching = false
+                // (Changed channel meanwhile, or cancelled: freeConnection's runCatching swallows the cancellation.)
+                if (!isActive || _channel.value?.id != ch.id) return@launch
+                if (oneLine) oneLineSwitch(src, ch, s) else switchSource(src, allowDirect = true, lineChecked = true)
+            }
+            return
+        }
         // The quick, clean way when Dispatcharr gives the stream's own handle: play it directly (see directSwitch).
-        if (src.hash != null && !s.isDirect && _catchup.value == null && livePausedAt == null) { directSwitch(src, ch, s); return }
+        // Not for a provider already found to allow only one connection (it can't open a second one alongside).
+        // Settings → Playback → Live TV → Source switching: Classic only never opens a second connection.
+        val classicOnly = io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.SMOOTH_SWITCH) == 1
+        if (allowDirect && !classicOnly && src.hash != null && !s.isDirect && _catchup.value == null && livePausedAt == null &&
+            src.provider !in singleConnection) { directSwitch(src, ch, s); return }
         switching = true
         _sourceNote.value = "Switching to ${src.name}…"
         // The picture held (paused, still connected so Dispatcharr keeps the channel) while it switches: the stream
@@ -197,10 +228,19 @@ class PlaybackViewModel @Inject constructor(
                 val behindMs = behindLiveMs(s)
                 var from: Long? = null
                 var flowingAt = 0L
+                // Dispatcharr gave up on the new source (it couldn't connect: provider busy or down) and went back to
+                // another one by itself: stop waiting at once and stay on what's playing (it waited 15 s and then
+                // reconnected for nothing: Peter's AM9, TRex refusing, 2026-11-16).
+                var seenNew = false
+                var gaveUp = false
+                val askedAt = System.currentTimeMillis()
                 val done = kotlinx.coroutines.withTimeoutOrNull(behindMs + 10_000) {
                     while (true) {
                         val st = status()
-                        if (num(st, "stream_id") == src.streamId.toLong()) {
+                        val now = num(st, "stream_id")
+                        if (now != null && now != src.streamId.toLong() && (seenNew || System.currentTimeMillis() - askedAt > 8_000)) { gaveUp = true; break }
+                        if (now == src.streamId.toLong()) seenNew = true
+                        if (now == src.streamId.toLong()) {
                             val at = num(st, "buffer_index") ?: break
                             val start = from ?: at.also { from = it }
                             if (flowingAt == 0L && at > start) flowingAt = System.currentTimeMillis()
@@ -212,8 +252,13 @@ class PlaybackViewModel @Inject constructor(
                 } == true
                 // Changed channel, went into catch-up or paused live meanwhile: leave it be.
                 if (_channel.value?.id != ch.id || _catchup.value != null || livePausedAt != null) return@launch
+                if (gaveUp) {
+                    android.util.Log.i("Playback", "source switch to ${src.streamId}: Dispatcharr couldn't connect and went back")
+                    _sourceNote.value = "${src.name} isn't available right now: staying on this one"
+                    return@launch // (the held picture carries on: see finally)
+                }
                 lastSwitchAt = System.currentTimeMillis()
-                android.util.Log.i("Playback", "source switch to ${src.streamId}: ${if (done) "confirmed" else "not confirmed in 8 s"}, reconnecting")
+                android.util.Log.i("Playback", "source switch to ${src.streamId}: ${if (done) "confirmed" else "not confirmed in ${(behindMs + 10_000) / 1000} s"}, reconnecting")
                 _sources.value = _sources.value?.map { it.copy(current = it.streamId == src.streamId) }
                 _sourceNote.value = "Switched to ${src.name}"
                 refreshStreamSource()
@@ -226,6 +271,7 @@ class PlaybackViewModel @Inject constructor(
                 else {
                     seamless = true
                     reconnected = true
+                    pictureSinceReconnect = false
                     p.setMediaItem(MediaItem.fromUri(liveUrl(s, ch)))
                     p.prepare()
                     p.play()
@@ -235,7 +281,13 @@ class PlaybackViewModel @Inject constructor(
                     seamlessJob = viewModelScope.launch {
                         delay(SEAMLESS_MS)
                         seamless = false
-                        if (player?.playbackState == Player.STATE_BUFFERING) { _state.value = PlaybackState.Buffering; watchRebuffer() }
+                        // No new picture at all since the reconnect (the old one still up): a fresh start. The sources
+                        // can differ entirely (Happy TV's STV is HEVC 50 fps, TRex's H.264 30 fps) and the player sat
+                        // on the old picture for good, "playing" (Peter's Shield, VR-8vrj77, 2026-11-16).
+                        if (!pictureSinceReconnect && !audioOnly() && _channel.value?.id == ch.id && _catchup.value == null && livePausedAt == null) {
+                            android.util.Log.i("Playback", "source switch to ${src.streamId}: no picture ${SEAMLESS_MS / 1000} s after reconnecting: starting afresh")
+                            restart()
+                        } else if (player?.playbackState == Player.STATE_BUFFERING) { _state.value = PlaybackState.Buffering; watchRebuffer() }
                     }
                 }
             } finally {
@@ -250,6 +302,24 @@ class PlaybackViewModel @Inject constructor(
     /** Playing a channel's source directly (channel id, its address, stream id), else null. */
     private var direct: Triple<Int, String, Int>? = null
     private var directProvider: String? = null
+    /**
+     * Whether [provider] has a connection free for a second stream alongside the playing one, from Dispatcharr's own
+     * counts (its profiles' limits and viewers). Null: can't tell (not an admin login, or not found): try and see.
+     */
+    private suspend fun freeConnection(s: Session, provider: String): Boolean? = runCatching {
+        if (provider.isEmpty()) return null
+        val r = http.get(api(s, "api/m3u/accounts/"), apiHeaders(s))
+        if (r.code !in 200..299) return null
+        val list = (r.body as? kotlinx.serialization.json.JsonArray)?.toList() ?: r.body.array("results")
+        val acc = list.firstOrNull { it.str("name") == provider } ?: return null
+        val profiles = acc.array("profiles").filter { (it.child("is_active") as? kotlinx.serialization.json.JsonPrimitive)?.content != "false" }
+        if (profiles.isEmpty()) return null
+        if (profiles.any { (it.int("max_streams") ?: 0) <= 0 }) return true // no limit
+        profiles.sumOf { (it.int("max_streams") ?: 0) - (it.int("current_viewers") ?: 0) } >= 1
+    }.getOrNull()
+
+    /** Providers that didn't open a second connection alongside the playing one (switched the old way from then on). */
+    private val singleConnection = java.util.Collections.synchronizedSet(HashSet<String>())
     /** A source's player getting ready, out of sight, during a switch (released if it's abandoned). */
     private var pendingPlayer: ExoPlayer? = null
 
@@ -269,6 +339,21 @@ class PlaybackViewModel @Inject constructor(
         val url = "${s.serverUrl.trimEnd('/')}/proxy/ts/stream/${src.hash}"
         switchJob = viewModelScope.launch {
             var swapped = false
+            // The classic switch instead, once this one has fully finished (so its own tidy-up can't clear the new
+            // switch's "switching" flag, and a press meanwhile still gets "Still switching…").
+            fun handOff() {
+                val me = coroutineContext[kotlinx.coroutines.Job]
+                viewModelScope.launch { me?.join(); switching = false; switchSource(src, allowDirect = false) }
+            }
+            // Checked first: a smooth switch needs a second connection to the provider for a moment. None free (a
+            // one-connection account, or every connection in use): straight to the classic switch, no waiting.
+            val free = freeConnection(s, src.provider)
+            if (!isActive || _channel.value?.id != ch.id) return@launch
+            if (free == false) {
+                android.util.Log.i("Playback", "direct source ${src.streamId}: no free ${src.provider} connection: switching the usual way")
+                src.provider.takeIf { it.isNotEmpty() }?.let { singleConnection.add(it) }
+                handOff(); return@launch
+            }
             val next = buildPlayer(s).apply {
                 volume = 0f
                 trackSelectionParameters = trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_AUDIO, true).build()
@@ -278,8 +363,8 @@ class PlaybackViewModel @Inject constructor(
             }
             pendingPlayer = next
             try {
-                // Ready with a little in hand (up to 15 s: a provider can take a while to answer).
-                val ready = kotlinx.coroutines.withTimeoutOrNull(15_000) {
+                // Ready with a little in hand (up to 8 s; past that it's taken the old way, below).
+                val ready = kotlinx.coroutines.withTimeoutOrNull(8_000) {
                     while (true) {
                         if (next.playerError != null) return@withTimeoutOrNull false
                         if (next.playbackState == Player.STATE_READY && next.bufferedPosition - next.currentPosition >= 700) return@withTimeoutOrNull true
@@ -289,8 +374,14 @@ class PlaybackViewModel @Inject constructor(
                 } == true
                 if (_channel.value?.id != ch.id || _catchup.value != null || livePausedAt != null) return@launch
                 if (!ready) {
-                    android.util.Log.i("Playback", "direct source ${src.streamId}: ${next.playerError?.errorCodeName ?: "not ready in 15 s"}")
-                    _sourceNote.value = "${src.provider.ifEmpty { src.name }} didn't answer (busy?). Still on the current one."
+                    android.util.Log.i("Playback", "direct source ${src.streamId}: ${next.playerError?.errorCodeName ?: "not ready in 8 s"}: switching the usual way")
+                    // Often a provider (or Dispatcharr's limit for it) allowing one connection: the second one opened
+                    // alongside just waits. Switched on the same connection instead (as before 0.28.5), and that
+                    // provider is switched that way from now on.
+                    if (next.playerError == null) src.provider.takeIf { it.isNotEmpty() }?.let { singleConnection.add(it) }
+                    runCatching { next.release() }; if (pendingPlayer === next) pendingPlayer = null
+                    swapped = true // (released here already)
+                    handOff()
                     return@launch
                 }
                 // The swap: the screen and the sound move to the new one, the old one goes.
@@ -315,6 +406,79 @@ class PlaybackViewModel @Inject constructor(
                 android.util.Log.i("Playback", "direct source ${src.streamId}: swapped in")
             } finally {
                 if (!swapped) { runCatching { next.release() }; if (pendingPlayer === next) pendingPlayer = null }
+                switching = false
+            }
+        }
+    }
+
+    /**
+     * A switch between two sources of a provider with no connection to spare: the playing stream is let go first
+     * (freeing the provider's line), then, once Dispatcharr's counts show the line free again (a second or two, up to
+     * 8 s), the new source is played by its own handle, so only one connection is ever open. A loading screen of a
+     * few seconds instead of a gap-free swap. No picture 12 s on: back to the channel itself.
+     */
+    private fun oneLineSwitch(src: LiveSource, ch: ChannelListItem, s: Session) {
+        val p = player ?: run { restart(); return }
+        val url = "${s.serverUrl.trimEnd('/')}/proxy/ts/stream/${src.hash}"
+        switching = true
+        _sourceNote.value = "Switching to ${src.name}…"
+        // Older checks (the start's stall check, retries) mustn't reopen the channel during the switch.
+        stallJob?.cancel(); retryJob?.cancel(); rebufferJob?.cancel(); seamlessJob?.cancel()
+        switchJob = viewModelScope.launch {
+            try {
+                quietUntil = System.currentTimeMillis() + 25_000
+                // What's playing now in Dispatcharr: the channel, or a source played by its handle.
+                val playingId = if (direct?.first == ch.id) direct!!.second.substringAfterLast('/') else ch.uuid
+                // Only stopped in Dispatcharr when this TV is its only viewer (another TV, or a recording, keeps it).
+                val viewers = runCatching { http.get(api(s, "proxy/ts/status/$playingId"), apiHeaders(s)) }.getOrNull()
+                    ?.takeIf { it.code in 200..299 }?.body?.str("client_count")?.toIntOrNull() ?: 1
+                p.stop()
+                _state.value = PlaybackState.Buffering
+                // Stopped in Dispatcharr straight away: left alone it keeps the provider connection open for a grace
+                // period (45 s seen) while already counting no viewer, so the new source was refused as over the
+                // limit (TRex, Peter's AM9, 2026-11-16). Then until it's really gone and the line shows free (up to 8 s).
+                if (viewers <= 1) runCatching { http.post(api(s, "proxy/ts/stop/$playingId"), kotlinx.serialization.json.buildJsonObject { }, apiHeaders(s)) }
+                kotlinx.coroutines.withTimeoutOrNull(8_000) {
+                    delay(300)
+                    while (true) {
+                        val gone = runCatching { http.get(api(s, "proxy/ts/status/$playingId"), apiHeaders(s)) }.getOrNull()
+                            ?.let { it.code == 404 || it.body.str("state") in setOf(null, "unknown", "stopped", "stopping", "error") } ?: true
+                        if (gone && freeConnection(s, src.provider) != false) break
+                        delay(300)
+                    }
+                }
+                delay(400) // (the provider's side of the closed connection)
+                if (_channel.value?.id != ch.id || _catchup.value != null) return@launch
+                if (livePausedAt != null) { _sourceNote.value = null; direct = null; directProvider = null; restart(); return@launch }
+                direct = Triple(ch.id, url, src.streamId)
+                directProvider = src.provider
+                pictureSinceReconnect = false
+                startedAt = android.os.SystemClock.elapsedRealtime()
+                p.setMediaItem(MediaItem.fromUri(url))
+                p.prepare()
+                p.play()
+                lastSwitchAt = System.currentTimeMillis()
+                _sources.value = _sources.value?.map { it.copy(current = it.streamId == src.streamId) }
+                _sourceNote.value = "Switched to ${src.name}"
+                sourceJob?.cancel()
+                _streamSource.value = src.provider
+                android.util.Log.i("Playback", "one-line switch to ${src.streamId} (${src.provider})")
+                viewModelScope.launch {
+                    delay(12_000)
+                    if (!pictureSinceReconnect && !audioOnly() && direct?.third == src.streamId && _channel.value?.id == ch.id &&
+                        _catchup.value == null && livePausedAt == null) {
+                        android.util.Log.i("Playback", "one-line switch to ${src.streamId}: no picture in 12 s: back to the channel")
+                        _sourceNote.value = "${src.name} didn't start: back to the channel"
+                        player?.stop()
+                        // (Let go in Dispatcharr too, or it holds the provider's line for its grace period.)
+                        src.hash?.let { h -> runCatching { http.post(api(s, "proxy/ts/stop/$h"), kotlinx.serialization.json.buildJsonObject { }, apiHeaders(s)) } }
+                        direct = null; directProvider = null
+                        _sources.value = _sources.value?.map { it.copy(current = false) }
+                        delay(800)
+                        restart()
+                    }
+                }
+            } finally {
                 switching = false
             }
         }
@@ -369,6 +533,10 @@ class PlaybackViewModel @Inject constructor(
 
     /** Reconnecting after a source switch: the loading state isn't shown (see switchSource). */
     @Volatile private var seamless = false
+    /** A picture has come since the last seamless reconnect (false from a reconnect until its first picture). */
+    @Volatile private var pictureSinceReconnect = true
+    /** Playing with sound but no picture track (a radio channel): no picture is expected. */
+    private fun audioOnly(): Boolean = player?.let { it.playbackState == Player.STATE_READY && !it.currentTracks.containsType(C.TRACK_TYPE_VIDEO) } == true
     private var switchJob: Job? = null
     private var seamlessJob: Job? = null
     private var lastSwitchAt = 0L
@@ -605,6 +773,9 @@ class PlaybackViewModel @Inject constructor(
     private fun attachListener(p: ExoPlayer) {
                 p.addListener(object : Player.Listener {
                     override fun onRenderedFirstFrame() {
+                        pictureSinceReconnect = true
+                        // (Playing now: a stall from here on is a real one, watched as usual.)
+                        if (quietUntil > System.currentTimeMillis()) quietUntil = System.currentTimeMillis()
                         if (startedAt > 0) android.util.Log.i("Playback", "first picture after ${android.os.SystemClock.elapsedRealtime() - startedAt} ms")
                         startedAt = 0L
                     }
@@ -722,6 +893,8 @@ class PlaybackViewModel @Inject constructor(
     private var stallJob: Job? = null
 
     fun play(channel: ChannelListItem, session: Session? = this.session) {
+        // Someone without Live TV: no channel starts, whichever way it was asked for (zap, numbers, Sports, cards…).
+        if (!io.github.petebutty.viewarr.data.profiles.Access.liveTv) return
         val s = session ?: return
         livePausedAt = null
         // A note about the last channel's sources ("Switched to …") doesn't belong to this one.
@@ -817,6 +990,7 @@ class PlaybackViewModel @Inject constructor(
 
     /** Dispatcharr's native catch-up endpoint: authenticated by the API key header, seekable. */
     fun playCatchup(channel: ChannelListItem, program: GuideProgram, session: Session? = this.session) {
+        if (!io.github.petebutty.viewarr.data.profiles.Access.liveTv) return
         val s = session ?: return
         livePausedAt = null // a programme picked from the guide: not "behind" any earlier live pause
         startCatchup(channel, program, s, 0)

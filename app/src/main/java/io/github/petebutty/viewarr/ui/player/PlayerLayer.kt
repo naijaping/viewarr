@@ -77,6 +77,8 @@ fun PlayerLayer(
     modifier: Modifier = Modifier,
     /** A channel browsed to in the info bar (not changed to yet), with what's on it now and next: shown in place of the playing one. */
     browse: Triple<ChannelListItem, GuideProgram?, GuideProgram?>? = null,
+    /** The browsed channel's programmes have been looked up (false: still fetching, so nothing is claimed yet). */
+    browseKnown: Boolean = true,
 ) {
     val channel by vm.channel.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
@@ -204,8 +206,11 @@ fun PlayerLayer(
                 paused = paused && browse == null,
                 quality = if (browse == null) quality else null,
                 source = if (browse == null) streamSource else null,
-                modifier = Modifier.align(Alignment.BottomCenter),
+                guideKnown = browse == null || browseKnown,
+                // (Room under it for the news ticker, when that's on with the info bar.)
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = if (io.github.petebutty.viewarr.ui.common.Ticker.withInfoBar && io.github.petebutty.viewarr.ui.common.newsTickerHasHeadlines()) 34.dp else 0.dp),
             )
+            if (io.github.petebutty.viewarr.ui.common.Ticker.withInfoBar) io.github.petebutty.viewarr.ui.common.NewsTicker(Modifier.align(Alignment.BottomCenter).fillMaxWidth())
         }
     }
 }
@@ -447,6 +452,8 @@ internal fun InfoBanner(
     modifier: Modifier,
     quality: StreamQuality? = null,
     source: String? = null,
+    /** False while the channel's programmes are still being fetched: the title waits (no "No guide information" flash). */
+    guideKnown: Boolean = true,
 ) {
     val opt = AppColors.palette
     val showNumber = opt.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_NUMBER) == 0
@@ -475,8 +482,11 @@ internal fun InfoBanner(
                 QualityBadges(quality)
                 SourceBadge(source)
             },
-            title = current?.let(::title) ?: "No guide information",
+            title = current?.let(::title) ?: if (guideKnown) "No guide information" else "",
             progress = {
+                // No programme: the row's space is kept (an empty line the same height), so the bar doesn't grow and
+                // shrink between channels with and without one.
+                if (current == null) Text(" ", fontSize = 14.sp)
                 if (current != null) Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("${current.startTime.hhmm()} – ${current.endTime.hhmm()}", fontSize = 14.sp, color = Color.White)
                     Spacer(Modifier.width(12.dp))

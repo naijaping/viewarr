@@ -1,5 +1,38 @@
 # Viewarr changelog (built by tools/changelog.py from the GitHub releases; don't edit by hand)
 
+## 0.28.7 · 16 Nov 2026
+
+### Source switching that copes with every provider
+- **Viewarr picks the way by itself**: gap-free when the provider has a connection free; Dispatcharr's own switch when it doesn't (providers allowing **one line** now switch properly, instead of failing three times).
+- **Another source from the same one-line provider** (backup to backup): the stream is let go first, then the new one starts, so the provider never sees two connections and cuts one off.
+- **A busy or broken source**: you stay on what you're watching, with a note, within a few seconds (it used to wait up to 40 seconds and reconnect for nothing).
+- **No more frozen picture after a switch**: if the new picture doesn't arrive, the channel starts afresh.
+- New **Settings → Playback → Live TV → Source switching**: **Automatic**, or **Classic only** (never a second connection).
+
+### Sports: the game page
+- **OK on a game** opens its page: line-ups and formations, each side's **last five results**, this season's meetings, goals and cards, match stats, venue and TV channels (refreshed every minute while it's live).
+- **Remind me**, **Record**, or **Record all of a team's games** straight from a game, even before the guide lists it: set up by itself once it does, never twice.
+- **Settings → Sports → Game page** turns it off.
+
+### News ticker
+- A scrolling headline strip in Sky Sports, BBC News, ESPN or glass looks, with built-in feeds and **your own** (any RSS / Atom address).
+- Choose where: **with the info bar**, **in the TV guide**, **on Movies, Shows and Sports**; its speed; and each feed On / Off in its own look.
+- Settings → Appearance → **News ticker** (off until you switch a place on).
+
+### TV guide
+- **Programme title logos**: the highlighted programme's own logo at the top of the guide (Settings → Appearance → TV guide), off for chosen channel groups (**Title logos by group**).
+- **Long programme names scroll** on the highlighted programme.
+
+### Menu and search
+- The top of the menu: **⚙**, a **mic** and a small **search box** you type straight into; the search page opens as soon as you send it, and **closes once you pick something**.
+- **Edit menus** has gone from the top: **hold OK on any entry** to edit the menu.
+
+### Fixes
+- **Same size on every box**: Viewarr is laid out for the standard TV screen whatever the box reports (on some boxes, such as Ugoos, the mini player was tiny and the guide stretched).
+- The info bar no longer flickers "No guide information" while the guide loads, and its progress row keeps its place.
+- Settings no longer opens over a full-screen film's controls.
+- Live TV lists load the next rows ahead while you browse.
+
 ## 0.28.6 · 16 Nov 2026
 
 ### Channel list

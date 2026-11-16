@@ -58,6 +58,7 @@ class AppViewModel @Inject constructor(
     playbackStore: io.github.petebutty.viewarr.data.settings.PlaybackStore,
     private val settingsSync: io.github.petebutty.viewarr.data.sync.SettingsSync,
     accessLoader: io.github.petebutty.viewarr.data.profiles.AccessLoader,
+    house: io.github.petebutty.viewarr.data.profiles.House,
 ) : ViewModel() {
     /** Setup was shown in this run of the app (so the tour follows it). */
     var sawSetup by androidx.compose.runtime.mutableStateOf(false)
@@ -66,6 +67,8 @@ class AppViewModel @Inject constructor(
         settingsSync.start()
         // What the signed-in person may do (an admin's locks on their Dispatcharr user).
         accessLoader.start(viewModelScope)
+        // The house's outside addresses from the Viewarr plugin on Dispatcharr (when it's installed).
+        if (io.github.petebutty.viewarr.ui.profiles.ProfileUi.ENABLED) house.start(viewModelScope)
         // Away addresses from the setup (empty: everything stays on its home address).
         viewModelScope.launch { accounts.accounts.collect { io.github.petebutty.viewarr.data.net.Reach.setPairs(it.away) } }
     }
@@ -122,7 +125,16 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
         if (splashShown) 1f else 0f, androidx.compose.animation.core.tween(300), label = "splash",
     )
     // Settings → Appearance → Text size: everything scaled together (layout and text).
-    val baseDensity = androidx.compose.ui.platform.LocalDensity.current
+    val systemDensity = androidx.compose.ui.platform.LocalDensity.current
+    // Always laid out for the standard TV screen (960 × 540 units), whatever density the box's firmware picks: the
+    // Shield is 960 wide already, but some boxes (Ugoos: 4K at 480 dpi = 1280 wide) would shrink the mini player
+    // and stretch the guide. (Text scales with it; the system's font size setting still applies on top.)
+    val config = androidx.compose.ui.platform.LocalConfiguration.current
+    val baseDensity = androidx.compose.runtime.remember(config.screenWidthDp, config.screenHeightDp, systemDensity) {
+        val wPx = config.screenWidthDp * systemDensity.density; val hPx = config.screenHeightDp * systemDensity.density
+        val tv = minOf(wPx / 960f, hPx / 540f)
+        if (wPx >= 1200f && tv > 0f) androidx.compose.ui.unit.Density(tv, systemDensity.fontScale) else systemDensity
+    }
     val scale = io.github.petebutty.viewarr.ui.theme.AppColors.palette.textScale
     // Buttons taught in Settings → Remote: read wherever a press is turned into an action.
     androidx.compose.runtime.SideEffect { io.github.petebutty.viewarr.ui.common.RemoteKeys.setTaught(remote.buttons) }
@@ -173,7 +185,7 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
                             "tour" -> io.github.petebutty.viewarr.ui.onboarding.TourScreen(
                                 onDone = { io.github.petebutty.viewarr.ui.onboarding.Tour.markDone(ctx); stage = "prep" },
                                 finishLabel = "Next: setting up  ›",
-                                onBack = { role = null },
+                                onBack = { if (io.github.petebutty.viewarr.ui.profiles.ProfileUi.ENABLED) role = null },
                             )
                             "prep" -> io.github.petebutty.viewarr.ui.onboarding.TourScreen(onDone = { stage = "setup" }, prep = true, finishLabel = "Start setup", onBack = { stage = "tour" })
                             else -> SetupWizard()

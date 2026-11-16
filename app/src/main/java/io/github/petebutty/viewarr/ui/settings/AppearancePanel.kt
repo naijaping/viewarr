@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -111,6 +112,7 @@ fun appearanceCategories(vm: AppearanceViewModel = hiltViewModel(), opts: UiOpts
     val highs = HighlightChoices.mapIndexed { i, c -> Choice(HighlightNames.getOrElse(i) { "Colour ${i + 1}" }, c) }
     val mains = MainColourChoices.mapIndexed { i, c -> Choice(MainColourNames.getOrElse(i) { "Colour ${i + 1}" }, c) }
     val onOff = listOf(Choice("On", true), Choice("Off", false))
+
     val corners = listOf(Choice("Rounded", false), Choice("Square", true))
     val transparencies = (0..100 step 10).map { Choice("$it%", it) }
     val currentT = ((palette.transparency * 100).roundToInt() / 10 * 10).coerceIn(0, 100)
@@ -207,6 +209,7 @@ fun appearanceCategories(vm: AppearanceViewModel = hiltViewModel(), opts: UiOpts
             ) + listOfNotNull(
                 // Low-memory mode: no programme pictures at all, so no setting for them.
                 optItem(opts, "Programme pictures", "The highlighted programme's picture at the top of the guide. Off: no pictures are looked up (the channel's logo shows instead).", io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_ART).locked(lowLock),
+                optItem(opts, "Programme title logos", "At the top of the guide, the highlighted programme's title logo (from TMDB) in place of its name, when there's a sure match (a UK, Irish or US show, or the only film with that name). Off: always the name.", io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_TITLE_LOGO).locked(lowLock),
             ) + listOf(
                 // The info bar over live TV.
                 // The glass: the info bar and controls, and every pop-up (next episode, skip intro, reminders, notes).
@@ -220,6 +223,11 @@ fun appearanceCategories(vm: AppearanceViewModel = hiltViewModel(), opts: UiOpts
                 infoRowsItem(),
             ),
         ),
+        newsTickerCategory(opts),
+    ) + listOfNotNull(
+        // Programme title logos: off for chosen channel groups (only while title logos are on).
+        if (palette.guideTitleLogos) titleLogoGroupsCategory(vm) else null,
+    ) + listOf(
         SettingCategory(
             "Posters", "How big library posters are, and what's drawn on posters in Movies, Shows and search.",
             listOf(
@@ -281,7 +289,7 @@ optItem(opts, "Colour edge", "A thin bar down the edge of each list in your high
 fun appearanceReset(vm: AppearanceViewModel, opts: UiOptsViewModel) {
         vm.apply(ThemePresets[0].main, ThemePresets[0].highlight); vm.setTransparency(0f); vm.setGuideTransparency(0f)
         vm.setShowNumbers(true); vm.setHideMedia(false); vm.setWallpaper(0, 0, 0.6f); vm.resetTitleParts()
-        opts.reset(listOf(io.github.petebutty.viewarr.ui.theme.UiOpts.TEXT_SIZE, io.github.petebutty.viewarr.ui.theme.UiOpts.CLOCK, io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_SEE, io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_GLASS, io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_CLOCK, io.github.petebutty.viewarr.ui.theme.UiOpts.CHANNEL_LOGOS, io.github.petebutty.viewarr.ui.theme.UiOpts.CATCHUP_ICONS, io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_ART, io.github.petebutty.viewarr.ui.theme.UiOpts.BADGE_SOURCE, io.github.petebutty.viewarr.ui.theme.UiOpts.BADGE_PROGRESS))
+        opts.reset(listOf(io.github.petebutty.viewarr.ui.theme.UiOpts.TEXT_SIZE, io.github.petebutty.viewarr.ui.theme.UiOpts.CLOCK, io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_SEE, io.github.petebutty.viewarr.ui.theme.UiOpts.POPUP_GLASS, io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_CLOCK, io.github.petebutty.viewarr.ui.theme.UiOpts.CHANNEL_LOGOS, io.github.petebutty.viewarr.ui.theme.UiOpts.CATCHUP_ICONS, io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_ART, io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_TITLE_LOGO, io.github.petebutty.viewarr.ui.theme.UiOpts.NEWS_INFOBAR, io.github.petebutty.viewarr.ui.theme.UiOpts.NEWS_GUIDE, io.github.petebutty.viewarr.ui.theme.UiOpts.NEWS_PAGES, io.github.petebutty.viewarr.ui.theme.UiOpts.NEWS_SPEED, io.github.petebutty.viewarr.ui.theme.UiOpts.BADGE_SOURCE, io.github.petebutty.viewarr.ui.theme.UiOpts.BADGE_PROGRESS))
 }
 
 /** Settings → Appearance on its own (Settings now opens it through the layout: SettingsMap). */
@@ -401,3 +409,79 @@ private fun ValueSlider(label: String, value: Int, onChange: (Int) -> Unit) {
 private const val STEP = 5
 
 private val progressChoices = listOf(Choice("All channels", 0), Choice("Only what you're watching", 1), Choice("Off", 2))
+
+/** Adding your own news feed: a name and its RSS / Atom address, checked for headlines before it's kept. */
+@Composable
+private fun AddNewsFeedDialog(feeds: io.github.petebutty.viewarr.data.news.NewsFeeds, onClose: () -> Unit) {
+    var name by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var url by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf("") }
+    var busy by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    var msg by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<String?>(null) }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val first = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
+    androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(100); runCatching { first.requestFocus() } }
+    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
+        androidx.compose.foundation.layout.Column(
+            Modifier.width(560.dp).background(AppColors.Panel, androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).padding(24.dp),
+        ) {
+            androidx.tv.material3.Text("Add a news feed", fontSize = 22.sp, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 12.dp))
+            io.github.petebutty.viewarr.ui.setup.WizardField(url, { url = it }, "Feed address (e.g. feeds.bbci.co.uk/news/world/rss.xml)", first, androidx.compose.ui.text.input.KeyboardType.Uri, androidx.compose.ui.text.input.ImeAction.Next, {})
+            androidx.compose.foundation.layout.Spacer(Modifier.height(8.dp))
+            io.github.petebutty.viewarr.ui.setup.WizardField(name, { name = it }, "Name on the ticker (e.g. BBC World)", null, androidx.compose.ui.text.input.KeyboardType.Text, androidx.compose.ui.text.input.ImeAction.Done, {})
+            androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
+            io.github.petebutty.viewarr.ui.common.MenuItem(text = if (busy) "Checking…" else "Add", selected = false, onClick = {
+                if (!busy && url.isNotBlank()) { busy = true; scope.launch { msg = feeds.add(name, url); busy = false; if (msg == null) onClose() } }
+            })
+            io.github.petebutty.viewarr.ui.common.MenuItem(text = "Cancel", selected = false, onClick = onClose)
+            msg?.let { androidx.tv.material3.Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp)) }
+        }
+    }
+}
+
+/** Settings → Appearance → News ticker (its own function: Appearance's list was near Android's size limit). */
+@Composable
+private fun newsTickerCategory(opts: UiOptsViewModel): SettingCategory {
+    val newsVm: io.github.petebutty.viewarr.ui.common.NewsViewModel = hiltViewModel()
+    newsVm.feeds.version.value
+    var addingFeed by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+    if (addingFeed) AddNewsFeedDialog(newsVm.feeds) { addingFeed = false }
+    return SettingCategory(
+            "News ticker", "Scrolling headlines (BBC, Sky, ESPN, the Guardian, or feeds you add) along the bottom: switch on where you want them, then pick feeds and each one's look.",
+            listOf(
+                optItem(opts, "With the info bar", "Along the bottom while live TV's info bar is up.", io.github.petebutty.viewarr.ui.theme.UiOpts.NEWS_INFOBAR),
+                optItem(opts, "In the TV guide", "Along the bottom of the guide.", io.github.petebutty.viewarr.ui.theme.UiOpts.NEWS_GUIDE),
+                optItem(opts, "On Movies, Shows and Sports", "Along the bottom of those pages.", io.github.petebutty.viewarr.ui.theme.UiOpts.NEWS_PAGES),
+                optItem(opts, "Speed", "How fast headlines move across.", io.github.petebutty.viewarr.ui.theme.UiOpts.NEWS_SPEED),
+            ) + newsVm.feeds.all().map { f ->
+                // One row per feed: Off, or On in a chosen look (your own feeds can be removed here too).
+                val looks = io.github.petebutty.viewarr.data.news.TickerStyle.entries
+                val choices = listOf(Choice("Off", -1)) + looks.mapIndexed { i, st -> Choice("On · ${st.label}" + if (st == f.defaultStyle) " (its own)" else "", i) } +
+                    (if (f.builtIn) emptyList() else listOf(Choice("Remove this feed", -2)))
+                val cur = if (!io.github.petebutty.viewarr.ui.common.Ticker.feedOn(f.id)) choices[0]
+                    else choices.first { (it.value as Int) == looks.indexOf(io.github.petebutty.viewarr.ui.common.Ticker.style(f)) }
+                SettingItem(f.name, if (f.builtIn) f.url.substringAfter("://").substringBefore('/') else "Your feed · " + f.url, choices, cur) { c ->
+                    when (val v = (c as Choice).value as Int) {
+                        -1 -> opts.set(io.github.petebutty.viewarr.ui.theme.UiOpts.newsFeedKey(f.id), 2)
+                        -2 -> newsVm.feeds.remove(f.id)
+                        else -> { opts.set(io.github.petebutty.viewarr.ui.theme.UiOpts.newsFeedKey(f.id), 1); opts.set(io.github.petebutty.viewarr.ui.theme.UiOpts.newsStyleKey(f.id), v + 1) }
+                    }
+                }
+            } + SettingItem("Add your own feed…", "Any news site's RSS or Atom feed address.", listOf(Choice("", 0)), Choice("", 0), action = { addingFeed = true }) {},
+        )
+}
+
+/** Settings → Appearance → Title logos by group: the guide's channel groups, each On / Off. */
+@Composable
+private fun titleLogoGroupsCategory(vm: AppearanceViewModel): SettingCategory {
+    val palette = AppColors.palette
+    val onOff = listOf(Choice("On", true), Choice("Off", false))
+    val guideVm: io.github.petebutty.viewarr.ui.guide.GuideViewModel = hiltViewModel()
+    val groups = guideVm.groups.collectAsStateWithLifecycle().value.map { it.name }.distinct()
+    return SettingCategory(
+        "Title logos by group", "Programme title logos in the guide, group by group: switch a group off to always show its programmes' names (sports and event groups, say).",
+        groups.map { g ->
+            val id = "logo:$g"
+            SettingItem(g, "Title logos for this group's programmes.", onOff, if (palette.shows(id)) onOff[0] else onOff[1]) { c -> vm.setTitlePart(id, (c as Choice).value == true) }
+        },
+    )
+}

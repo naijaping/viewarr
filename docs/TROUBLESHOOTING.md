@@ -77,7 +77,7 @@ They need a TMDB key, or at least Plex, Jellyfin, Emby, Trakt or an addon. Add o
 
 ## Streaming services are missing from the menu
 
-They come from your own addons' rows (for example your own AIOMetadata). They appear once those rows have loaded, and can be hidden in **Edit menus** or **Settings → Menu & navigation → What the menu lists**.
+They come from your own addons' rows (for example your own AIOMetadata). They appear once those rows have loaded, and can be hidden while editing the menu (hold OK on an entry) or **Settings → Menu & navigation → What the menu lists**.
 
 ## Something says "admin only"
 

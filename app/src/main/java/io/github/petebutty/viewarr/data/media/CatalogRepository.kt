@@ -774,7 +774,7 @@ class CatalogRepository @Inject constructor(
             "plex" -> {
                 val rk = plexDiscoverKey(a, item) ?: return null
                 val ok = runCatching {
-                    http.put("$PLEX_DISCOVER/actions/${if (add) "addToWatchlist" else "removeFromWatchlist"}?ratingKey=$rk", JsonObject(emptyMap()), plex.headers(a.deviceId, a.plex?.token)).ok
+                    http.put("$PLEX_DISCOVER/actions/${if (add) "addToWatchlist" else "removeFromWatchlist"}?ratingKey=$rk", JsonObject(emptyMap()), plex.headers(a.deviceId, a.plex?.let { it.accountToken ?: it.token })).ok
                 }.getOrDefault(false)
                 if (ok) add else null
             }
@@ -793,7 +793,7 @@ class CatalogRepository @Inject constructor(
     /** The title's id on plex.tv (watchlists live there, not on your server), found from its TMDB / IMDb id. */
     private val plexKeys = ConcurrentHashMap<String, String>()
     private suspend fun plexDiscoverKey(a: Accounts, item: MediaItem): String? {
-        val token = a.plex?.token ?: return null
+        val token = a.plex?.let { it.accountToken ?: it.token } ?: return null
         plexKeys[item.key]?.let { return it }
         val type = if (item.type == MediaType.Movie) 1 else 2
         val guids = listOfNotNull(item.tmdbId?.let { "tmdb://$it" }, item.imdbId?.let { "imdb://$it" })
@@ -806,7 +806,7 @@ class CatalogRepository @Inject constructor(
     }
 
     private suspend fun plexOnWatchlist(a: Accounts, rk: String): Boolean? {
-        val r = runCatching { http.get("$PLEX_DISCOVER/library/metadata/$rk/userState", plex.headers(a.deviceId, a.plex?.token)) }.getOrNull() ?: return null
+        val r = runCatching { http.get("$PLEX_DISCOVER/library/metadata/$rk/userState", plex.headers(a.deviceId, a.plex?.let { it.accountToken ?: it.token })) }.getOrNull() ?: return null
         if (!r.ok) return null
         val mc = r.body.child("MediaContainer")
         val st = mc.child("UserState").let { it as? JsonObject ?: mc.array("UserState").firstOrNull() }
@@ -814,7 +814,7 @@ class CatalogRepository @Inject constructor(
     }
 
     private suspend fun plexWatchlistRow(a: Accounts, type: MediaType): MediaRow? {
-        val token = a.plex?.token ?: return null
+        val token = a.plex?.let { it.accountToken ?: it.token } ?: return null
         val r = http.get("$PLEX_DISCOVER/library/sections/watchlist/all?type=${if (type == MediaType.Movie) 1 else 2}&includeGuids=1&sort=watchlistedAt:desc", plex.headers(a.deviceId, token))
         if (!r.ok) return null
         val items = r.body.child("MediaContainer").array("Metadata").mapNotNull { j ->
@@ -1156,8 +1156,19 @@ class CatalogRepository @Inject constructor(
     suspend fun refreshPlexServers() {
         val a = store.current()
         val p = a.plex ?: return
-        val found = runCatching { plex.servers(a.deviceId, p.token) }.getOrDefault(emptyList())
+        val found = runCatching { plex.servers(a.deviceId, p.accountToken ?: p.token) }.getOrDefault(emptyList())
         if (found.isEmpty()) return
+        // The main server's address doesn't answer from here (a setup made in another house): the one that does.
+        found.firstOrNull { it.machineId == p.machineId && it.url != p.serverUrl }?.let { same ->
+            // Back on the home address whenever that's the one that answers (an outside one taken during a slow moment
+            // at home would otherwise stay, and Plex treats it as remote).
+            val backHome = isHomeAddress(same.url) && !isHomeAddress(p.serverUrl)
+            val answers = !backHome && withTimeoutOrNull(4_000) { runCatching { http.get("${p.serverUrl}/identity", plex.headers(a.deviceId, p.token)).ok }.getOrDefault(false) } == true
+            if (!answers) {
+                store.update { it.copy(plex = it.plex?.copy(serverUrl = same.url)) }
+                Log.i(TAG, "plex: main server now at ${same.url}")
+            }
+        }
         val more = found.filter { it.machineId != p.machineId }.map(plex::toAuth)
         if (more != a.plexMore) {
             store.update { it.copy(plexMore = more) }

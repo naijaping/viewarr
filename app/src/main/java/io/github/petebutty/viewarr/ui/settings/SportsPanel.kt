@@ -56,7 +56,13 @@ import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @HiltViewModel
-class SportsViewModel @Inject constructor(private val repo: SportsRepository) : ViewModel() {
+class SportsViewModel @Inject constructor(
+    private val repo: SportsRepository,
+    /** A game's line-ups, form and the rest (the game page). */
+    val gameInfo: io.github.petebutty.viewarr.data.sports.GameInfoSource,
+    /** Reminders / recordings asked for before a game is in the guide, and "record all of a team's games". */
+    val gameWatch: io.github.petebutty.viewarr.data.sports.GameWatch,
+) : ViewModel() {
     val follows = repo.follows.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private val _results = MutableStateFlow<List<SportFollow>>(emptyList())
     val results = _results.asStateFlow()
@@ -219,6 +225,14 @@ fun SportsSettingsScreen(onBack: () -> Unit, vm: SportsViewModel = hiltViewModel
                         "\n\nFixtures come from ESPN's public sports data (only the team or league is asked about). Saved for this profile.",
                     fontSize = 13.sp, color = AppColors.TextSecondary,
                 )
+                // OK on a game: its page (line-ups, form, remind / record), or just a note as before.
+                val optsVm: UiOptsViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+                val pageOn = AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.SPORTS_GAME_PAGE) == 0
+                Spacer(Modifier.padding(top = 14.dp))
+                MenuItem(text = "Game page", trailing = if (pageOn) "On" else "Off", selected = false,
+                    onClick = { optsVm.set(io.github.petebutty.viewarr.ui.theme.UiOpts.SPORTS_GAME_PAGE, if (pageOn) 1 else 0) })
+                Text("OK on a game opens its page: line-ups, each team's last five, this season's meetings, goals and stats, with Remind me / Record (also before it's in your guide, or every game of a team). Off: OK just says when and where it's on.",
+                    fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 4.dp, start = 4.dp))
             }
             Spacer(Modifier.width(40.dp))
             Column(Modifier.weight(1f).fillMaxHeight()) {

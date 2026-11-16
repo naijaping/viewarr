@@ -48,7 +48,7 @@ Everything to do with how Viewarr looks, in sections:
 | **Theme** | **Background colour** (Viewarr's charcoal, or Classic blue, Ocean blue, Sky blue and others), **Highlight colour** (orange by default, including Bright cyan), **Text size**, **Font**, **Clock**, **Date format** (Tue 10 Nov, Tue, Nov 10, Tue 10/11 or Tue 11/10) and **Time format**. |
 | **Wallpaper** | None, one of sixteen built-in designs, or the artwork of the programme you've highlighted. |
 | **Glass & transparency** | **Glass**, **Glass colour**, **Guide**, **Wallpaper dimming**, **Pop-up glass** and the info bar's **border**. |
-| **TV guide** | Channel numbers, logos, **Programme corners**, progress bars, **Channel list width** (Medium, Narrow or Wide), **Channel list progress** (a bar under the programme in the channel list: every channel, the highlighted one only, or off) and its **Highlighted progress colour**, episode numbers, catch-up icons and programme pictures. |
+| **TV guide** | Channel numbers, logos, **Programme corners**, progress bars, **Channel list width** (Medium, Narrow or Wide), **Channel list progress** (a bar under the programme in the channel list: every channel, the highlighted one only, or off) and its **Highlighted progress colour**, episode numbers, catch-up icons, programme pictures and **Programme title logos**. |
 | **Info bar & controls** | **Info bar style** (Glass, Square glass, Pill, Fade, Full-width bar, Minimal, Faded glass, Feathered glass, Side fade, Outline, Corner card, Floating card, Slim strip or Frosted) and **corners**, **Info bar size** and **width**, **Clock on the info bar**, **Preview cards**, **Rows under the info bar** (which rows each player shows when you press Down, and their order, with a preview), the channel number, episode numbers, picture-quality, source (where the live stream comes from) and frame-rate badges, and **Player controls size**. |
 | **Menu** | Headings, colour edge and tint, hints, the TV and LIVE marks, and **Button hints**. |
 | **Posters** | **Library posters** size, **Where it's from** and **Progress bars**. |
@@ -57,6 +57,8 @@ Everything to do with how Viewarr looks, in sections:
 | **Subtitles** | **Size**, **Colour** and **Background**. |
 | **Music** | Now Playing's **Artwork**, **Visualiser**, **Screensaver** and **Lyrics**. |
 | **Motion** | **List scrolling** (Instant, the default, or Smooth). |
+| **News ticker** | A scrolling headline strip (Sky Sports, BBC News, ESPN-style looks): **With the info bar**, **In the TV guide**, **On Movies, Shows and Sports**, **Speed**, and each feed (built in, or **Add a feed** with any RSS / Atom address) Off or On in its own look. *(0.28.7 and later.)* |
+| **Title logos by group** | With **Programme title logos** on (TV guide): each channel group On / Off. *(0.28.7 and later.)* |
 
 ### Home page & menu
 

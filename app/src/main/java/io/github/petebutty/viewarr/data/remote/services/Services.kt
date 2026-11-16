@@ -148,6 +148,80 @@ class PlexService @Inject constructor(private val http: HttpJson) {
     } == true
 
     fun toAuth(choice: PlexServerChoice) = PlexAuth(choice.token, choice.name, choice.url, choice.machineId)
+
+    // ---------------------------------------------------------------- Plex Home (the owner's account token)
+
+    /** One person in the owner's Plex Home. */
+    data class HomeUser(val id: String, val title: String, val managed: Boolean, val admin: Boolean)
+
+    private fun xml(deviceId: String, token: String) = headers(deviceId, token) + ("Accept" to "application/xml")
+
+    /** One attribute (XML) or field (JSON) from plex.tv's older account endpoints, which answer in either. */
+    private fun field(text: String, name: String): String? =
+        Regex("""\b$name="([^"]*)"""").find(text)?.groupValues?.get(1)?.let(::unescape)
+            ?: Regex(""""$name"\s*:\s*"?([^",}]*)"?""").find(text)?.groupValues?.get(1)
+
+    private fun unescape(v: String) = v.replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
+
+    /** The people in the owner's Plex Home (the owner too, marked admin). */
+    suspend fun homeUsers(deviceId: String, ownerToken: String): List<HomeUser> = runCatching {
+        val (code, text) = http.text("GET", "https://plex.tv/api/home/users", headers = xml(deviceId, ownerToken))
+        if (code !in 200..299) return@runCatching emptyList()
+        Regex("""<User\b[^>]*>""").findAll(text).mapNotNull { m ->
+            val e = m.value
+            val id = field(e, "id") ?: return@mapNotNull null
+            HomeUser(id, field(e, "title") ?: field(e, "username") ?: "Plex user", field(e, "restricted") == "1", field(e, "admin") == "1")
+        }.toList()
+    }.getOrDefault(emptyList())
+
+    /** A new managed user (no Plex account of their own) in the owner's Plex Home; its Home user id. */
+    suspend fun createManagedUser(deviceId: String, ownerToken: String, name: String): Result<String> = runCatching {
+        val (code, text) = http.text("POST", "https://plex.tv/api/home/users?title=${enc(name)}", headers = xml(deviceId, ownerToken))
+        check(code in 200..299) { if (code == 400 || code == 422) "Plex wouldn't add \"$name\" to your Plex Home (the name may be taken)." else "Plex didn't add \"$name\" (error $code)." }
+        field(text, "id") ?: error("Plex added \"$name\" but didn't say who they are.")
+    }
+
+    /** Shares every library on [machineId] with Home user [userId] (a managed user sees nothing until this). */
+    suspend fun shareAllLibraries(deviceId: String, ownerToken: String, machineId: String, userId: String): Result<Unit> = runCatching {
+        val (c1, server) = http.text("GET", "https://plex.tv/api/servers/$machineId", headers = xml(deviceId, ownerToken))
+        check(c1 in 200..299) { "Plex didn't list your server's libraries (error $c1)." }
+        val sections = Regex("""<Section\b[^>]*>""").findAll(server).mapNotNull { field(it.value, "id")?.toLongOrNull() }.toList()
+        check(sections.isNotEmpty()) { "Plex didn't list any libraries on your server." }
+        val body = buildJsonObject {
+            put("server_id", machineId)
+            put("shared_server", buildJsonObject {
+                put("library_section_ids", kotlinx.serialization.json.JsonArray(sections.map { JsonPrimitive(it) }))
+                put("invited_id", userId.toLongOrNull() ?: error("Plex gave an odd user id ($userId)."))
+            })
+            put("sharing_settings", buildJsonObject {
+                put("allowSync", "0"); put("allowCameraUpload", "0"); put("allowChannels", "0")
+                put("filterMovies", ""); put("filterTelevision", ""); put("filterMusic", "")
+            })
+        }
+        val (c2, _) = http.text("POST", "https://plex.tv/api/servers/$machineId/shared_servers", body, headers(deviceId, ownerToken) + ("Content-Type" to "application/json"))
+        // Already shared answers 400/422 on some accounts: that's fine too.
+        check(c2 in 200..299 || c2 == 400 || c2 == 422) { "Plex didn't share your libraries (error $c2)." }
+    }
+
+    /** Home user [userId]'s own account token (the owner switching to them; [pin] if they have one). */
+    suspend fun switchTo(deviceId: String, ownerToken: String, userId: String, pin: String? = null): Result<String> = runCatching {
+        val q = pin?.takeIf { it.isNotBlank() }?.let { "?pin=${enc(it)}" } ?: ""
+        val (code, text) = http.text("POST", "https://plex.tv/api/home/users/$userId/switch$q", headers = xml(deviceId, ownerToken))
+        check(code in 200..299) { if (code == 401 || code == 403) "Plex wants that Home user's PIN." else "Plex didn't switch to them (error $code)." }
+        (field(text, "authenticationToken") ?: field(text, "authToken"))?.takeIf { it.isNotBlank() } ?: error("Plex didn't give their sign-in.")
+    }
+
+    /**
+     * Home user [userId]'s sign-in for the owner's server [main]: their own token (their own watch history and On
+     * Deck), the address this TV knows (a TV elsewhere finds the server's outside address itself on start).
+     */
+    suspend fun homeUserAuth(deviceId: String, ownerToken: String, main: PlexAuth, userId: String, pin: String? = null): Result<PlexAuth> = runCatching {
+        val userToken = switchTo(deviceId, ownerToken, userId, pin).getOrThrow()
+        val r = http.get("https://plex.tv/api/v2/resources?includeHttps=1", headers(deviceId, userToken))
+        val res = r.body.asArray().firstOrNull { it.str("clientIdentifier") == main.machineId }
+            ?: error("Plex hasn't given them your server yet. Try again in a minute.")
+        PlexAuth(res.str("accessToken") ?: userToken, main.serverName, main.serverUrl, main.machineId, accountToken = userToken)
+    }
 }
 
 data class ServerInfo(val url: String, val name: String, val product: String)

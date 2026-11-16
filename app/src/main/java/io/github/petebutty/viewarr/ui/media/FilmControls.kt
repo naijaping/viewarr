@@ -103,7 +103,9 @@ fun pressFilmButton(
         PlayerButton.SwitchPlayer -> switchPlayer?.invoke()
         PlayerButton.Stop -> { onClose(); return false }
         // As on live TV: Settings over what's playing (the film carries on in the corner; Back brings it back).
-        PlayerButton.Settings -> { toCorner(menu); LiveShortcutsBridge.openSettings(); return false }
+        // Settings over the film, which carries on full screen behind it (it went to the corner, showing whatever page
+        // was underneath, the TV guide if it was started from live TV; Peter, 2026-11-16). Closing Settings: the film.
+        PlayerButton.Settings -> { menu.open = false; VodHost.behind = true; LiveShortcutsBridge.openSettings(); return false }
         // TV guide: the film carries on in the mini player while the guide opens (Back on it: full screen again).
         PlayerButton.Guide -> { openGuideOverFilm(menu); return false }
     }

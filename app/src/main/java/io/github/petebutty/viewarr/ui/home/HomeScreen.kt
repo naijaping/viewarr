@@ -357,11 +357,12 @@ fun HomeScreen(
     }
     // Reopening where you left off if Android cleared Viewarr in the background, and saving that spot (ResumeSpot.kt).
     ResumeEffects(hs, remote, session, playing)
+    LiveTvLockEffect(hs)
     LaunchedEffect(remote.loaded) {
         if (!remote.loaded || hs.startApplied) return@LaunchedEffect
         hs.startApplied = true
         // Live TV hub: always opens on the last channel, full screen.
-        val start = remote.startPage
+        val start = hs.startFor(remote.startPage)
         when (start) {
             StartPage.Guide -> Unit
             StartPage.Movies -> hs.page = Page.Movies
@@ -838,7 +839,9 @@ fun HomeScreen(
 
         SearchLayer(hs, filmInCorner)
 
+        PagesTicker(hs)
         DialogsLayer(hs, cornerArm, cornerFocus, cornerReachable, filmInCorner, pictureInCorner, guideFocus, mediaFocus, searchMedia, onSignOut)
+        GamePageHost(sportsHub)
     }
 }
 
@@ -901,6 +904,7 @@ private fun androidx.compose.foundation.layout.BoxScope.LiveTvLayer(
             vm = playback,
             fullscreen = hs.fullscreen,
             browse = browsed?.let { Triple(it, browsedNow, browsedNow?.let { c -> browsedList.firstOrNull { p -> p.startTime >= c.endTime } }) },
+            browseKnown = browsed?.let(hs::guideKnown) ?: true,
             // (Only once the picture has finished growing to full screen: opening a channel from the guide showed the
             // info bar during the glide, so it was seen resizing with the picture.)
             bannerVisible = hs.bannerVisible && !hs.osdVisible && !hs.liveBehind && !hs.livePreview && grown,
@@ -1301,6 +1305,7 @@ private fun androidx.compose.foundation.layout.BoxScope.SearchLayer(
         // Live TV in the corner: a window cut in search where its picture is, so it shows (the video's drawn
         // behind the app; a film's picture is drawn over everything anyway).
         Box(Modifier.fillMaxSize().appBackground().then(if (hs.infoTarget == null && hs.recordTarget == null) Modifier.trapFocus() else Modifier)) {
+            SearchClosesAfterTitle { hs.quickSearch = false; hs.searchStart = null; hs.searchCatchup = false }
             SearchPage(
                 guide = vm,
                 serverUrl = session?.serverUrl.orEmpty(),

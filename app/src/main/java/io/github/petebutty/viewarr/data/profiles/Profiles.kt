@@ -109,8 +109,32 @@ data class DUser(
     val apiKey: String?, val lastLogin: String?,
     /** What they may do (Viewarr's locks and Dispatcharr's own recording / catch-up / VOD flags). */
     val perms: Perms = Perms(),
+    /** What you chose to give them (null: chosen before this was remembered). */
+    val share: ShareChoice? = null,
 ) {
     val levelName get() = when (level) { 0 -> "Streamer"; 1 -> "Standard"; 10 -> "Admin"; else -> "Level $level" }
+}
+
+/**
+ * What an admin gave someone (kept on their Dispatcharr user, custom_properties.viewarr_share): the services, and the
+ * addons left out. "Send my setup" uses it, so new addons reach them and the ones you left out stay out.
+ */
+data class ShareChoice(val keep: Set<SharedService>, val addonsOff: Set<String>, val plexUser: String? = null) {
+    fun toProps() = kotlinx.serialization.json.buildJsonObject {
+        put("viewarr_share", kotlinx.serialization.json.buildJsonObject {
+            put("keep", JsonArray(keep.map { JsonPrimitive(it.name) }))
+            put("addonsOff", JsonArray(addonsOff.map { JsonPrimitive(it) }))
+            plexUser?.let { put("plexUser", JsonPrimitive(it)) }
+        })
+    }
+    companion object {
+        fun from(o: JsonObject?): ShareChoice? {
+            o ?: return null
+            val keep = (o["keep"] as? JsonArray)?.mapNotNull { e -> (e as? JsonPrimitive)?.content?.let { n -> SharedService.entries.firstOrNull { it.name == n } } }?.toSet() ?: return null
+            val off = (o["addonsOff"] as? JsonArray)?.mapNotNull { (it as? JsonPrimitive)?.content }?.toSet() ?: emptySet()
+            return ShareChoice(keep, off, (o["plexUser"] as? JsonPrimitive)?.content)
+        }
+    }
 }
 
 /** A Dispatcharr channel profile (which channels a user sees). */
@@ -128,6 +152,7 @@ class DispatcharrUsers @Inject constructor(private val http: HttpJson) {
         channelProfiles = j.array("channel_profiles").mapNotNull { (it as? JsonPrimitive)?.content?.toIntOrNull() },
         apiKey = j.str("api_key")?.takeIf { it.isNotBlank() }, lastLogin = j.str("last_login"),
         perms = Perms.from(j.child("custom_properties") as? JsonObject),
+        share = ShareChoice.from(j.child("custom_properties")?.child("viewarr_share") as? JsonObject),
     )
 
     /** The signed-in account's level (10 = admin). */
@@ -175,6 +200,12 @@ class DispatcharrUsers @Inject constructor(private val http: HttpJson) {
         return r.body.str("key")
     }
 
+    /** A new key for the user (their old one stops working everywhere). */
+    suspend fun newKey(s: Session, id: Int): String? {
+        val r = http.post(base(s) + "/api-keys/generate/", buildJsonObject { put("user_id", id) }, h(s))
+        return r.body.str("key")?.takeIf { r.ok && it.isNotBlank() }
+    }
+
     private fun errorText(body: JsonElement?, what: String): String {
         val o = body as? JsonObject ?: return "Dispatcharr wouldn't $what."
         val first = o.entries.firstOrNull() ?: return "Dispatcharr wouldn't $what."
@@ -196,15 +227,15 @@ enum class SharedService(val label: String) {
 }
 
 /**
- * [a] with only [keep]. Trakt and Plex are personal, so never shared: Plex is theirs through a Plex Home user or
+ * [a] with only [keep] (and of the addons, those not in [addonsOff], by address). Trakt and Plex are personal, so never shared: Plex is theirs through a Plex Home user or
  * their own invited account, never this account's token. A new device id (it names the TV to Plex and others).
  */
-fun Accounts.only(keep: Set<SharedService>): Accounts = Accounts(
+fun Accounts.only(keep: Set<SharedService>, addonsOff: Set<String> = emptySet()): Accounts = Accounts(
     tmdbKey = tmdbKey.takeIf { SharedService.Tmdb in keep },
     away = away,
     jellyfin = jellyfin.takeIf { SharedService.Jellyfin in keep },
     emby = emby.takeIf { SharedService.Emby in keep },
-    addons = if (SharedService.Addons in keep) addons else emptyList(),
+    addons = if (SharedService.Addons in keep) addons.filter { it.baseUrl !in addonsOff } else emptyList(),
     vodEnabled = vodEnabled && SharedService.ProviderVod in keep,
     seerr = seerr.takeIf { SharedService.Seerr in keep },
     mdblistKey = mdblistKey.takeIf { SharedService.Mdblist in keep },

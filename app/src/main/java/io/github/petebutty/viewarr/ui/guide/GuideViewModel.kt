@@ -117,6 +117,9 @@ class GuideViewModel @Inject constructor(
     /** The highlighted programme's artwork (TMDB), or null to show the channel logo. */
     suspend fun artFor(title: String): String? = programArt.imageFor(title)
 
+    /** The programme's title logo from TMDB (same close-name match as its picture), or null. */
+    suspend fun logoFor(title: String): String? = programArt.logoFor(title)
+
     /** The programme's own picture from Dispatcharr (its guide grid sends none), or null. */
     suspend fun pictureFor(p: GuideProgram): String? = sessions.session.first()?.let { repo.lookupImage(it, p) }
 

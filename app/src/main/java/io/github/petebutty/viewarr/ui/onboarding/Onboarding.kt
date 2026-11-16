@@ -120,7 +120,7 @@ fun RoleScreen(onAdmin: () -> Unit, onInvited: () -> Unit) {
             Text("How are you setting it up?", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 4.dp, bottom = 18.dp))
             RoleCard("I run my own server", "Set up Viewarr with your Dispatcharr (found on your network), and your other services.", onAdmin, Modifier.focusRequester(first))
             Spacer(Modifier.height(10.dp))
-            RoleCard("Someone gave me sign-in details", "A friend or family member shares their Viewarr: enter the server address and API key they sent you.", onInvited)
+            RoleCard("Someone gave me sign-in details", "A friend or family member shares their Viewarr: enter the address, username and password they sent you.", onInvited)
         }
     }
 }
@@ -151,31 +151,27 @@ private fun RoleCard(title: String, text: String, onClick: () -> Unit, modifier:
 fun InvitedSetup(onBack: () -> Unit, vm: SetupViewModel = hiltViewModel(key = "setup-invited")) {
     val state by vm.state.collectAsStateWithLifecycle()
     var address by remember { mutableStateOf("") }
-    var key by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
     val first = remember { FocusRequester() }
-    LaunchedEffect(Unit) { vm.openInvited() }
-    androidx.compose.runtime.DisposableEffect(Unit) { onDispose { vm.closeInvited() } }
     var inside by remember { mutableStateOf(false) }
     FocusOnStart(first) { inside }
     BackHandler { onBack() }
-    // The phone page opens on just the two boxes.
-    val url = state.qrUrl?.let { u -> u.substringBefore('#') + "?mode=invited" + (u.substringAfter('#', "").let { if (it.isEmpty()) "" else "#$it" }) }
+    // The three things their admin sent (Profiles → Add someone shows them): no keys, no codes.
     Row(Modifier.fillMaxSize().appBackground().onFocusChanged { inside = it.hasFocus }.padding(horizontal = 64.dp, vertical = 48.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(0.42f).padding(end = 40.dp)) {
             Text("Viewarr", fontSize = 14.sp, color = AppColors.Accent)
             Text("Sign in with the details you were sent", fontSize = 22.sp, lineHeight = 28.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(top = 18.dp))
-            Text("Scan the code with your phone (on the same Wi-Fi as this TV): paste the API key from the message there, it's much easier than typing it.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 14.dp))
-            Spacer(Modifier.height(20.dp))
-            url?.let { Box(Modifier.size(170.dp).background(Color.White, RoundedCornerShape(10.dp)).padding(10.dp)) { QrImage(it, Modifier.fillMaxSize()) } }
-            state.phoneActivity?.let { Text(it, fontSize = 14.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 12.dp)) }
+            Text("The address, your username and your password. Everything else is set up for you.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 14.dp))
         }
         Column(Modifier.weight(0.58f)) {
-            Text("Or type them here", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(bottom = 8.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(address, { address = it }, "Server address (e.g. tv.example.com)", first, KeyboardType.Uri, ImeAction.Next, {})
+            io.github.petebutty.viewarr.ui.setup.WizardField(address, { address = it }, "Address (e.g. tv.example.com)", first, KeyboardType.Uri, ImeAction.Next, {})
             Spacer(Modifier.height(10.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(key, { key = it }, "API key", null, KeyboardType.Text, ImeAction.Done, {})
+            io.github.petebutty.viewarr.ui.setup.WizardField(username, { username = it }, "Username", null, KeyboardType.Text, ImeAction.Next, {})
+            Spacer(Modifier.height(10.dp))
+            io.github.petebutty.viewarr.ui.setup.WizardField(password, { password = it }, "Password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
             Spacer(Modifier.height(14.dp))
-            MenuItem(text = if (state.busy) "Signing in…" else "Sign in", selected = false, onClick = { if (!state.busy) vm.invitedSignIn(address, key) })
+            MenuItem(text = if (state.busy) "Signing in…" else "Sign in", selected = false, onClick = { if (!state.busy) vm.invitedPasswordSignIn(address, username, password) })
             MenuItem(text = "Back", selected = false, onClick = onBack)
             state.error?.let { Text(it, fontSize = 14.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 10.dp, start = 12.dp)) }
         }

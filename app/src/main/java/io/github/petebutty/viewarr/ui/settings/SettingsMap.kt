@@ -40,7 +40,7 @@ object SettingsMap {
             Section("Glass & transparency", "Left / Right on the sliders: how much shows through. Solid hides what's behind completely.",
                 r(A, "Transparency", "Glass", "Glass colour", "Guide", "Wallpaper dimming") + r(A, "Live TV", "Pop-up glass", "Info bar: border")),
             Section("TV guide", "How the TV guide and the channel list look.",
-                r(A, "Live TV", "Channel numbers", "Channel logos", "Programme corners", "Progress bars", "Episode numbers", "Channel list width", "Channel list progress", "Highlighted progress colour", "Timeline", "Catch-up icons", "Programme pictures")),
+                r(A, "Live TV", "Channel numbers", "Channel logos", "Programme corners", "Progress bars", "Episode numbers", "Channel list width", "Channel list progress", "Highlighted progress colour", "Timeline", "Catch-up icons", "Programme pictures", "Programme title logos")),
             Section("Info bar & controls", "The bar over live TV and films (when you change channel or press OK / Info), and the film controls.",
                 r(A, "Live TV", "Info bar style", "Info bar corners", "Info bar size", "Clock on the info bar", "Info bar width", "Preview cards", "Info bar: channel number", "Info bar: episode numbers", "Info bar: picture quality", "Info bar: source", "Info bar: frame rate", "Rows under the info bar") +
                     r(P, "Player", "Player controls size")),

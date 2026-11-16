@@ -43,6 +43,16 @@ class HttpJson @Inject constructor(private val client: OkHttpClient, val json: J
     suspend fun delete(url: String, headers: Map<String, String> = emptyMap()): JsonResponse =
         call(Request.Builder().url(url).delete(), headers)
 
+    /** The reply as plain text (for services that may answer in XML, e.g. plex.tv's older account endpoints). */
+    suspend fun text(method: String, url: String, body: JsonElement? = null, headers: Map<String, String> = emptyMap()): Pair<Int, String> = withContext(Dispatchers.IO) {
+        val b = Request.Builder().url(url)
+        val payload = (body?.toString() ?: "").toRequestBody(JSON_TYPE)
+        when (method) { "POST" -> b.post(payload); "PUT" -> b.put(payload); "DELETE" -> b.delete(); else -> b.get() }
+        headers.forEach { (k, v) -> b.header(k, v) }
+        b.header("User-Agent", "Viewarr/0.7")
+        client.newCall(b.build()).execute().use { r -> r.code to r.body?.string().orEmpty() }
+    }
+
     private suspend fun call(builder: Request.Builder, headers: Map<String, String>): JsonResponse = withContext(Dispatchers.IO) {
         headers.forEach { (k, v) -> builder.header(k, v) }
         if ("Accept" !in headers) builder.header("Accept", "application/json")

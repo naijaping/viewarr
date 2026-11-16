@@ -5,6 +5,8 @@ import io.github.petebutty.viewarr.data.accounts.AccountStore
 import io.github.petebutty.viewarr.data.remote.services.HttpJson
 import io.github.petebutty.viewarr.data.remote.services.TmdbService
 import io.github.petebutty.viewarr.data.remote.services.array
+import io.github.petebutty.viewarr.data.remote.services.child
+import io.github.petebutty.viewarr.data.remote.services.int
 import io.github.petebutty.viewarr.data.remote.services.str
 import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
@@ -20,26 +22,66 @@ class ProgramArt @Inject constructor(
     private val tmdb: TmdbService,
     private val store: AccountStore,
 ) {
-    private val cache = LruCache<String, Any>(300) // title → url, or NONE
+    private val cache = LruCache<String, Any>(300) // title → Match, or NONE
+    private val logos = LruCache<String, Any>(300) // "tv:123" → logo url, or NONE
     private object None
+    /** A guide title matched to TMDB: tv or movie, its id, and its backdrop. */
+    private data class Match(val type: String, val id: Int, val backdrop: String?, val logoMatch: Match? = null)
 
-    suspend fun imageFor(rawTitle: String): String? {
+    /** The programme's show / film on TMDB, by a close name match only (cached, hits and misses). */
+    private suspend fun match(rawTitle: String): Match? {
         val title = clean(rawTitle)
         if (title.length < 2) return null
-        cache.get(title)?.let { return it as? String }
+        cache.get(title)?.let { return it as? Match }
         val key = store.current().tmdbKey ?: return null
-        val url = withTimeoutOrNull(6_000) {
+        val found = withTimeoutOrNull(6_000) {
             runCatching {
                 val r = http.get(tmdb.url("/search/multi", key, mapOf("query" to title, "include_adult" to "false", "language" to "en-GB")), tmdb.headers(key))
                 if (!r.ok) return@runCatching null
                 val want = norm(title)
-                r.body.array("results")
+                val same = r.body.array("results")
                     .filter { it.str("media_type") == "tv" || it.str("media_type") == "movie" }
-                    .firstOrNull { j -> norm(j.str("name") ?: j.str("title") ?: "") == want && j.str("backdrop_path") != null }
-                    ?.str("backdrop_path")?.let { "https://image.tmdb.org/t/p/w780$it" }
+                    .filter { j -> norm(j.str("name") ?: j.str("title") ?: "") == want }
+                fun m(j: kotlinx.serialization.json.JsonElement) = j.int("id")?.let { Match(j.str("media_type")!!, it, j.str("backdrop_path")) }
+                // For the title logo, stricter (a wrong logo is worse than the name): a UK / Irish / US show, or the
+                // only film with that name. ("Breakfast": five films and a Philippine show, so no logo.)
+                val tvOk = same.firstOrNull { j -> j.str("media_type") == "tv" && (j.child("origin_country") as? kotlinx.serialization.json.JsonArray).orEmpty().any { (it as? kotlinx.serialization.json.JsonPrimitive)?.content in setOf("GB", "IE", "US") } }
+                val films = same.filter { it.str("media_type") == "movie" }
+                val logoPick = tvOk ?: films.singleOrNull()
+                // The picture: one with a picture first, else any (as before).
+                (same.firstOrNull { it.str("backdrop_path") != null } ?: same.firstOrNull())
+                    ?.let(::m)?.copy(logoMatch = logoPick?.let(::m))
             }.getOrNull()
         }
-        cache.put(title, url ?: None)
+        cache.put(title, found ?: None)
+        return found
+    }
+
+    suspend fun imageFor(rawTitle: String): String? = match(rawTitle)?.backdrop?.let { "https://image.tmdb.org/t/p/w780$it" }
+
+    /**
+     * The programme's title logo (its show's or film's logo artwork on TMDB: English first, PNGs, best voted), or
+     * null when it has none or the title didn't match closely.
+     */
+    suspend fun logoFor(rawTitle: String): String? {
+        val m = match(rawTitle)?.logoMatch ?: return null
+        val cacheKey = "${m.type}:${m.id}"
+        logos.get(cacheKey)?.let { return it as? String }
+        val key = store.current().tmdbKey ?: return null
+        val url = withTimeoutOrNull(6_000) {
+            runCatching {
+                val r = http.get(tmdb.url("/${m.type}/${m.id}/images", key, mapOf("include_image_language" to "en,null")), tmdb.headers(key))
+                if (!r.ok) return@runCatching null
+                r.body.array("logos").sortedWith(
+                    compareBy<kotlinx.serialization.json.JsonElement>(
+                        { when (it.str("iso_639_1")) { "en" -> 0; null -> 1; else -> 2 } },
+                        { if (it.str("file_path")?.endsWith(".png") == true) 0 else 1 },
+                        { -(((it.child("vote_average") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()) ?: 0.0) },
+                    ),
+                ).firstOrNull()?.str("file_path")?.let { "https://image.tmdb.org/t/p/w500$it" }
+            }.getOrNull()
+        }
+        logos.put(cacheKey, url ?: None)
         return url
     }
 

@@ -1,6 +1,7 @@
 # Shown once, the first time a new version opens (not on a fresh install). Keep it to the few things worth knowing.
 # Lines starting with "- " are the points; the first line without "#" or "-" is the heading.
-A tidier channel list
-- Channel list: narrower (choose the width), long programme names scroll, progress on the highlighted channel only if you like
-- The info bar stays the same size from channel to channel
-- The mic shows it's listening when you search by voice
+Smarter source switching, game pages and a news ticker
+- Source switching works with every provider, including ones allowing one line
+- Sports: OK on a game shows line-ups, form and stats; record a whole team
+- A news ticker with your choice of feeds and looks (Settings → Appearance)
+- Programme title logos in the guide, and the menu search box you type straight into

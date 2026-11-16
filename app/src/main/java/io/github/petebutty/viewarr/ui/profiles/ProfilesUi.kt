@@ -110,6 +110,9 @@ class ProfilesViewModel @Inject constructor(
     private val invites: io.github.petebutty.viewarr.data.profiles.Invites,
     private val accountStore: io.github.petebutty.viewarr.data.accounts.AccountStore,
     private val subsonic: io.github.petebutty.viewarr.data.music.SubsonicClient,
+    private val plexService: io.github.petebutty.viewarr.data.remote.services.PlexService,
+    private val house: io.github.petebutty.viewarr.data.profiles.House,
+    private val musicLib: io.github.petebutty.viewarr.data.music.MusicLibrary,
 ) : ViewModel() {
     val profiles: StateFlow<List<Profile>> = manager.profiles.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val activeId: StateFlow<String?> = manager.activeId.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -130,7 +133,7 @@ class ProfilesViewModel @Inject constructor(
     init {
         // Whoever is signed in is the active profile (first run, a new sign-in, or a switch).
         viewModelScope.launch {
-            sessions.session.distinctUntilChanged().collect { manager.adoptCurrent(); checkAdmin() }
+            sessions.session.distinctUntilChanged().collect { if (ProfileUi.ENABLED) manager.adoptCurrent(); checkAdmin() }
         }
     }
 
@@ -164,6 +167,8 @@ class ProfilesViewModel @Inject constructor(
 
     private fun work(block: suspend (Session) -> String?) = viewModelScope.launch {
         val s = me() ?: return@launch
+        // (A message left from the last action mustn't look like this one's: "…is ready" closed a second Add at once.)
+        _message.value = null
         _busy.value = true
         _message.value = runCatching { block(s) }.getOrElse { it.message ?: "That didn't work." }
         _busy.value = false
@@ -189,23 +194,78 @@ class ProfilesViewModel @Inject constructor(
         manager.add(Profile(s.serverUrl, u.username, key))
         "${u.username} is on this TV now. Switch to them from Who's watching."
     }
+    /** Someone's saved setup as Dispatcharr has it: their key's session, their settings, their sign-ins (null: none saved). */
+    private data class Their(val target: Session, val prefs: kotlinx.serialization.json.JsonObject, val accounts: io.github.petebutty.viewarr.data.accounts.Accounts?)
+
+    /**
+     * [u]'s saved setup. Success null: they have none yet (no key, or Dispatcharr says nothing is saved), so starting
+     * fresh is right. Failure: it couldn't be read (no answer, or sign-ins under another key): anything that changes
+     * their setup must stop, never write a fresh one over theirs.
+     */
+    private suspend fun theirSetup(s: Session, u: DUser): Result<Their?> {
+        val key = u.apiKey ?: return Result.success(null)
+        val target = Session(s.serverUrl, u.username, key)
+        val copy = sync.copyResult(target).getOrElse { return Result.failure(IllegalStateException("Couldn't read ${u.username}'s saved setup (${it.message}). Nothing was changed; try again.")) }
+            ?: return Result.success(null)
+        val accounts = sync.signInsOf(copy, target).getOrElse { return Result.failure(IllegalStateException("${u.username}'s saved sign-ins can't be read (their key changed). Nothing was changed: use Reset their setup… after Set up their Viewarr… to start them again.")) }
+        val prefs = copy["prefs"] as? kotlinx.serialization.json.JsonObject ?: sync.currentPrefs()
+        return Result.success(Their(target, prefs, accounts))
+    }
+
+    /** What you gave [u]: remembered, or (set up before that was kept) worked out from what they have. */
+    private fun choiceFor(u: DUser, theirs: io.github.petebutty.viewarr.data.accounts.Accounts?, mine: io.github.petebutty.viewarr.data.accounts.Accounts) = u.share ?: io.github.petebutty.viewarr.data.profiles.ShareChoice(
+        if (theirs == null) emptySet() else SharedService.entries.filter { it.has(theirs) }.toSet(),
+        if (theirs == null) emptySet() else mine.addons.map { it.baseUrl }.toSet() - theirs.addons.map { it.baseUrl }.toSet(),
+    )
+
+    /** Your services and addons as [choice] gives them, with everything personal of [theirs] kept as it is. */
+    private fun merged(mine: io.github.petebutty.viewarr.data.accounts.Accounts, choice: io.github.petebutty.viewarr.data.profiles.ShareChoice, theirs: io.github.petebutty.viewarr.data.accounts.Accounts?) =
+        mine.only(choice.keep - SharedService.Music, choice.addonsOff).let { a ->
+            if (theirs == null) a else a.copy(
+                deviceId = theirs.deviceId, plex = theirs.plex, plexMore = theirs.plexMore, plexOff = theirs.plexOff,
+                trakt = theirs.trakt, traktToPlex = theirs.traktToPlex, watchlist = theirs.watchlist,
+                navidrome = theirs.navidrome, musicEnabled = theirs.musicEnabled, musicOff = theirs.musicOff,
+            )
+        }
+
+    /** Writes [accounts] and [prefs] as [u]'s setup (on Dispatcharr, and their profile copy on this TV). */
+    private suspend fun writeSetup(s: Session, u: DUser, target: Session, prefs: kotlinx.serialization.json.JsonObject, accounts: io.github.petebutty.viewarr.data.accounts.Accounts): Boolean {
+        val signIns = json.encodeToString(io.github.petebutty.viewarr.data.accounts.Accounts.serializer(), accounts)
+        if (!sync.writeFor(s, u.id, target, prefs, signIns)) return false
+        store.saveSnapshot(Profile(target.serverUrl, target.username, target.apiKey).id, kotlinx.serialization.json.buildJsonObject {
+            put("prefs", prefs); put("accounts", kotlinx.serialization.json.JsonPrimitive(signIns)); put("setupComplete", kotlinx.serialization.json.JsonPrimitive(true))
+        })
+        return true
+    }
+
     /**
      * Sets up the user's Viewarr: this TV's look and settings, and the services ticked (never Trakt), saved to
      * their Dispatcharr copy, so any TV they sign in on (here or away) restores it.
      */
     fun prepare(u: DUser, keep: Set<SharedService>) = work { s ->
-        val key = users.apiKeyFor(s, u) ?: return@work "Dispatcharr wouldn't give a key for ${u.username}."
-        if (saveSetupFor(s, u, key, keep)) "Set up ${u.username}'s Viewarr: ${keep.joinToString { it.label }.ifEmpty { "live TV only" }}."
-        else "Dispatcharr wouldn't save ${u.username}'s setup (needs Dispatcharr 0.33 or newer)."
+        val their = theirSetup(s, u).getOrElse { return@work it.message }
+        val key = their?.target?.apiKey ?: users.apiKeyFor(s, u) ?: return@work "Dispatcharr wouldn't give a key for ${u.username}."
+        val target = their?.target ?: Session(s.serverUrl, u.username, key)
+        val mine = sync.currentAccounts()
+        // Their remembered choice with these services; addons left out and their Plex user stay as they were.
+        val choice = choiceFor(u, their?.accounts, mine).copy(keep = keep - SharedService.Music)
+        users.update(s, u.id, props = choice.toProps()).getOrElse { return@work it.message }
+        if (!writeSetup(s, u, target, sync.currentPrefs(), merged(mine, choice, their?.accounts))) return@work "Dispatcharr wouldn't save ${u.username}'s setup (needs Dispatcharr 0.33 or newer)."
+        "Set up ${u.username}'s Viewarr: ${(keep - SharedService.Music).joinToString { it.label }.ifEmpty { "live TV only" }}."
     }
 
     /** Their setup (this TV's look and settings, and the services in [keep]) saved on Dispatcharr and on this TV. */
-    private suspend fun saveSetupFor(s: Session, u: DUser, key: String, keep: Set<SharedService>, music: io.github.petebutty.viewarr.data.music.NavidromeAuth? = null): Boolean {
+    private suspend fun saveSetupFor(
+        s: Session, u: DUser, key: String, keep: Set<SharedService>, music: io.github.petebutty.viewarr.data.music.NavidromeAuth? = null,
+        addonsOff: Set<String> = emptySet(), plex: io.github.petebutty.viewarr.data.accounts.PlexAuth? = null,
+        musicFrom: Set<String>? = null,
+    ): Boolean {
         val target = Session(s.serverUrl, u.username, key)
-        // Music: their own Navidrome login (never this TV's).
-        val accounts = sync.currentAccounts().only(keep - SharedService.Music).let { a ->
+        // Music: their own Navidrome login (never this TV's). Plex: their own Plex Home user (never this account).
+        val accounts = sync.currentAccounts().only(keep - SharedService.Music, addonsOff).let { a ->
             if (music != null) a.copy(navidrome = music, musicEnabled = true) else a
-        }
+        }.let { a -> if (plex != null) a.copy(plex = plex) else a }
+            .let { a -> if (musicFrom != null) withMusic(a, music, musicFrom) else a }
         val signIns = json.encodeToString(io.github.petebutty.viewarr.data.accounts.Accounts.serializer(), accounts)
         // Their copy on this TV is replaced too, so switching to them here picks it up.
         store.saveSnapshot(target.let { Profile(it.serverUrl, it.username, it.apiKey).id }, kotlinx.serialization.json.buildJsonObject {
@@ -235,11 +295,18 @@ class ProfilesViewModel @Inject constructor(
     /** The address a TV outside the home uses for Dispatcharr (its away address), else this TV's. */
     private suspend fun outsideAddress(s: Session) = (dispatcharrAway() ?: s.serverUrl).removePrefix("https://").removeSuffix(":443").trimEnd('/')
 
-    /** [u]'s sign-in details for another house (their existing key: making a new one would lock out their setup). */
-    fun shareFor(u: DUser) = work { s ->
-        val key = users.apiKeyFor(s, u) ?: return@work "Dispatcharr wouldn't give a key for ${u.username}."
-        _share.value = Share(u.username, outsideAddress(s), key); null
+    /** [u]'s sign-in for another house: [password] set as their new one, then the address, username and password to send. */
+    fun signInFor(u: DUser, password: String) = work { s ->
+        if (password.length < 6) return@work "For another house, use a password of at least 6 characters."
+        users.update(s, u.id, password = password).getOrElse { return@work it.message }
+        _details.value = Details(u.username, outsideAddress(s), password); null
     }
+
+    /** What to send someone in another house: the address, their username and password. */
+    data class Details(val who: String, val address: String, val password: String)
+    private val _details = MutableStateFlow<Details?>(null)
+    val details: StateFlow<Details?> = _details
+    fun clearDetails() { _details.value = null }
 
     private val _inviteFor = MutableStateFlow<String?>(null)
     /** Whose invite [invite] is. */
@@ -249,26 +316,253 @@ class ProfilesViewModel @Inject constructor(
      * Add someone, all in one go: their Dispatcharr user, what they may do, their setup (the services ticked), then
      * on this TV (a profile) or in another house (an invite, made with the password just set: no typing it again).
      */
-    fun addSomeone(name: String, password: String, away: Boolean, awayAddress: String, keep: Set<SharedService>, perms: io.github.petebutty.viewarr.data.profiles.Perms, music: MusicChoice = MusicChoice.None) = work { s ->
+    fun addSomeone(
+        name: String, password: String, away: Boolean, awayAddress: String, keep: Set<SharedService>, perms: io.github.petebutty.viewarr.data.profiles.Perms,
+        music: MusicChoice = MusicChoice.None, addonsOff: Set<String> = emptySet(), plex: PlexChoice = PlexChoice.None,
+        musicFrom: Set<String> = emptySet(),
+    ) = work { s ->
+        // On this TV nobody types a password: one is made for them (reset it later to sign them in elsewhere).
+        val password = if (!away && password.isBlank()) randomPassword() else password
         if (name.isBlank() || password.length < 4) return@work "Enter a name, and a password of at least 4 characters."
-        // Their Navidrome login first: if that's wrong, nothing is made yet.
-        val nd = navidromeFor(name.trim(), password, music).getOrElse { return@work it.message }
+        // Signing in from outside is open to the internet: a password long enough that guessing gets nowhere.
+        if (away && password.length < 6) return@work "For another house, use a password of at least 6 characters."
         if (away && dispatcharrAway() == null) {
-            val a = io.github.petebutty.viewarr.data.net.Reach.normalise(awayAddress, away = true) ?: return@work "Enter your Dispatcharr's outside address (e.g. tv.example.com)."
+            val a = io.github.petebutty.viewarr.data.net.Reach.normalise(awayAddress, away = true) ?: return@work "Enter your Dispatcharr's public address (e.g. tv.example.com)."
             val home = io.github.petebutty.viewarr.data.net.Reach.normalise(s.serverUrl, away = false) ?: return@work "This TV's Dispatcharr address isn't usable."
             accountStore.update { it.copy(away = it.away + (home to a)) }
         }
+        // Their Dispatcharr user first (a taken name stops here, before anything is made on Navidrome or Plex);
+        // if a later step fails, it's removed again so nothing is left half made.
         val u = users.create(s, name.trim(), password).getOrElse { return@work it.message }
-        users.update(s, u.id, props = perms.toProps())
-        val key = users.apiKeyFor(s, u) ?: return@work "Added ${u.username}, but Dispatcharr wouldn't give a key for them."
-        saveSetupFor(s, u, key, keep, nd)
+        suspend fun undo(why: String?): String { users.delete(s, u.id); return (why ?: "That didn't work.") + " Nothing was added." }
+        val nd = navidromeFor(name.trim(), password, music).getOrElse { return@work undo(it.message) }
+        val plexAuth = plexFor(plex).getOrElse { return@work undo(it.message) }
+        val props = kotlinx.serialization.json.JsonObject(perms.toProps() + io.github.petebutty.viewarr.data.profiles.ShareChoice(keep, addonsOff, plexAuth?.let { plexTitle(plex) }).toProps())
+        users.update(s, u.id, props = props).getOrElse { return@work undo(it.message) }
+        val key = users.apiKeyFor(s, u) ?: return@work undo("Dispatcharr wouldn't give a key for ${u.username}.")
+        if (!saveSetupFor(s, u, key, keep, nd, addonsOff, plexAuth, musicFrom)) return@work undo("Dispatcharr wouldn't save ${u.username}'s setup.")
         if (!away) {
             manager.add(Profile(s.serverUrl, u.username, key))
             "${u.username} is ready: pick them on Who's watching."
         } else {
-            // In another house: they sign in with the address and their key (their setup goes on by itself).
-            _share.value = Share(u.username, outsideAddress(s), key); null
+            // In another house: the address, their username and password to send them (their TV signs in with
+            // those and their setup goes on by itself).
+            _details.value = Details(u.username, outsideAddress(s), password); null
         }
+    }
+
+    private fun randomPassword(): String {
+        val chars = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+        val r = java.security.SecureRandom()
+        return (1..20).map { chars[r.nextInt(chars.length)] }.joinToString("")
+    }
+
+    // ---- Backups of this TV's whole setup, in the Viewarr plugin (admins)
+
+    private val _backups = MutableStateFlow<List<io.github.petebutty.viewarr.data.profiles.House.Backup>?>(null)
+    /** null: loading, or no plugin. */
+    val backups: StateFlow<List<io.github.petebutty.viewarr.data.profiles.House.Backup>?> = _backups
+    private val _hasPlugin = MutableStateFlow<Boolean?>(null)
+    val hasPlugin: StateFlow<Boolean?> = _hasPlugin
+
+    /** Whether the Viewarr plugin is installed and on (for the hints that suggest it). */
+    fun checkPlugin() = viewModelScope.launch { me()?.let { _hasPlugin.value = runCatching { house.installed(it) }.getOrDefault(false) } }
+
+    fun loadBackups() = viewModelScope.launch {
+        val s = me() ?: return@launch
+        val list = house.backups(s)
+        _hasPlugin.value = list != null
+        _backups.value = list
+    }
+
+    fun saveBackup() = work { s ->
+        val name = "${s.username} · " + java.text.SimpleDateFormat("d MMM yyyy HH:mm", java.util.Locale.UK).format(java.util.Date())
+        val ok = house.saveBackup(s, name, sync.backupBody(s))
+        loadBackups()
+        if (ok) "Backup saved in the Viewarr plugin." else "The Viewarr plugin didn't save it (is it installed and on?)."
+    }
+
+    fun restoreBackup(b: io.github.petebutty.viewarr.data.profiles.House.Backup) = work { s ->
+        val data = house.backup(s, b.id) ?: return@work "That backup couldn't be read."
+        if (sync.restoreBackup(data, s)) "Restored ${b.name}." else "Settings restored; its sign-ins couldn't be read (your Dispatcharr API key has changed since)."
+    }
+
+    fun deleteBackup(b: io.github.petebutty.viewarr.data.profiles.House.Backup) = work { s ->
+        val ok = house.deleteBackup(s, b.id); loadBackups()
+        if (ok) "Deleted ${b.name}." else "It couldn't be deleted."
+    }
+
+    // ---- Resetting someone (admins)
+
+    /** [u]'s profile on this TV, if they have one. */
+    private fun profileOf(u: DUser) = profiles.value.firstOrNull { it.username == u.username }
+
+    /** Clears a forgotten profile PIN (PINs are kept only on this TV). */
+    fun clearPinFor(u: DUser) = viewModelScope.launch {
+        val p = profileOf(u)
+        _message.value = if (p == null) "${u.username} isn't a profile on this TV." else if (p.pin == null) "${u.username} has no PIN here." else { store.setPin(p.id, null); "${u.username}'s PIN is cleared on this TV." }
+    }
+
+    /** A new password; [show] then shows what to send (the address, username and password). */
+    fun newPassword(u: DUser, password: String, show: Boolean) = work { s ->
+        if (password.length < 6) return@work "Use at least 6 characters."
+        users.update(s, u.id, password = password).getOrElse { return@work it.message }
+        if (show) { _details.value = Details(u.username, outsideAddress(s), password); null } else "New password set for ${u.username}."
+    }
+
+    /**
+     * Signs [u] out everywhere: a new Dispatcharr key, so every TV signed in as them stops working until they sign
+     * in again with their password (a lost TV, say). Their saved setup is moved to the new key first, so nothing of
+     * it is lost; their profile on this TV gets the new key too.
+     */
+    fun signOutEverywhere(u: DUser) = work { s ->
+        if (u.username == s.username) return@work "That's you: sign this TV out from Settings instead."
+        // Their setup first: if it can't be read now, stop (a new key would leave it unreadable for good).
+        val their = theirSetup(s, u).getOrElse { return@work it.message }
+        val key = users.newKey(s, u.id) ?: return@work "Dispatcharr wouldn't make ${u.username} a new key. Nothing was changed."
+        val fresh = Session(s.serverUrl, u.username, key)
+        profileOf(u)?.let { manager.add(it.copy(apiKey = key)) }
+        if (their != null) {
+            val saved = sync.writeFor(s, u.id, fresh, their.prefs, their.accounts?.let { json.encodeToString(io.github.petebutty.viewarr.data.accounts.Accounts.serializer(), it) })
+            if (!saved) return@work "${u.username} is signed out everywhere, but their setup couldn't be saved again: use Reset their setup… to put it back."
+        }
+        "${u.username} is signed out everywhere. They sign in again with their password; their setup is kept."
+    }
+
+    /** Puts your setup back on [u]'s TVs, replacing what they've changed (their own Plex, music and Trakt stay). */
+    fun resetSetup(u: DUser) = sendSetup(listOf(u))
+
+    // ---- Sending this TV's setup to the people you've added
+
+    /**
+     * This TV's setup to each of [targets]: settings (look, home rows, menus, playback, remote) and the services and
+     * addons you gave them, as they are on this TV now (new addons reach them; ones you left out stay out). What's
+     * theirs stays theirs: Plex Home user, music login, Trakt. Their TVs pick it up when Viewarr next starts. People
+     * with no Viewarr setup yet, or whose saved sign-ins can't be read, are skipped.
+     */
+    fun sendSetup(targets: List<DUser>) = work { s ->
+        val sent = mutableListOf<String>(); val none = mutableListOf<String>(); val failed = mutableListOf<String>()
+        val prefs = sync.currentPrefs()
+        val mine = sync.currentAccounts()
+        for (u in targets) {
+            if (u.username == s.username) continue
+            val their = theirSetup(s, u).getOrElse { failed += u.username; null }
+            if (their == null) { if (u.username !in failed) none += u.username; continue }
+            if (their.accounts == null) { none += u.username; continue }
+            if (writeSetup(s, u, their.target, prefs, merged(mine, choiceFor(u, their.accounts, mine), their.accounts))) sent += u.username else failed += u.username
+        }
+        buildString {
+            if (sent.isNotEmpty()) append("Sent your setup to ${sent.joinToString()}: their TVs pick it up when Viewarr next starts.")
+            else if (none.isEmpty() && failed.isEmpty()) append("There's nobody else to send to yet.")
+            else append("Nothing sent.")
+            if (none.isNotEmpty()) append(" ${none.joinToString()}: no Viewarr setup yet (Set up their Viewarr first).")
+            if (failed.isNotEmpty()) append(" ${failed.joinToString()}: couldn't be read or saved, left as they were.")
+        }
+    }
+
+    // ---- Plex: each person's own Plex Home user
+
+    /** The managed users in this TV's Plex Home (null: no Plex here, so nothing to offer). */
+    suspend fun plexHomeUsers(): List<io.github.petebutty.viewarr.data.remote.services.PlexService.HomeUser>? {
+        val a = accountStore.current()
+        val p = a.plex ?: return null
+        return plexService.homeUsers(a.deviceId, p.token).filter { !it.admin }
+    }
+
+    /** The Plex Home user's name for a choice (remembered on their Dispatcharr user, shown in their settings). */
+    private fun plexTitle(c: PlexChoice): String? = when (c) { is PlexChoice.New -> c.name.trim(); is PlexChoice.Existing -> c.title; PlexChoice.None -> null }
+
+    /**
+     * Changes [u]'s Plex: a Home user (new or existing) or none, in their saved setup (everything else of theirs
+     * stays). Their TVs pick it up when Viewarr next starts.
+     */
+    fun setPlex(u: DUser, choice: PlexChoice) = work { s ->
+        val their = theirSetup(s, u).getOrElse { return@work it.message } ?: return@work "${u.username} has no Viewarr setup yet: Set up their Viewarr first."
+        val theirs = their.accounts ?: return@work "${u.username} has no sign-ins saved yet: Set up their Viewarr first."
+        val auth = plexFor(choice).getOrElse { return@work it.message }
+        val next = theirs.copy(plex = auth, plexMore = if (auth == null) emptyList() else theirs.plexMore)
+        if (!writeSetup(s, u, their.target, their.prefs, next)) return@work "Dispatcharr wouldn't save ${u.username}'s setup."
+        users.update(s, u.id, props = choiceFor(u, theirs, sync.currentAccounts()).copy(plexUser = plexTitle(choice)).toProps())
+        if (auth != null) "${u.username} now watches Plex as ${plexTitle(choice)}." else "Plex taken away from ${u.username}."
+    }
+
+    /**
+     * What would reach someone in another house only at home: the services and addons they'd get that this TV uses by
+     * a home address (192.168…, .local). Shown as a warning in Add someone: add them with a public address to share.
+     */
+    suspend fun homeOnly(keep: Set<SharedService>, addonsOff: Set<String>, music: Boolean, plex: Boolean): List<String> {
+        val a = accountStore.current()
+        fun home(url: String?) = url != null && io.github.petebutty.viewarr.data.media.isHomeAddress(url)
+        fun host(url: String) = runCatching { java.net.URI(url).let { u -> u.host + (if (u.port > 0) ":" + u.port else "") } }.getOrDefault(url)
+        return buildList {
+            if (SharedService.Jellyfin in keep && home(a.jellyfin?.serverUrl)) add("Jellyfin · " + host(a.jellyfin!!.serverUrl))
+            if (SharedService.Emby in keep && home(a.emby?.serverUrl)) add("Emby · " + host(a.emby!!.serverUrl))
+            if (SharedService.Seerr in keep && home(a.seerr?.url)) add("Seerr · " + host(a.seerr!!.url))
+            if (music && home(a.navidrome?.url)) add("Navidrome · " + host(a.navidrome!!.url))
+            if (SharedService.Addons in keep) a.addons.filter { it.baseUrl !in addonsOff && home(it.baseUrl) }.forEach { add(it.name + " · " + host(it.baseUrl)) }
+        }
+    }
+
+    /** This TV's addons (each can be given or left out). */
+    suspend fun myAddons() = accountStore.current().addons
+
+    /**
+     * Their Plex sign-in: none, an existing Plex Home user, or a new managed user (one already in the Home with
+     * that name is used rather than making a second). Their libraries are shared, then their own token fetched.
+     */
+    private suspend fun plexFor(choice: PlexChoice): Result<io.github.petebutty.viewarr.data.accounts.PlexAuth?> = runCatching {
+        if (choice == PlexChoice.None) return@runCatching null
+        val a = accountStore.current()
+        val main = a.plex ?: error("Sign this TV in to Plex first.")
+        // Only the Plex account that owns the Home can add people to it (not a Home user's sign-in on this TV).
+        if (main.accountToken != null) error("This TV's Plex sign-in is a Home user's: sign this TV in to Plex as the owner to manage Plex Home.")
+        val owner = main.token
+        val userId = when (choice) {
+            is PlexChoice.Existing -> choice.id
+            is PlexChoice.New -> {
+                val name = choice.name.trim().ifEmpty { error("Enter a name for their Plex user.") }
+                plexService.homeUsers(a.deviceId, owner).firstOrNull { !it.admin && it.title.equals(name, ignoreCase = true) }?.id
+                    ?: plexService.createManagedUser(a.deviceId, owner, name).getOrThrow()
+            }
+            PlexChoice.None -> error("")
+        }
+        plexService.shareAllLibraries(a.deviceId, owner, main.machineId, userId).getOrThrow()
+        // A new user's server can take a moment to show up on plex.tv.
+        var last: Throwable? = null
+        repeat(3) { attempt ->
+            plexService.homeUserAuth(a.deviceId, owner, main, userId).fold(onSuccess = { return@runCatching it }, onFailure = { last = it })
+            if (attempt < 2) kotlinx.coroutines.delay(3_000)
+        }
+        throw last ?: IllegalStateException("Plex didn't give their sign-in.")
+    }
+
+    // ---- Music: Navidrome (their own login) and the music on Plex, Jellyfin and Emby
+
+    /** Music on this TV's servers by kind (Plex, Jellyfin, Emby): each kind's source ids. Navidrome is chosen apart. */
+    suspend fun musicFamilies(): Map<String, List<String>> = runCatching { musicLib.allSources() }.getOrDefault(emptyList())
+        .mapNotNull { src -> musicFamily(src.id)?.let { it to src.id } }
+        .groupBy({ it.first }, { it.second })
+
+    /** The music kinds [u] can reach (Plex through their Plex user, Jellyfin / Emby if given), and those switched on. */
+    suspend fun musicKindsFor(u: DUser): Pair<List<String>, Set<String>> {
+        val s = me() ?: return emptyList<String>() to emptySet()
+        val theirs = theirSetup(s, u).getOrNull()?.accounts ?: return emptyList<String>() to emptySet()
+        val fams = musicFamilies()
+        val reach = fams.keys.filter { k -> when (k) { "Plex" -> theirs.plex != null; "Jellyfin" -> theirs.jellyfin != null; "Emby" -> theirs.emby != null; else -> false } }
+        val on = reach.filter { k -> theirs.musicOn && fams[k].orEmpty().any { it !in theirs.musicOff } }.toSet()
+        return reach to on
+    }
+
+    private fun musicFamily(id: String) = when {
+        id.startsWith("px") -> "Plex"; id.startsWith("jf") -> "Jellyfin"; id.startsWith("emby") -> "Emby"; else -> null
+    }
+
+    /** [a] with music from Navidrome ([nd]) and the kinds in [from]: on if any is, the rest switched off. */
+    private suspend fun withMusic(a: io.github.petebutty.viewarr.data.accounts.Accounts, nd: io.github.petebutty.viewarr.data.music.NavidromeAuth?, from: Set<String>): io.github.petebutty.viewarr.data.accounts.Accounts {
+        val fams = musicFamilies()
+        val off = fams.filterKeys { it !in from }.values.flatten().toSet() + (if (nd == null && a.navidrome == null) setOf("nd") else emptySet())
+        val any = (nd ?: a.navidrome) != null || fams.keys.any { it in from }
+        return a.copy(navidrome = nd ?: a.navidrome, musicEnabled = any, musicOff = off)
     }
 
     // ---- Music: each person's own Navidrome login
@@ -278,9 +572,10 @@ class ProfilesViewModel @Inject constructor(
 
     /** Their Navidrome login: one they have already, or a new one (same name and password as their Viewarr). */
     private suspend fun navidromeFor(name: String, password: String, m: MusicChoice): Result<io.github.petebutty.viewarr.data.music.NavidromeAuth?> {
-        val mine = accountStore.current().navidrome ?: return Result.success(null)
+        val mine = accountStore.current().navidrome
+            ?: return if (m is MusicChoice.Existing || m is MusicChoice.Create) Result.failure(IllegalStateException("This TV has no Navidrome: add it in Settings first.")) else Result.success(null)
         return when (m) {
-            MusicChoice.None -> Result.success(null)
+            MusicChoice.None, MusicChoice.Keep -> Result.success(null)
             is MusicChoice.Existing -> subsonic.connect(mine.url, m.user, m.password).map { it }
             is MusicChoice.Create -> subsonic.createUser(mine.url, mine.user, m.adminPassword, name, password)
                 .fold(onSuccess = { subsonic.connect(mine.url, name, password).map { it } }, onFailure = { Result.failure(it) })
@@ -288,23 +583,22 @@ class ProfilesViewModel @Inject constructor(
     }
 
     /** Give [u] music (their own Navidrome login) or take it away, in the setup saved for them. */
-    fun setMusic(u: DUser, password: String, m: MusicChoice) = work { s ->
+    fun setMusic(u: DUser, password: String, m: MusicChoice, from: Set<String>? = null) = work { s ->
+        // Their saved setup first: if it can't be read, nothing is changed (never a fresh one over theirs).
+        val their = theirSetup(s, u).getOrElse { return@work it.message }
         val nd = navidromeFor(u.username, password, m).getOrElse { return@work it.message }
-        val key = users.apiKeyFor(s, u) ?: return@work "Dispatcharr wouldn't give a key for ${u.username}."
-        val target = Session(s.serverUrl, u.username, key)
-        // Their saved setup, with only the music changed (or a fresh one if they have none yet).
-        val snap = sync.savedCopy(target)?.let { sync.snapshotOf(it, target) }
-        val prefs = (snap?.get("prefs") as? kotlinx.serialization.json.JsonObject) ?: sync.currentPrefs()
-        val current = (snap?.get("accounts") as? kotlinx.serialization.json.JsonPrimitive)?.content
-            ?.let { runCatching { json.decodeFromString(io.github.petebutty.viewarr.data.accounts.Accounts.serializer(), it) }.getOrNull() }
-            ?: sync.currentAccounts().only(emptySet())
-        val updated = if (nd != null) current.copy(navidrome = nd, musicEnabled = true) else current.copy(navidrome = null)
-        val signIns = json.encodeToString(io.github.petebutty.viewarr.data.accounts.Accounts.serializer(), updated)
-        store.saveSnapshot(Profile(target.serverUrl, target.username, target.apiKey).id, kotlinx.serialization.json.buildJsonObject {
-            put("prefs", prefs); put("accounts", kotlinx.serialization.json.JsonPrimitive(signIns)); put("setupComplete", kotlinx.serialization.json.JsonPrimitive(true))
-        })
-        if (!sync.writeFor(s, u.id, target, prefs, signIns)) return@work "Dispatcharr wouldn't save ${u.username}'s setup."
-        if (nd != null) "${u.username} has music now, as ${nd.user} on Navidrome." else "Music taken away from ${u.username}."
+        val key = their?.target?.apiKey ?: users.apiKeyFor(s, u) ?: return@work "Dispatcharr wouldn't give a key for ${u.username}."
+        val target = their?.target ?: Session(s.serverUrl, u.username, key)
+        val current = their?.accounts ?: sync.currentAccounts().only(emptySet())
+        val base = when {
+            nd != null -> current.copy(navidrome = nd, musicEnabled = true)
+            m == MusicChoice.Keep -> current
+            else -> current.copy(navidrome = null)
+        }
+        val updated = if (from != null) withMusic(base, nd, from) else base
+        if (!writeSetup(s, u, target, their?.prefs ?: sync.currentPrefs(), updated)) return@work "Dispatcharr wouldn't save ${u.username}'s setup."
+        val kinds = listOfNotNull(updated.navidrome?.let { "Navidrome (${it.user})" }) + from.orEmpty().sorted()
+        if (updated.musicOn) "${u.username}'s music: ${kinds.joinToString()}." else "Music taken away from ${u.username}."
     }
 
     // ---- Profile PIN (asked for when switching to that profile)
@@ -314,31 +608,9 @@ class ProfilesViewModel @Inject constructor(
         store.setPin(id, pin)
         _message.value = if (pin.isNullOrBlank()) "PIN removed." else "PIN set: it's asked for when anyone switches to you."
     }
-    /** This TV's servers by their home address, with the away address set for each (if any). */
-    suspend fun homes(): List<Triple<String, String, String>> {
-        val a = accountStore.current()
-        val s = me()
-        val list = listOfNotNull(
-            s?.let { "Live TV (Dispatcharr)" to it.serverUrl },
-            a.navidrome?.let { "Navidrome" to it.url },
-            a.seerr?.let { "Seerr" to it.url },
-            a.plex?.let { "Plex (only if Plex's own remote access fails)" to it.serverUrl },
-            a.jellyfin?.let { "Jellyfin" to it.serverUrl },
-            a.emby?.let { "Emby" to it.serverUrl },
-        )
-        return list.mapNotNull { (label, url) ->
-            val home = io.github.petebutty.viewarr.data.net.Reach.normalise(url, away = false) ?: return@mapNotNull null
-            // Already a public address (https, not a private one): nothing to set.
-            if (url.startsWith("https://")) return@mapNotNull null
-            Triple(label, home, a.away.entries.firstOrNull { io.github.petebutty.viewarr.data.net.Reach.normalise(it.key, false) == home }?.value.orEmpty())
-        }.distinctBy { it.second }
-    }
 
-    fun saveAway(values: Map<String, String>) = viewModelScope.launch {
-        val clean = values.mapNotNull { (h, a) -> io.github.petebutty.viewarr.data.net.Reach.normalise(a, away = true)?.let { h to it } }.toMap()
-        accountStore.update { it.copy(away = clean) }
-        _message.value = if (clean.isEmpty()) "Away addresses cleared." else "Saved ${clean.size} away address${if (clean.size == 1) "" else "es"}."
-    }
+
+
 
     private val _invite = MutableStateFlow<String?>(null)
     /** The invite just made (shown as a QR and text); cleared when the dialog closes. */
@@ -378,8 +650,10 @@ fun WhoIsWatching(onDone: () -> Unit, vm: ProfilesViewModel = hiltViewModel()) {
     var inside by remember { mutableStateOf(false) }
     // A profile with a PIN: asked for before switching to it.
     var askPin by remember { mutableStateOf<Profile?>(null) }
-    LaunchedEffect(profiles.size, askPin == null) { if (askPin == null) first.grab { inside } }
-    BackHandler(enabled = askPin == null) { onDone() }
+    val admin by vm.admin.collectAsStateWithLifecycle()
+    var adding by remember { mutableStateOf(false) }
+    LaunchedEffect(profiles.size, askPin == null, adding) { if (askPin == null && !adding) first.grab { inside } }
+    BackHandler(enabled = askPin == null && !adding) { onDone() }
     Box(
         Modifier.fillMaxSize().background(AppColors.Background).onFocusChanged { inside = it.hasFocus }.focusProperties { exit = { FocusRequester.Cancel } }.focusGroup(),
         contentAlignment = Alignment.Center,
@@ -409,12 +683,69 @@ fun WhoIsWatching(onDone: () -> Unit, vm: ProfilesViewModel = hiltViewModel()) {
                         if (on) Text("Current", fontSize = 12.sp, color = AppColors.Accent)
                     }
                 }
+                // Admins: a new person for this TV in one step (just a name).
+                if (admin) Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Surface(
+                        onClick = { adding = true },
+                        modifier = Modifier.size(120.dp).instantFocusScale(1.1f),
+                        shape = ClickableSurfaceDefaults.shape(CircleShape),
+                        scale = io.github.petebutty.viewarr.ui.common.focusScale(1.1f),
+                        border = ClickableSurfaceDefaults.border(
+                            border = androidx.tv.material3.Border(androidx.compose.foundation.BorderStroke(2.dp, AppColors.TextSecondary), shape = CircleShape),
+                            focusedBorder = androidx.tv.material3.Border(androidx.compose.foundation.BorderStroke(4.dp, Color.White), shape = CircleShape),
+                        ),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.White.copy(alpha = 0.12f)),
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text("+", fontSize = 56.sp, color = Color.White)
+                        }
+                    }
+                    Text("Add profile", fontSize = 18.sp, color = AppColors.TextPrimary, modifier = Modifier.padding(top = 12.dp))
+                }
             }
             Spacer(Modifier.height(40.dp))
             MenuItem(text = "Ask each time Viewarr opens", trailing = if (ask) "On" else "Off", selected = false, onClick = { vm.setAskOnStart(!ask) }, modifier = Modifier.width(420.dp))
         }
         askPin?.let { p -> PinEntry(p, onCancel = { askPin = null }) { askPin = null; vm.switchTo(p) { onDone() } } }
+        if (adding) QuickAddProfile(vm, onClose = { adding = false })
     }
+}
+
+/**
+ * A home profile in one step: a name. They get everything this TV has, their own Plex Home user (their own watch
+ * history), Live TV and the usual limits; no password to make up. More choices: Settings → Users & profiles.
+ */
+@Composable
+private fun QuickAddProfile(vm: ProfilesViewModel, onClose: () -> Unit) = DialogBox("Add profile", onClose) { first ->
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    var name by remember { mutableStateOf("") }
+    var sent by remember { mutableStateOf(false) }
+    var hasPlex by remember { mutableStateOf(false) }
+    var options by remember { mutableStateOf<Set<SharedService>>(emptySet()) }
+    var addonsOff by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var families by remember { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(Unit) {
+        options = vm.sharable().filter { it != SharedService.Music }.toSet()
+        addonsOff = vm.myAddons().filter { !it.enabled }.map { it.baseUrl }.toSet()
+        hasPlex = vm.plexHomeUsers() != null
+        families = vm.musicFamilies().keys
+    }
+    LaunchedEffect(sent, busy) { if (sent && !busy && message?.contains("ready") == true) onClose() }
+    io.github.petebutty.viewarr.ui.setup.WizardField(name, { name = it }, "Name", first, KeyboardType.Text, ImeAction.Done, {})
+    Text(
+        "They get everything this TV has" + (if (hasPlex) ", their own Plex watch history" else "") + " and Live TV. More choices (limits, music, what they can do) in Settings → Users & profiles.",
+        fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 10.dp, bottom = 10.dp, start = 4.dp),
+    )
+    MenuItem(text = if (busy) "Adding…" else "Add", selected = false, onClick = {
+        if (!busy && name.isNotBlank()) {
+            sent = true
+            val plex = if (hasPlex) PlexChoice.New(name.trim().replaceFirstChar { it.uppercase() }) else PlexChoice.None
+            vm.addSomeone(name, "", away = false, awayAddress = "", keep = options, perms = io.github.petebutty.viewarr.data.profiles.Perms(), addonsOff = addonsOff, plex = plex,
+                musicFrom = families.filter { it != "Plex" || hasPlex }.toSet())
+        }
+    })
+    message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp, start = 12.dp)) }
 }
 
 /** The PIN for [p]; [onOk] once it's right. */
@@ -488,9 +819,10 @@ fun UsersPage(onClose: () -> Unit, vm: ProfilesViewModel = hiltViewModel()) {
                 Spacer(Modifier.width(48.dp))
                 Column(Modifier.weight(1f)) {
                     Text("Users (Dispatcharr)", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-                    Text("Everyone with a user can sign in to Viewarr: at home with their username and password, in another house with the server address and their API key (Sign-in details for another house).", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                    Text("Everyone with a user can sign in to Viewarr with your server's address, their username and password.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
                     MenuItem(text = "Add someone…", trailing = "+", selected = false, onClick = { dialog = "add" })
-                    MenuItem(text = "Away addresses…", trailing = "for other houses", selected = false, onClick = { dialog = "away" })
+                    MenuItem(text = "Send my setup to everyone…", selected = false, onClick = { dialog = "sendall" })
+                    MenuItem(text = "Backups…", trailing = "Viewarr plugin", selected = false, onClick = { dialog = "backups" })
                     Spacer(Modifier.height(8.dp))
                     when {
                         list == null -> Text("Loading…", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(12.dp))
@@ -519,13 +851,33 @@ fun UsersPage(onClose: () -> Unit, vm: ProfilesViewModel = hiltViewModel()) {
             "limits" -> if (u != null) LimitsDialog(u, vm, onCancel = { dialog = "user" }) { limit, profs -> vm.setLimits(u, limit, profs); dialog = null }
             "services" -> if (u != null) ServicesDialog(u, vm, onCancel = { dialog = null }) { keep -> vm.prepare(u, keep); dialog = null }
             "delete" -> if (u != null) ConfirmDialog("Delete ${u.username}?", "Their Dispatcharr user and saved Viewarr setup go. This can't be undone.", "Delete", onCancel = { dialog = "user" }) { vm.delete(u); dialog = null }
-            "away" -> AwayDialog(vm, onClose = { dialog = null })
+            "backups" -> BackupsDialog(vm, onClose = { dialog = null })
+            "sendall" -> ConfirmDialog(
+                "Send my setup to everyone?",
+                "Your look, home rows, menus, playback and remote settings, and the services and addons you gave each person, as they are on this TV now. Their own Plex, music and Trakt stay theirs. Their TVs update when Viewarr next starts.",
+                "Send", onCancel = { dialog = null },
+            ) { vm.sendSetup(list.orEmpty().filter { it.level < 10 }); dialog = null }
+            "send" -> if (u != null) { LaunchedEffect(u.id) { vm.sendSetup(listOf(u)); dialog = null } }
             "invite" -> if (u != null) InviteDialog(u, vm, onClose = { vm.clearInvite(); dialog = null })
-            "share" -> if (u != null) {
-                val sh by vm.share.collectAsStateWithLifecycle()
-                LaunchedEffect(u.id) { vm.shareFor(u) }
-                sh?.let { KeyShown(it, onClose = { vm.clearShare(); dialog = null }) }
+            // Another house: a new password you can send (it's never stored to show again), then what to send.
+            "signin" -> if (u != null) {
+                val d by vm.details.collectAsStateWithLifecycle()
+                val dd = d
+                if (dd != null) DetailsShown(dd, onClose = { vm.clearDetails(); dialog = null })
+                else PasswordDialog(u, onCancel = { dialog = "user" }) { vm.newPassword(u, it, show = true) }
             }
+            "plex" -> if (u != null) PlexDialog(u, vm, onCancel = { dialog = "user" }) { c -> vm.setPlex(u, c); dialog = null }
+            "resetsetup" -> if (u != null) ConfirmDialog(
+                "Reset ${u.username}'s setup?",
+                "Your settings, services and addons go back on their TVs, replacing anything they've changed. Their own Plex, music and Trakt stay. Their TVs update when Viewarr next starts.",
+                "Reset", onCancel = { dialog = "user" },
+            ) { vm.resetSetup(u); dialog = null }
+            "clearpin" -> if (u != null) { LaunchedEffect(u.id) { vm.clearPinFor(u); dialog = null } }
+            "signoutall" -> if (u != null) ConfirmDialog(
+                "Sign ${u.username} out everywhere?",
+                "Every TV signed in as ${u.username} stops working until they sign in again with their password. Their setup is kept. Set a new password too if a TV was lost with it written down.",
+                "Sign out", onCancel = { dialog = "user" },
+            ) { vm.signOutEverywhere(u); dialog = null }
             "addtv" -> if (u != null) { LaunchedEffect(u.id) { vm.addToTv(u); dialog = null } }
         }
     }
@@ -554,12 +906,16 @@ private fun DialogBox(title: String, onBack: () -> Unit, content: @Composable (F
 @Composable
 private fun UserDialog(u: DUser, onClose: () -> Unit, onAction: (String) -> Unit) = DialogBox(u.username, onClose) { first ->
     MenuItem(text = "Set up their Viewarr…", trailing = "services", selected = false, onClick = { onAction("services") }, modifier = Modifier.focusRequester(first))
+    MenuItem(text = "Plex…", trailing = u.share?.plexUser?.let { "Home user: $it" } ?: "their Plex Home user", selected = false, onClick = { onAction("plex") })
+    MenuItem(text = "Send my setup", trailing = "settings and services", selected = false, onClick = { onAction("send") })
     MenuItem(text = "What they can do…", trailing = "locks", selected = false, onClick = { onAction("perms") })
     MenuItem(text = "Music…", trailing = "their Navidrome", selected = false, onClick = { onAction("music") })
-    MenuItem(text = "Sign-in details for another house…", selected = false, onClick = { onAction("share") })
+    MenuItem(text = "New password…", trailing = "and what to send them", selected = false, onClick = { onAction("signin") })
     MenuItem(text = "Add to this TV", selected = false, onClick = { onAction("addtv") })
     MenuItem(text = "Live TV limits…", selected = false, onClick = { onAction("limits") })
-    MenuItem(text = "Reset password…", selected = false, onClick = { onAction("password") })
+    MenuItem(text = "Reset their setup…", trailing = "back to yours", selected = false, onClick = { onAction("resetsetup") })
+    MenuItem(text = "Clear their PIN", trailing = "this TV", selected = false, onClick = { onAction("clearpin") })
+    MenuItem(text = "Sign them out everywhere…", trailing = "lost TV", selected = false, onClick = { onAction("signoutall") })
     MenuItem(text = "Delete user…", selected = false, onClick = { onAction("delete") })
 }
 
@@ -629,18 +985,9 @@ fun ProfileHost(vm: ProfilesViewModel = hiltViewModel()) {
     // Profiles off for now (ProfileUi.ENABLED): no picker on start, no Users page, no PIN, and the TV back on its main
     // sign-in (the first profile: whoever set it up). A TV left on someone else's profile kept their limits with no
     // way to switch back: on Anne's, recording was hidden, so holding OK in the guide just tuned the channel.
-    if (!ProfileUi.ENABLED) {
-        val profiles by vm.profiles.collectAsStateWithLifecycle()
-        val active by vm.activeId.collectAsStateWithLifecycle()
-        LaunchedEffect(profiles.firstOrNull()?.id, active) {
-            val main = profiles.firstOrNull() ?: return@LaunchedEffect
-            if (active != null && active != main.id) {
-                android.util.Log.i("Profiles", "profiles off: back to the main sign-in")
-                vm.switchTo(main) {}
-            }
-        }
-        return
-    }
+    // (Nothing at all while off: switching back to the "main" profile bounced a change of Live TV source, and could
+    // restore an empty setup. Review, 2026-11-16.)
+    if (!ProfileUi.ENABLED) return
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     val ask by vm.askOnStart.collectAsStateWithLifecycle()
     val has by vm.hasProfiles.collectAsStateWithLifecycle()
@@ -670,8 +1017,9 @@ fun ProfileSettingsItems(modifier: Modifier = Modifier, vm: ProfilesViewModel = 
     val admin by vm.admin.collectAsStateWithLifecycle()
     val profiles by vm.profiles.collectAsStateWithLifecycle()
     if (!has) return
-    if (profiles.size > 1) {
-        MenuItem(text = "Switch profile", selected = false, onClick = { ProfileUi.picker = true }, modifier = modifier)
+    // Admins always (it's where "Add profile" is); everyone else once there's someone to switch to.
+    if (profiles.size > 1 || admin) {
+        MenuItem(text = "Who's watching", trailing = if (profiles.size > 1) "switch" else "add a profile", selected = false, onClick = { ProfileUi.picker = true }, modifier = modifier)
         // Off (the default): Viewarr opens on the last profile used.
         val ask by vm.askOnStart.collectAsStateWithLifecycle()
         MenuItem(text = "Ask who's watching", trailing = if (ask) "On" else "Off", selected = false, onClick = { vm.setAskOnStart(!ask) })
@@ -695,24 +1043,6 @@ fun ProfileSettingsItems(modifier: Modifier = Modifier, vm: ProfilesViewModel = 
 @Composable
 fun isAdmin(vm: ProfilesViewModel = hiltViewModel()): Boolean = vm.admin.collectAsStateWithLifecycle().value
 
-/** Each home server's away address: how a TV in another house reaches it. */
-@Composable
-private fun AwayDialog(vm: ProfilesViewModel, onClose: () -> Unit) = DialogBox("Away addresses", onClose) { first ->
-    var rows by remember { mutableStateOf<List<Triple<String, String, String>>?>(null) }
-    val values = remember { androidx.compose.runtime.mutableStateMapOf<String, String>() }
-    LaunchedEffect(Unit) { rows = vm.homes().also { r -> r.forEach { values[it.second] = it.third } } }
-    Text("What each server is called from outside your home, e.g. tv.example.com. TVs at home keep using the home address; away, Viewarr switches by itself.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 10.dp))
-    when {
-        rows == null -> Text("Loading…", fontSize = 14.sp, color = AppColors.TextSecondary)
-        rows!!.isEmpty() -> Text("Nothing on a home address here.", fontSize = 14.sp, color = AppColors.TextSecondary)
-        else -> rows!!.forEachIndexed { i, (label, home, _) ->
-            Text("$label · ${home.removePrefix("http://")}", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 6.dp, bottom = 2.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(values[home].orEmpty(), { values[home] = it }, "Away address", if (i == 0) first else null, KeyboardType.Uri, ImeAction.Next, {})
-        }
-    }
-    Spacer(Modifier.height(10.dp))
-    MenuItem(text = "Save", selected = false, onClick = { vm.saveAway(values.toMap()); onClose() }, modifier = if (rows.isNullOrEmpty()) Modifier.focusRequester(first) else Modifier)
-}
 
 /** An invite for [u]: checked against their password, then shown big as a QR to scan and send on. */
 @Composable
@@ -745,6 +1075,7 @@ private fun PermsDialog(u: DUser, onCancel: () -> Unit, onSave: (io.github.peteb
 @Composable
 private fun PermsList(p: io.github.petebutty.viewarr.data.profiles.Perms, first: FocusRequester?, onChange: (io.github.petebutty.viewarr.data.profiles.Perms) -> Unit) {
     val rows = listOf<Triple<String, Boolean, (Boolean) -> io.github.petebutty.viewarr.data.profiles.Perms>>(
+        Triple("Live TV", p.livetv) { v -> p.copy(livetv = v) },
         Triple("Request on Seerr", p.seerr) { v -> p.copy(seerr = v) },
         Triple("Record programmes", p.record) { v -> p.copy(record = v) },
         Triple("Catch-up", p.catchup) { v -> p.copy(catchup = v) },
@@ -766,10 +1097,13 @@ private fun PermsList(p: io.github.petebutty.viewarr.data.profiles.Perms, first:
  */
 @Composable
 private fun AddSomeoneDialog(vm: ProfilesViewModel, onClose: () -> Unit) {
-    val shared by vm.share.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
-    shared?.let { sh -> KeyShown(sh, onClose = { vm.clearShare(); onClose() }); return }
+    val invite by vm.invite.collectAsStateWithLifecycle()
+    val inviteFor by vm.inviteFor.collectAsStateWithLifecycle()
+    invite?.let { c -> InviteShown(inviteFor ?: "them", c, onClose = { vm.clearInvite(); onClose() }); return }
+    val details by vm.details.collectAsStateWithLifecycle()
+    details?.let { d -> DetailsShown(d, onClose = { vm.clearDetails(); onClose() }); return }
     DialogBox("Add someone", onClose) { first ->
         var name by remember { mutableStateOf("") }
         var pass by remember { mutableStateOf("") }
@@ -787,39 +1121,177 @@ private fun AddSomeoneDialog(vm: ProfilesViewModel, onClose: () -> Unit) {
         var ndPass by remember { mutableStateOf("") }
         var ndAdmin by remember { mutableStateOf("") }
         // Music isn't ticked here either: it has its own choice below (their own Navidrome login).
+        var addons by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.accounts.AddonInfo>>(emptyList()) }
+        var addonsOff by remember { mutableStateOf<Set<String>>(emptySet()) }
+        // Plex: null = no Plex on this TV. 0 none, 1 a new managed user, 2+ an existing Home user.
+        var plexUsers by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.remote.services.PlexService.HomeUser>?>(null) }
+        var plexMode by remember { mutableIntStateOf(1) }
+        var families by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+        var musicFrom by remember { mutableStateOf<Set<String>>(emptySet()) }
         LaunchedEffect(Unit) {
+            families = vm.musicFamilies(); musicFrom = families.keys
             options = vm.sharable().filter { it != SharedService.Seerr && it != SharedService.Music }; keep = options.toSet()
             needAway = vm.dispatcharrAway() == null; hasNd = vm.hasNavidrome()
+            addons = vm.myAddons(); addonsOff = addons.filter { !it.enabled }.map { it.baseUrl }.toSet()
+            plexUsers = vm.plexHomeUsers()
         }
         // On this TV: done once it's added.
         LaunchedEffect(sent, busy) { if (sent && !busy && !away && message?.contains("ready") == true) onClose() }
-        io.github.petebutty.viewarr.ui.setup.WizardField(name, { name = it }, "Name (their username)", first, KeyboardType.Text, ImeAction.Next, {})
+        // Where first: on this TV it's a short form (no password to make up, services all given unless opened up);
+        // another house adds the password they'll type and the outside address.
+        MenuItem(text = "Where", trailing = if (away) "In another house" else "On this TV", selected = false, onClick = { away = !away }, modifier = Modifier.focusRequester(first))
         Spacer(Modifier.height(8.dp))
-        io.github.petebutty.viewarr.ui.setup.WizardField(pass, { pass = it }, "Password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
-        Spacer(Modifier.height(10.dp))
-        MenuItem(text = "Where", trailing = if (away) "In another house" else "On this TV", selected = false, onClick = { away = !away })
+        io.github.petebutty.viewarr.ui.setup.WizardField(name, { name = it }, "Name", null, KeyboardType.Text, if (away) ImeAction.Next else ImeAction.Done, {})
+        if (away) {
+            Spacer(Modifier.height(8.dp))
+            io.github.petebutty.viewarr.ui.setup.WizardField(pass, { pass = it }, "Password (6+ characters, they type it once)", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
+        }
         if (away && needAway) {
-            Text("Your Dispatcharr's address from outside your home (asked once):", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 12.dp))
+            Text("Your Dispatcharr's public address, the one they'll type (asked once):", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 12.dp))
             io.github.petebutty.viewarr.ui.setup.WizardField(awayAddress, { awayAddress = it }, "e.g. tv.example.com", null, KeyboardType.Uri, ImeAction.Done, {})
         }
-        if (options.isNotEmpty()) {
+        var pickServices by remember { mutableStateOf(false) }
+        if (options.isNotEmpty() && !away && !pickServices) {
+            Spacer(Modifier.height(8.dp))
+            MenuItem(text = "They get", trailing = if (keep == options.toSet()) "Everything this TV has" else "Your choice", selected = false, onClick = { pickServices = true })
+        }
+        if (options.isNotEmpty() && (away || pickServices)) {
             Text("They get (live TV is theirs already)", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp, start = 12.dp))
             options.forEach { s ->
                 val on = s in keep
                 MenuItem(text = s.label, trailing = if (on) "✓" else "–", selected = on, onClick = { keep = if (on) keep - s else keep + s })
+                // Each addon on its own, under Addons.
+                if (s == SharedService.Addons && on && addons.size > 1) addons.forEach { ad ->
+                    val adOn = ad.baseUrl !in addonsOff
+                    MenuItem(text = "    ${ad.name}", trailing = if (adOn) "✓" else "–", selected = adOn, onClick = { addonsOff = if (adOn) addonsOff + ad.baseUrl else addonsOff - ad.baseUrl })
+                }
             }
         }
-        if (hasNd) {
+        plexUsers?.let { pu ->
+            val label = when (plexMode) {
+                0 -> "Not given"
+                1 -> "New Plex Home user" + (name.trim().takeIf { it.isNotEmpty() }?.let { " \"$it\"" } ?: "")
+                else -> pu.getOrNull(plexMode - 2)?.title ?: "Not given"
+            }
             Spacer(Modifier.height(8.dp))
-            MusicPicker(musicMode, { musicMode = it }, ndUser, { ndUser = it }, ndPass, { ndPass = it }, ndAdmin, { ndAdmin = it }, canCreate = true)
+            MenuItem(text = "Plex (their own watch history)", trailing = label, selected = plexMode != 0, onClick = { plexMode = (plexMode + 1) % (pu.size + 2) })
         }
+        // Music from the servers they'll have: Plex through their Plex user, Jellyfin / Emby when given.
+        val musicKinds = families.keys.filter { k -> when (k) { "Plex" -> plexUsers != null && plexMode != 0; "Jellyfin" -> SharedService.Jellyfin in keep; "Emby" -> SharedService.Emby in keep; else -> false } }
+        if (hasNd || musicKinds.isNotEmpty()) Spacer(Modifier.height(8.dp))
+        if (hasNd) MusicPicker(musicMode, { musicMode = it }, ndUser, { ndUser = it }, ndPass, { ndPass = it }, ndAdmin, { ndAdmin = it }, canCreate = true)
+        MusicFrom(musicKinds, musicFrom) { musicFrom = it }
         Text("They can", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp, start = 12.dp))
         PermsList(perms, null) { perms = it }
+        // Another house: anything they'd get on a home-only address won't reach them. Said plainly, before adding.
+        var homeOnly by remember { mutableStateOf<List<String>>(emptyList()) }
+        LaunchedEffect(away, keep, addonsOff, musicMode, perms.seerr) { homeOnly = if (away) vm.homeOnly(if (perms.seerr) keep + SharedService.Seerr else keep, addonsOff, musicMode != 0, false) else emptyList() }
+        if (homeOnly.isNotEmpty()) {
+            Text("⚠ These are on a home address, so they won't work in another house. Add them in Viewarr with their public address to share them:", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 12.dp, start = 12.dp, end = 12.dp))
+            homeOnly.forEach { Text("• $it", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 24.dp, top = 2.dp)) }
+        }
         Spacer(Modifier.height(12.dp))
-        MenuItem(text = if (busy) "Adding…" else if (away) "Add and make their invite" else "Add to this TV", selected = false, onClick = {
-            if (!busy) { sent = true; vm.addSomeone(name, pass, away, awayAddress, if (perms.seerr) keep + SharedService.Seerr else keep, perms, musicChoice(musicMode, ndUser, ndPass, ndAdmin)) }
+        MenuItem(text = if (busy) "Adding…" else if (away) "Add and show what to send them" else "Add to this TV", selected = false, onClick = {
+            if (!busy) {
+                sent = true
+                val plex = when (plexMode) {
+                    0 -> PlexChoice.None
+                    1 -> PlexChoice.New(name.trim().replaceFirstChar { it.uppercase() })
+                    else -> plexUsers?.getOrNull(plexMode - 2)?.let { PlexChoice.Existing(it.id, it.title) } ?: PlexChoice.None
+                }
+                vm.addSomeone(name, pass, away, awayAddress, if (perms.seerr) keep + SharedService.Seerr else keep, perms, musicChoice(musicMode, ndUser, ndPass, ndAdmin), addonsOff, if (plexUsers == null) PlexChoice.None else plex, musicFrom.filter { k -> when (k) { "Plex" -> plex != PlexChoice.None; "Jellyfin" -> SharedService.Jellyfin in keep; "Emby" -> SharedService.Emby in keep; else -> false } }.toSet())
+            }
         })
         message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp, start = 12.dp)) }
+    }
+}
+
+/** [u]'s Plex: a new Plex Home user, one already in your Home, or none. */
+@Composable
+private fun PlexDialog(u: DUser, vm: ProfilesViewModel, onCancel: () -> Unit, onSave: (PlexChoice) -> Unit) = DialogBox("Plex for ${u.username}", onCancel) { first ->
+    var users by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.remote.services.PlexService.HomeUser>?>(null) }
+    var loaded by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { users = vm.plexHomeUsers(); loaded = true }
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val newName = u.username.replaceFirstChar { it.uppercase() }
+    Text(
+        (u.share?.plexUser?.let { "Now: Plex Home user $it. " } ?: "") + "Their own Plex Home user gives them their own watch history and On Deck on your server (managed users need no Plex account).",
+        fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 10.dp),
+    )
+    when {
+        !loaded -> Text("Loading your Plex Home…", fontSize = 13.sp, color = AppColors.TextSecondary)
+        users == null -> Text("This TV isn't signed in to Plex.", fontSize = 13.sp, color = AppColors.Accent)
+        else -> {
+            val existing = users.orEmpty().firstOrNull { it.title.equals(newName, true) }
+            if (existing == null) MenuItem(text = "New Plex Home user \"$newName\"", selected = false, onClick = { if (!busy) onSave(PlexChoice.New(newName)) }, modifier = Modifier.focusRequester(first))
+            users.orEmpty().forEachIndexed { i, h ->
+                MenuItem(text = h.title, trailing = if (h.managed) "managed" else "Plex account", selected = h.title == u.share?.plexUser,
+                    onClick = { if (!busy) onSave(PlexChoice.Existing(h.id, h.title)) },
+                    modifier = if (existing != null && i == 0) Modifier.focusRequester(first) else Modifier)
+            }
+            MenuItem(text = "No Plex", selected = false, onClick = { if (!busy) onSave(PlexChoice.None) })
+        }
+    }
+}
+
+/** Backups of this TV's whole setup in the Viewarr plugin: save one now, restore one, hold OK to delete. */
+@Composable
+private fun BackupsDialog(vm: ProfilesViewModel, onClose: () -> Unit) = DialogBox("Backups", onClose) { first ->
+    val list by vm.backups.collectAsStateWithLifecycle()
+    val hasPlugin by vm.hasPlugin.collectAsStateWithLifecycle()
+    val busy by vm.busy.collectAsStateWithLifecycle()
+    val message by vm.message.collectAsStateWithLifecycle()
+    var restore by remember { mutableStateOf<io.github.petebutty.viewarr.data.profiles.House.Backup?>(null) }
+    LaunchedEffect(Unit) { vm.loadBackups() }
+    // Restore question ↔ the list: focus onto the new view's first item (the one focused has gone).
+    LaunchedEffect(restore) { kotlinx.coroutines.delay(60); runCatching { first.requestFocus() } }
+    val r = restore
+    if (r != null) {
+        Text("Restore ${r.name}? This TV's settings and sign-ins are replaced by the backup's (picture, sound and frame-rate settings stay).", fontSize = 14.sp, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 10.dp))
+        MenuItem(text = if (busy) "Restoring…" else "Restore", selected = false, onClick = { if (!busy) { vm.restoreBackup(r); restore = null } }, modifier = Modifier.focusRequester(first))
+        MenuItem(text = "Cancel", selected = false, onClick = { restore = null })
+        return@DialogBox
+    }
+    Text("Your whole setup (settings and sign-ins, encrypted with your key) kept in the Viewarr plugin on Dispatcharr. The newest 30 are kept.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 10.dp))
+    MenuItem(text = if (busy) "Saving…" else "Save a backup now", selected = false, onClick = { if (!busy && hasPlugin == true) vm.saveBackup() }, modifier = Modifier.focusRequester(first))
+    when {
+        hasPlugin == false -> Text("Install the Viewarr plugin in Dispatcharr (Plugins) to keep backups there.", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp, start = 12.dp))
+        list == null -> Text("Loading…", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp, start = 12.dp))
+        list.orEmpty().isEmpty() -> Text("No backups yet.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp, start = 12.dp))
+        else -> list.orEmpty().forEach { b ->
+            MenuItem(text = b.name, trailing = b.device, selected = false, onClick = { restore = b }, onLongClick = { vm.deleteBackup(b) })
+        }
+    }
+    if (!list.isNullOrEmpty()) Text("OK on one to restore it, hold OK to delete it.", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 6.dp, start = 12.dp))
+    message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp, start = 12.dp)) }
+}
+
+/** What to send someone in another house, big and plain: the address, their username and password, and the steps. */
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun DetailsShown(d: ProfilesViewModel.Details, onClose: () -> Unit) {
+    val done = remember { FocusRequester() }
+    var inside by remember { mutableStateOf(false) }
+    BackHandler { onClose() }
+    LaunchedEffect(d) { done.grab { inside } }
+    Box(
+        Modifier.fillMaxSize().background(AppColors.Background).onFocusChanged { inside = it.hasFocus }
+            .focusProperties { exit = { FocusRequester.Cancel } }.focusGroup(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(Modifier.width(620.dp)) {
+            Text("${d.who} is ready", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+            Text("Send ${d.who} these three:", fontSize = 16.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 10.dp, bottom = 12.dp))
+            listOf("Address" to d.address, "Username" to d.who, "Password" to d.password).forEach { (k, v) ->
+                Row(Modifier.padding(vertical = 4.dp)) {
+                    Text(k, fontSize = 20.sp, color = AppColors.TextSecondary, modifier = Modifier.width(150.dp))
+                    Text(v, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+                }
+            }
+            Text("On their TV: install Viewarr, choose Someone gave me sign-in details, and type these three. Everything else is set up for them.", fontSize = 15.sp, color = AppColors.TextPrimary, modifier = Modifier.padding(top = 16.dp))
+            Spacer(Modifier.height(20.dp))
+            MenuItem(text = "Done", selected = false, onClick = onClose, modifier = Modifier.focusRequester(done))
+        }
     }
 }
 
@@ -862,18 +1334,27 @@ private fun InviteShown(who: String, c: String, onClose: () -> Unit) {
     }
 }
 
+/** How someone gets Plex: not at all, an existing Plex Home user, or a new managed user in your Plex Home. */
+sealed interface PlexChoice {
+    data object None : PlexChoice
+    data class Existing(val id: String, val title: String) : PlexChoice
+    data class New(val name: String) : PlexChoice
+}
+
 /** How someone gets music: not at all, their existing Navidrome login, or a new Navidrome user made for them. */
 sealed interface MusicChoice {
     data object None : MusicChoice
+    /** Leave their Navidrome login as it is (changing only the other music). */
+    data object Keep : MusicChoice
     data class Existing(val user: String, val password: String) : MusicChoice
     data class Create(val adminPassword: String) : MusicChoice
 }
 
 /** The music part of Add someone and Music…: which way, and the logins it needs. */
 @Composable
-private fun MusicPicker(mode: Int, onMode: (Int) -> Unit, user: String, onUser: (String) -> Unit, pass: String, onPass: (String) -> Unit, admin: String, onAdmin: (String) -> Unit, canCreate: Boolean) {
-    val labels = listOf("No music", "Their existing Navidrome login", "Make a Navidrome user for them")
-    MenuItem(text = "Music", trailing = labels[mode], selected = false, onClick = { onMode((mode + 1) % (if (canCreate) 3 else 2)) })
+private fun MusicPicker(mode: Int, onMode: (Int) -> Unit, user: String, onUser: (String) -> Unit, pass: String, onPass: (String) -> Unit, admin: String, onAdmin: (String) -> Unit, canCreate: Boolean, firstLabel: String = "Not given") {
+    val labels = listOf(firstLabel, "Their existing login", "Make a user for them")
+    MenuItem(text = "Music: Navidrome", trailing = labels[mode], selected = false, onClick = { onMode((mode + 1) % (if (canCreate) 3 else 2)) })
     when (mode) {
         1 -> {
             Text("Their Navidrome username and password (checked with Navidrome).", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp))
@@ -888,6 +1369,15 @@ private fun MusicPicker(mode: Int, onMode: (Int) -> Unit, user: String, onUser: 
     }
 }
 
+/** Music from your other servers, one switch each (only the kinds they can reach are offered). */
+@Composable
+private fun MusicFrom(available: List<String>, on: Set<String>, onChange: (Set<String>) -> Unit) {
+    available.forEach { k ->
+        val isOn = k in on
+        MenuItem(text = "Music: $k", trailing = if (isOn) "✓" else "–", selected = isOn, onClick = { onChange(if (isOn) on - k else on + k) })
+    }
+}
+
 fun musicChoice(mode: Int, user: String, pass: String, admin: String): MusicChoice = when (mode) {
     1 -> MusicChoice.Existing(user.trim(), pass)
     2 -> MusicChoice.Create(admin)
@@ -897,58 +1387,22 @@ fun musicChoice(mode: Int, user: String, pass: String, admin: String): MusicChoi
 /** Music… for someone already added (e.g. give them their own Navidrome login). */
 @Composable
 private fun MusicDialog(u: DUser, vm: ProfilesViewModel, onCancel: () -> Unit, onDone: () -> Unit) = DialogBox("Music for ${u.username}", onCancel) { first ->
-    var mode by remember { mutableIntStateOf(1) }
+    var mode by remember { mutableIntStateOf(0) }
     var user by remember { mutableStateOf(u.username) }
     var pass by remember { mutableStateOf("") }
     var admin by remember { mutableStateOf("") }
     var viewarrPass by remember { mutableStateOf("") }
-    Text("Their own Navidrome login, so their plays, favourites and playlists are theirs.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp))
-    MusicPicker(mode, { mode = it }, user, { user = it }, pass, { pass = it }, admin, { admin = it }, canCreate = true)
+    var families by remember { mutableStateOf<List<String>>(emptyList()) }
+    var from by remember { mutableStateOf<Set<String>>(emptySet()) }
+    LaunchedEffect(Unit) { vm.musicKindsFor(u).let { (reach, on) -> families = reach; from = on } }
+    Text("Navidrome with their own login (their plays, favourites and playlists), and the music on your Plex (through their Plex user), Jellyfin and Emby.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp))
+    MusicPicker(mode, { mode = it }, user, { user = it }, pass, { pass = it }, admin, { admin = it }, canCreate = true, firstLabel = "Keep as it is")
     if (mode == 2) {
         Spacer(Modifier.height(6.dp))
         io.github.petebutty.viewarr.ui.setup.WizardField(viewarrPass, { viewarrPass = it }, "Their password for the new Navidrome user", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
     }
     Spacer(Modifier.height(10.dp))
-    MenuItem(text = "Save", selected = false, onClick = { vm.setMusic(u, viewarrPass, musicChoice(mode, user, pass, admin)); onDone() }, modifier = Modifier.focusRequester(first))
+    MusicFrom(families, from) { from = it }
+    MenuItem(text = "Save", selected = false, onClick = { vm.setMusic(u, viewarrPass, if (mode == 0) MusicChoice.Keep else musicChoice(mode, user, pass, admin), from); onDone() }, modifier = Modifier.focusRequester(first))
 }
 
-/** Sign-in details for someone in another house: the address and their API key, with a short QR to copy them. */
-@OptIn(ExperimentalComposeUiApi::class)
-@Composable
-private fun KeyShown(sh: ProfilesViewModel.Share, onClose: () -> Unit) {
-    val done = remember { FocusRequester() }
-    var inside by remember { mutableStateOf(false) }
-    BackHandler { onClose() }
-    LaunchedEffect(sh) { done.grab { inside } }
-    var shareUrl by remember { mutableStateOf<String?>(null) }
-    androidx.compose.runtime.DisposableEffect(sh) {
-        val server = io.github.petebutty.viewarr.setup.InviteShareServer(sh.who, listOf("Address" to sh.address, "API key" to sh.key))
-        shareUrl = server.start()
-        onDispose { server.stop() }
-    }
-    Box(
-        Modifier.fillMaxSize().background(AppColors.Background).onFocusChanged { inside = it.hasFocus }
-            .focusProperties { exit = { FocusRequester.Cancel } }.focusGroup(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(Modifier.padding(40.dp), verticalAlignment = Alignment.CenterVertically) {
-            shareUrl?.let { url ->
-                Box(Modifier.size(300.dp).background(Color.White, RoundedCornerShape(10.dp)).padding(12.dp)) {
-                    io.github.petebutty.viewarr.ui.common.QrImage(url, Modifier.fillMaxSize())
-                }
-                Spacer(Modifier.width(36.dp))
-            }
-            Column(Modifier.width(560.dp)) {
-                Text("Sign-in for ${sh.who}", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-                if (shareUrl != null) Text("Scan with your phone (on this Wi-Fi) to copy these, then send them to ${sh.who}.", fontSize = 15.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp))
-                Text("Address", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 18.dp))
-                Text(sh.address, fontSize = 20.sp, color = AppColors.TextPrimary)
-                Text("API key", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 12.dp))
-                Text(sh.key, fontSize = 16.sp, color = AppColors.TextPrimary, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
-                Text("On their TV: Set up on your phone → Live TV → Dispatcharr → type the address, paste the API key. Their setup and limits go on by themselves. Change the key in Dispatcharr to cut them off.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 16.dp))
-                Spacer(Modifier.height(18.dp))
-                MenuItem(text = "Done", selected = false, onClick = onClose, modifier = Modifier.focusRequester(done))
-            }
-        }
-    }
-}

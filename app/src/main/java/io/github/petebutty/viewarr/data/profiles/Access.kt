@@ -32,6 +32,8 @@ object Lock {
     const val SOURCES = "sources"
     const val SETTINGS = "settings"
     const val SIGNOUT = "signout"
+    /** No Live TV at all: no guide, channels or channel list, and no TV guide downloaded (someone who only watches films and shows). */
+    const val LIVETV = "livetv"
     /** A Standard user until an admin says otherwise: no requests, can't change sign-ins or sources, or sign out. */
     val DEFAULT = setOf(SEERR, ACCOUNTS, SOURCES, SIGNOUT)
 }
@@ -46,6 +48,8 @@ object Access {
     /** Dispatcharr dvr_access "manage" (admins always): record, cancel, series rules. */
     var record by mutableStateOf(true)
     fun can(lock: String) = admin || lock !in locks
+    /** This person has Live TV (admins always). */
+    val liveTv get() = can(Lock.LIVETV)
 }
 
 /** One person's settings as an admin sets them (what they may do; Dispatcharr's own flags included). */
@@ -58,10 +62,11 @@ data class Perms(
     val sources: Boolean = false,
     val settings: Boolean = true,
     val signout: Boolean = false,
+    val livetv: Boolean = true,
 ) {
     val locks get() = buildSet {
         if (!seerr) add(Lock.SEERR); if (!accounts) add(Lock.ACCOUNTS); if (!sources) add(Lock.SOURCES)
-        if (!settings) add(Lock.SETTINGS); if (!signout) add(Lock.SIGNOUT)
+        if (!settings) add(Lock.SETTINGS); if (!signout) add(Lock.SIGNOUT); if (!livetv) add(Lock.LIVETV)
     }
 
     /** As Dispatcharr custom_properties (merged into what's there). */
@@ -82,7 +87,7 @@ data class Perms(
                 seerr = Lock.SEERR !in locks, record = (props?.get("dvr_access") as? JsonPrimitive)?.contentOrNull == "manage",
                 catchup = flag("catchup_enabled"), vod = flag("vod_movies_enabled") && flag("vod_series_enabled"),
                 accounts = Lock.ACCOUNTS !in locks, sources = Lock.SOURCES !in locks,
-                settings = Lock.SETTINGS !in locks, signout = Lock.SIGNOUT !in locks,
+                settings = Lock.SETTINGS !in locks, signout = Lock.SIGNOUT !in locks, livetv = Lock.LIVETV !in locks,
             )
         }
     }
@@ -113,6 +118,23 @@ class AccessLoader @Inject constructor(
         val cached = prefs.getString(key, null)?.split('|')?.takeIf { it.size == 3 }
         cached?.let { p -> apply(p[0] == "1", p[1].split(',').filter { it.isNotBlank() }.toSet(), p[2] == "1") }
         val me = runCatching { http.get(s.serverUrl.trimEnd('/') + "/api/accounts/users/me/", mapOf("X-API-Key" to s.apiKey)) }.getOrNull()
+        // Dispatcharr no longer takes this key (an admin signed them out everywhere, or the user was deleted): back
+        // to signing in, instead of a TV that stays "signed in" with nothing working.
+        // (Profiles off in this build: never signed out or limited by this; ProfileUi.ENABLED.)
+        if (io.github.petebutty.viewarr.ui.profiles.ProfileUi.ENABLED && me?.code == 401) {
+            // Asked again a moment later, so one bad reply can't sign anyone out.
+            kotlinx.coroutines.delay(5_000)
+            val again = runCatching { http.get(s.serverUrl.trimEnd('/') + "/api/accounts/users/me/", mapOf("X-API-Key" to s.apiKey)) }.getOrNull()
+            if (again?.code == 401 && sessionsNow()?.id == s.id) {
+                prefs.edit().remove(key).apply()
+                // The only sign-in on this TV: back to signing in. Others saved (profiles): never switch to one of them
+                // by itself (that could hand a locked or PIN profile someone else's): the usual limits, until whoever
+                // is here picks a profile or signs in again.
+                if (sessions.saved.first().none { it.id != s.id }) { android.util.Log.i("Access", "key refused: signing out"); sessions.clear() }
+                else { android.util.Log.i("Access", "key refused: limits applied"); Perms.from(null).let { d -> apply(false, d.locks + Lock.LIVETV, false) } }
+                return
+            }
+        }
         if (me == null || !me.ok) {
             // Nothing known about this user and Dispatcharr not answering: the usual limits, not the last user's (an
             // admin's everything-unlocked carried over to whoever was switched to).
@@ -129,6 +151,9 @@ class AccessLoader @Inject constructor(
     }
 
     private fun apply(admin: Boolean, locks: Set<String>, record: Boolean) {
+        // Profiles off in this build: no limits at all (a lock saved by a test build mustn't hide Live TV with no way
+        // to undo it); only whether this is an admin still counts.
+        if (!io.github.petebutty.viewarr.ui.profiles.ProfileUi.ENABLED) { Access.admin = admin; Access.locks = emptySet(); Access.record = true; return }
         Access.admin = admin; Access.locks = locks; Access.record = record
     }
 }

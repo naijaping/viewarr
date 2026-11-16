@@ -3,7 +3,7 @@
 | Guide | What it covers |
 |---|---|
 | [Setup](SETUP.md) | Installing Viewarr, what to have ready, the first run, and setting up on your phone |
-| [Getting around](GETTING-AROUND.md) | The glass menu, Edit menus, the top-left window and the info bar |
+| [Getting around](GETTING-AROUND.md) | The glass menu, editing it, search, the top-left window and the info bar |
 | [Live TV](LIVE-TV.md) | The TV guide, catch-up, recordings, multi-view, sport, plugins and several sources |
 | [Films & shows](FILMS-AND-SHOWS.md) | Rows, libraries, streaming services, title pages, the players, search, Seerr and Trakt |
 | [Music](MUSIC.md) | Music sources, Now Playing, the queue, artist pages and music settings |

@@ -1,5 +1,6 @@
 package io.github.petebutty.viewarr.ui.home
 
+import androidx.compose.foundation.layout.fillMaxWidth
 import io.github.petebutty.viewarr.R
 import androidx.compose.runtime.mutableStateMapOf
 import io.github.petebutty.viewarr.ui.theme.appBackground
@@ -165,7 +166,7 @@ import androidx.compose.runtime.Stable
 class HomeState(
     menuOpenState: MutableState<Boolean>,
     showAccountsState: MutableState<Boolean>,
-    pageState: MutableState<Page>,
+    private val pageState: MutableState<Page>,
     startAppliedState: MutableState<Boolean>,
     fullscreenState: MutableState<Boolean>,
 ) {
@@ -208,7 +209,14 @@ class HomeState(
     val ownLoading = HashSet<Int>()
     var menuOpen by menuOpenState
     var showAccounts by showAccountsState
-    var page by pageState
+    /** The page shown: Live TV's guide only for someone who has Live TV (Films otherwise). */
+    var page: Page
+        get() = pageState.value
+        set(v) { pageState.value = if (v == Page.Tv && !io.github.petebutty.viewarr.data.profiles.Access.liveTv) Page.Movies else v }
+    /** Where Viewarr opens: a guide or channel start becomes Movies for someone without Live TV. */
+    fun startFor(start: io.github.petebutty.viewarr.data.settings.StartPage) =
+        if (io.github.petebutty.viewarr.data.profiles.Access.liveTv) start
+        else if (start == io.github.petebutty.viewarr.data.settings.StartPage.Guide || start == io.github.petebutty.viewarr.data.settings.StartPage.LastChannel) io.github.petebutty.viewarr.data.settings.StartPage.Movies else start
     var startApplied by startAppliedState
     var fullscreen by fullscreenState
     var recordTarget by mutableStateOf<Pair<ChannelListItem, GuideProgram>?>(null)
@@ -289,11 +297,16 @@ class HomeState(
         val cached = ownPrograms[ch.id]
         // Refreshed every 10 minutes, so what's on now moves on.
         if ((cached == null || System.currentTimeMillis() - cached.first > 600_000) && ownLoading.add(ch.id)) ownScope.launch {
-            runCatching { vm.programsFor(ch) }.getOrNull()?.let { ownPrograms[ch.id] = System.currentTimeMillis() to it }
+            val got = runCatching { vm.programsFor(ch) }.getOrNull()
+            // Not found this time: known as "nothing" for now (the bar can say so), asked again in a minute.
+            ownPrograms[ch.id] = if (got != null) System.currentTimeMillis() to got else (System.currentTimeMillis() - 540_000) to (cached?.second.orEmpty())
             ownLoading.remove(ch.id)
         }
         return cached?.second.orEmpty()
     }
+
+    /** Whether [ch]'s programmes have been looked up yet (until then the info bar waits instead of "No guide information"). */
+    fun guideKnown(ch: ChannelListItem) = programs[ch.id] != null || ownPrograms.containsKey(ch.id)
 
     fun showBanner() {
         hs.bannerVisible = true
@@ -306,6 +319,7 @@ class HomeState(
      */
     /** [full]: full screen (false: in the guide's window, as reopening where you left it can ask). */
     fun watchChannel(ch: ChannelListItem, catchup: GuideProgram? = null, endMultiView: Boolean = false, keepIfPlaying: Boolean = false, s: Session? = session, full: Boolean = true) {
+        if (!io.github.petebutty.viewarr.data.profiles.Access.liveTv) return
         vm.reveal(ch) {
             hs.page = Page.Tv
             when {
@@ -388,11 +402,29 @@ class HomeState(
         val target = list.getOrNull(stepIndex(index, delta, list.size)) ?: return
         hs.browseChannel = target.takeIf { it.id != playing?.id }
         showBanner()
+        prefetchAround(list, list.indexOf(target), delta)
         hs.browseJob?.cancel()
         if (hs.browseChannel == null) return
         // (Up / Down set to "Browse, OK changes": only OK changes.)
         val wait = (if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.LIVE_UPDOWN) == 1) null else AppColors.palette.browseDelayMs) ?: return
         hs.browseJob = fromStartScope.launch { delay(wait); commitBrowse() }
+    }
+
+    /**
+     * The next couple of channels in the direction you're browsing: their programmes and logos fetched now, so the
+     * info bar has them the moment you land there (it used to show the channel bare for a frame, then fill in).
+     */
+    private fun prefetchAround(list: List<ChannelListItem>, at: Int, delta: Int) {
+        val dir = if (delta >= 0) 1 else -1
+        val ctx = activity ?: return
+        val server = session?.serverUrl.orEmpty()
+        for (k in 1..2) {
+            val ch = list.getOrNull(stepIndex(at, dir * k, list.size)) ?: continue
+            programsOf(ch)
+            io.github.petebutty.viewarr.ui.guide.channelLogo(server, ch)?.let { url ->
+                runCatching { coil.Coil.imageLoader(ctx).enqueue(coil.request.ImageRequest.Builder(ctx).data(url).build()) }
+            }
+        }
     }
 
     /** Up / Down and Channel + / − while watching (Settings → Live TV → Up / Down while watching): change, or browse. */
@@ -1128,4 +1160,50 @@ internal fun rememberHomeState(): HomeState {
     val startApplied = rememberSaveable { mutableStateOf(false) }
     val fullscreen = rememberSaveable { mutableStateOf(false) }
     return remember { HomeState(menuOpen, showAccounts, page, startApplied, fullscreen) }
+}
+
+/**
+ * Live TV switched off for whoever is here (or found to be off once Dispatcharr answers): the channel stops, the
+ * guide goes and Movies shows. Switched back on (an admin's profile, say): the guide is fetched again.
+ */
+@androidx.compose.runtime.Composable
+internal fun LiveTvLockEffect(hs: HomeState) {
+    val on = io.github.petebutty.viewarr.data.profiles.Access.liveTv
+    // (The guide is fetched again only when Live TV comes back on, not on every start: that's syncIfStale's job.)
+    val was = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Boolean?>(null) }
+    androidx.compose.runtime.LaunchedEffect(on) {
+        val before = was.value; was.value = on
+        if (!on) {
+            hs.playback.close()
+            hs.fullscreen = false
+            hs.channelListOpen = false
+            if (hs.page == Page.Tv) hs.page = Page.Movies
+        } else if (before == false) {
+            runCatching { hs.vm.refreshGuide() }
+        }
+    }
+}
+
+/**
+ * Search closes once you've chosen something: after a film or show opened from the results (watched or not),
+ * leaving its page closes search too, instead of going back to the old results. (Channels, catch-up and music
+ * already close search as they're picked.) A person's page is still searching, so it doesn't count.
+ */
+@androidx.compose.runtime.Composable
+internal fun SearchClosesAfterTitle(onClose: () -> Unit) {
+    val searchVm: io.github.petebutty.viewarr.ui.media.MediaViewModel = androidx.hilt.navigation.compose.hiltViewModel(key = "media-search")
+    val detail by searchVm.detail.collectAsStateWithLifecycle()
+    var chose by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(detail != null) {
+        if (detail != null) chose = true
+        else if (chose) { chose = false; onClose() }
+    }
+}
+
+/** Settings → Appearance → News ticker → On Movies, Shows and Sports: the ticker along the bottom of those pages. */
+@androidx.compose.runtime.Composable
+internal fun androidx.compose.foundation.layout.BoxScope.PagesTicker(hs: HomeState) {
+    val onPage = (hs.page == Page.Movies || hs.page == Page.Shows || hs.sportsOpen) && !hs.fullscreen && !hs.quickSearch && !hs.menuOpen
+    if (onPage && io.github.petebutty.viewarr.ui.common.Ticker.onPages)
+        io.github.petebutty.viewarr.ui.common.NewsTicker(androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth())
 }

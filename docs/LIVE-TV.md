@@ -10,6 +10,9 @@ Button names below are the **Viewarr** preset. If you chose the **TiviMate** pre
 
 A TiviMate-style guide with channel logos, categories, and programmes going back and forward in time.
 
+- **Programme title logos**: the highlighted programme's own title logo (from TMDB) at the top of the guide, instead of plain text. Settings → Appearance → **Programme title logos**; **Title logos by group** switches them off for chosen channel groups (sports and event groups, say). *(0.28.7 and later.)*
+- **Long programme names scroll** on the highlighted programme, so they can be read in full. *(0.28.7 and later.)*
+
 - **OK** on a programme on now: it plays in the preview window at the top left. OK again goes full screen.
 - **OK** on a past programme: replay it (catch-up, where the channel has it).
 - **OK** on a programme still to come: its details.
@@ -180,7 +183,13 @@ Each window counts as a stream on your provider. Dispatcharr's failover to a bac
 
 *(Dispatcharr admin users only.)*
 
-- **Source**: see every stream behind a channel (and which provider it's from) and switch to another one from the remote. The channel keeps playing while the new stream opens in the background, then it swaps in (usually 1–3 seconds, no black or loading screen). If that stream's provider is busy (for example a backup allowing one connection, already in use), you stay on the current one with a note. While on a stream you picked, Dispatcharr's own automatic failover doesn't watch it; changing channel goes back to normal. *(0.28.5 and later.)*
+- **Source**: see every stream behind a channel (and which provider it's from) and switch to another one from the remote. Viewarr picks the way by itself:
+  - **A connection free at that provider**: the channel keeps playing while the new stream opens in the background, then it swaps in (usually 1–3 seconds, no black).
+  - **No connection to spare** (a provider allowing one line, or all in use): Dispatcharr switches the channel itself, with a short pause.
+  - **Another source from the same one-line provider**: the stream is let go first, then the new one starts (a loading screen of a couple of seconds), so the provider never sees two connections.
+  - If a source can't connect (busy or down), you stay on the current one with a note within a few seconds; if the new picture never arrives, the channel starts afresh rather than freezing.
+
+  **Settings → Playback → Live TV → Source switching**: **Automatic**, or **Classic only** to never open a second connection. While on a stream you picked, Dispatcharr's own automatic failover doesn't watch it; changing channel goes back to normal. *(0.28.7 and later.)*
 - **The provider on the info bar**: where the channel's stream is coming from (your provider, or a backup), always shown; Settings → Appearance → **Info bar: source** turns it off.
 - **Stalled streams**: live TV stuck loading for 8 seconds after it had been playing (Dispatcharr moving to a backup, a provider hiccup) reconnects by itself.
 - **Stream info**: Dispatcharr's live view of the channel: source, provider, resolution, codecs, bitrate and viewers.
@@ -207,6 +216,8 @@ ESPN's data covers almost every competition.
 - your own guide (including the **EPG & Sports Editor** plugin's event listings),
 - the UK listings, or
 - an event channel named after the match.
+
+**The game page** *(0.28.7 and later)*: with **Settings → Sports → Game page** on, OK on a game opens its page: both line-ups and formations, each side's last five results, this season's meetings, goals and cards, match stats, the venue and the TV channels, refreshed every minute while it's live. From there (or holding OK on a game card): **Watch**, **Remind me**, **Record**, or **Record all of a team's games**. Reminders and recordings asked for before the guide lists a game are set up by themselves as soon as it does (a Viewarr box has to be on once the game is listed), never twice.
 
 With the **UK Sport on TV** Dispatcharr plugin installed, games show their UK channel weeks ahead, and games not on UK TV show the club channel that streams them.
 

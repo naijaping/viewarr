@@ -1,5 +1,7 @@
 package io.github.petebutty.viewarr.ui.guide
 
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -30,6 +32,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -267,9 +270,20 @@ fun GuideScreen(
             // Dispatcharr's own picture for it (the grid the guide syncs from leaves pictures out), else TMDB by title.
             value = focused?.let { vm.pictureFor(it) } ?: vm.artFor(t)
         }
+        // Its title logo (TMDB), shown instead of the title text when there is one.
+        val titleLogo by androidx.compose.runtime.produceState<String?>(null, focused?.rowId, io.github.petebutty.viewarr.ui.theme.AppColors.palette.guideTitleLogos) {
+            // Settings → Appearance → Programme title logos (off, or low-memory mode: the name only).
+            if (!io.github.petebutty.viewarr.ui.theme.AppColors.palette.guideTitleLogos) { value = null; return@produceState }
+            value = null // (the last programme's logo mustn't sit over this one while it's looked up)
+            // Switched off for this channel's group (Settings → Appearance → Title logos by group).
+            if (selectedChannel?.groupName?.let { !io.github.petebutty.viewarr.ui.theme.AppColors.palette.shows("logo:$it") } == true) { value = null; return@produceState }
+            val t = focused?.title ?: run { value = null; return@produceState }
+            kotlinx.coroutines.delay(350)
+            value = vm.logoFor(t)
+        }
         // "What's selected" wallpaper: the highlighted programme's picture.
         androidx.compose.runtime.LaunchedEffect(art) { art?.let { io.github.petebutty.viewarr.ui.theme.Wallpaper.selected = it } }
-        InfoPanel(selectedChannel, focused, now, serverUrl, art)
+        InfoPanel(selectedChannel, focused, now, serverUrl, art, titleLogo)
         Spacer(Modifier.height(10.dp))
 
         if (channels.isEmpty()) {
@@ -287,7 +301,7 @@ fun GuideScreen(
             return@Column
         }
 
-        BoxWithConstraints(Modifier.fillMaxSize()) {
+        BoxWithConstraints(Modifier.fillMaxWidth().weight(1f)) {
             val gridWidth = maxWidth - ChannelColumn
             // Scheduled / in-progress Dispatcharr recordings, per channel: drawn as a red dot on the programme.
             val recordedByChannel = remember(recordings) {
@@ -315,6 +329,7 @@ fun GuideScreen(
                             now = now,
                             serverUrl = serverUrl,
                             textMeasurer = textMeasurer,
+                            gridWidth = gridWidth,
                         )
                     }
                 }
@@ -330,11 +345,13 @@ fun GuideScreen(
                 )
             }
         }
+        // Settings → Appearance → News ticker → In the TV guide.
+        if (io.github.petebutty.viewarr.ui.common.Ticker.inGuide) io.github.petebutty.viewarr.ui.common.NewsTicker(Modifier.fillMaxWidth().padding(top = 6.dp))
     }
 }
 
 @Composable
-private fun InfoPanel(channel: ChannelListItem?, program: GuideProgram?, now: Long, serverUrl: String, art: String? = null) {
+private fun InfoPanel(channel: ChannelListItem?, program: GuideProgram?, now: Long, serverUrl: String, art: String? = null, titleLogo: String? = null) {
     Row(Modifier.fillMaxWidth().height(180.dp)) {
         Box(
             Modifier
@@ -366,9 +383,21 @@ private fun InfoPanel(channel: ChannelListItem?, program: GuideProgram?, now: Lo
                 )
             }
         }
+        // (A logo that fails to load gives the name back, rather than no title at all.)
+        var logoFailed by androidx.compose.runtime.remember(titleLogo) { androidx.compose.runtime.mutableStateOf(false) }
         Column(Modifier.weight(1f).padding(start = 24.dp, top = 4.dp)) {
             Row(verticalAlignment = Alignment.Top) {
-                Text(
+                // The show's logo (TMDB) in place of its name when it has one; the name otherwise.
+                if (titleLogo != null && program != null && !logoFailed) Box(Modifier.weight(1f).height(44.dp), contentAlignment = Alignment.CenterStart) {
+                    AsyncImage(
+                        model = titleLogo,
+                        contentDescription = guideTitle(program),
+                        contentScale = ContentScale.Fit,
+                        alignment = Alignment.CenterStart,
+                        onError = { logoFailed = true },
+                        modifier = Modifier.fillMaxHeight().then(Modifier.widthIn(max = 360.dp)),
+                    )
+                } else Text(
                     program?.let(::guideTitle) ?: channel?.name.orEmpty(),
                     fontSize = 22.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -489,6 +518,7 @@ private fun GuideRow(
     now: Long,
     serverUrl: String,
     textMeasurer: TextMeasurer,
+    gridWidth: Dp = 0.dp,
 ) {
     val guideAlpha = AppColors.palette.guideAlpha
     val windowEnd = windowStart + GuideViewModel.VISIBLE_MS
@@ -539,6 +569,24 @@ private fun GuideRow(
         val iconColor = AppColors.TextSecondary
         val square = AppColors.palette.squareCorners
         val progressBars = AppColors.palette.progressBars
+        // The highlighted programme's name, when it doesn't fit its block, scrolls along (pause, scroll, pause), as
+        // the channel list's does. Only the row with the highlight animates (read in drawing, so only it redraws).
+        // (Only when its name doesn't fit its block: a name that fits leaves the row still, with nothing redrawn.)
+        val focusedP = focusedRowId?.let { id -> programs.firstOrNull { it.rowId == id } }
+        val gridPx = with(androidx.compose.ui.platform.LocalDensity.current) { gridWidth.toPx() }
+        val overflows = focusedP != null && gridPx > 0f && run {
+            val visibleMs = minOf(focusedP.endTime, windowEnd) - maxOf(focusedP.startTime, windowStart)
+            val cellPx = visibleMs * gridPx / GuideViewModel.VISIBLE_MS - with(androidx.compose.ui.platform.LocalDensity.current) { 22.dp.toPx() }
+            textMeasurer.measure(text = guideTitle(focusedP), style = CellTextFocused, maxLines = 1, softWrap = false).size.width > cellPx
+        }
+        val marquee = if (overflows) {
+            val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "guideMarquee")
+            t.animateFloat(
+                initialValue = 0f, targetValue = 1f,
+                animationSpec = androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(9_000, easing = androidx.compose.animation.core.LinearEasing)),
+                label = "guideMarqueePhase",
+            )
+        } else null
         Canvas(Modifier.weight(1f).fillMaxHeight()) {
             val pxPerMs = size.width / GuideViewModel.VISIBLE_MS
             val gap = 2.dp.toPx()
@@ -597,7 +645,18 @@ private fun GuideRow(
                     textX += iconSide + 5.dp.toPx()
                 }
                 val textWidth = (x1 - textX - pad).toInt()
-                if (textWidth > 12) {
+                val full = if (isFocused && marquee != null && textWidth > 12)
+                    textMeasurer.measure(text = guideTitle(p), style = CellTextFocused.copy(color = AppColors.OnAccent), maxLines = 1, softWrap = false)
+                else null
+                if (full != null && full.size.width > textWidth) {
+                    // Too long for its block: scrolled through, then back to the start.
+                    val m = marquee!!.value
+                    val travel = (full.size.width - textWidth).toFloat()
+                    val shift = travel * when { m < 0.2f -> 0f; m < 0.8f -> (m - 0.2f) / 0.6f; else -> 1f }
+                    clipRect(left = textX, top = 0f, right = textX + textWidth, bottom = size.height) {
+                        drawText(full, topLeft = Offset(textX - shift, (size.height - full.size.height) / 2f))
+                    }
+                } else if (textWidth > 12) {
                     val layout = textMeasurer.measure(
                         text = guideTitle(p),
                         style = if (isFocused) CellTextFocused.copy(color = AppColors.OnAccent) else CellText,

@@ -166,6 +166,12 @@ class SetupViewModel @Inject constructor(
     fun closeInvited() { stopPhone() }
 
     /** Invited, on the TV itself (no phone): the address and key typed with the remote. */
+    fun invitedPasswordSignIn(address: String, username: String, password: String) = viewModelScope.launch {
+        _state.update { it.copy(busy = true, error = null) }
+        invites.signInWithPassword(address, username, password).onFailure { e -> _state.update { it.copy(error = e.message) } }
+        _state.update { it.copy(busy = false) }
+    }
+
     fun invitedSignIn(address: String, key: String) = viewModelScope.launch {
         _state.update { it.copy(busy = true, error = null) }
         invites.signInWithDetails(address, key).onFailure { e -> _state.update { it.copy(error = e.message) } }

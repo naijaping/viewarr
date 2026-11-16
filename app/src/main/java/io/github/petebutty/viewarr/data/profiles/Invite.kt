@@ -140,6 +140,21 @@ class Invites @Inject constructor(
         return signed
     }
 
+    /**
+     * Someone invited signing in with the address, username and password they were sent. Their prepared setup goes
+     * straight on, and setup is finished.
+     */
+    suspend fun signInWithPassword(address: String, username: String, password: String): Result<Session> {
+        if (address.isBlank() || username.isBlank() || password.isEmpty()) return Result.failure(IllegalStateException("Enter the address, your username and your password."))
+        val found = auth.probe(address)
+        val url = (found as? io.github.petebutty.viewarr.data.repository.ProbeResult.Found)?.url
+            ?: return Result.failure(IllegalStateException("No Viewarr server found at that address. Check it with whoever sent it."))
+        val signed = auth.signIn(url, username.trim(), password)
+        val session = signed.getOrNull() ?: return signed
+        applyPrepared(session)
+        return signed
+    }
+
     /** Their admin's prepared setup on (only when its sign-ins can be read), and setup finished. */
     private suspend fun applyPrepared(session: Session) {
         runCatching {

@@ -20,7 +20,11 @@ import javax.inject.Singleton
 data class TraktAuth(val accessToken: String, val refreshToken: String, val expiresAt: Long, val username: String)
 
 @Serializable
-data class PlexAuth(val token: String, val serverName: String, val serverUrl: String, val machineId: String)
+data class PlexAuth(
+    val token: String, val serverName: String, val serverUrl: String, val machineId: String,
+    /** A Plex Home user's own plex.tv token (their [token] is the server's): used to find the server's addresses. */
+    val accountToken: String? = null,
+)
 
 /** Seerr (Overseerr / Jellyseerr): where to send requests. */
 @Serializable

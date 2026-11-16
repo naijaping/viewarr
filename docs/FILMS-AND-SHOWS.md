@@ -30,14 +30,14 @@ If nothing is playing, the highlighted title's trailer plays in the window at th
 
 OK turns an entry on or off. Right picks one up so Up / Down move it; OK puts it down.
 
-You can also do this from the menu itself with **Edit menus** (see [Getting around](GETTING-AROUND.md#edit-menus)).
+You can also do this from the menu itself by holding OK on a menu entry (see [Getting around](GETTING-AROUND.md#editing-the-menu)).
 
 ## Your libraries
 
 **Movies** and **Shows** in the menu list your Plex, Jellyfin and Emby libraries, plus **IPTV Movies** and **IPTV Shows** (your provider's films and series through Dispatcharr). IPTV titles get pages found on TMDB by name when the provider gives no id. Your rows are tucked under **Jump to a row**.
 
 - Going into a list slides the one before it away, like the guide's channel groups.
-- **My Library** in the main menu lists every library on all your servers (films and shows together, under each server's name: your Plex servers, Jellyfin / Emby, IPTV), then your music. Moving onto one shows it behind; OK or Right goes into it, with Sort, Filter (genres, years…) and A–Z. Movies and Shows themselves are the discovery pages: their home rows, catalogues and Jump to a row. Which libraries show, and their order, are set in Settings → Home page & menu (or Edit menus). *(0.28.1 and later.)*
+- **My Library** in the main menu lists every library on all your servers (films and shows together, under each server's name: your Plex servers, Jellyfin / Emby, IPTV), then your music. Moving onto one shows it behind; OK or Right goes into it, with Sort, Filter (genres, years…) and A–Z. Movies and Shows themselves are the discovery pages: their home rows, catalogues and Jump to a row. Which libraries show, and their order, are set in Settings → Home page & menu (or by holding OK on a menu entry). *(0.28.1 and later.)*
 
 A library is one continuous grid with:
 
@@ -56,7 +56,7 @@ Each library remembers its sort and filters.
 
 Streaming services and networks (Netflix, BBC One, HBO…) come from your own addons' rows, such as your own **AIOMetadata** instance. Each appears in the menu with its own page.
 
-A service's rows are always in the same order: **New shows**, **New films**, **Originals**, **Popular**, **Top rated**. You can show or hide each row in **Edit menus**, but not reorder them.
+A service's rows are always in the same order: **New shows**, **New films**, **Originals**, **Popular**, **Top rated**. You can show or hide each row while editing the menu (hold OK on an entry), but not reorder them.
 
 ## Title pages
 
