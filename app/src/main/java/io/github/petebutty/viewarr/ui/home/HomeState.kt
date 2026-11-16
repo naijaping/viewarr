@@ -225,7 +225,14 @@ class HomeState(
     var menuWidth by mutableIntStateOf(0)
     var menuFullPage by mutableStateOf(false)
     var digits by mutableStateOf("")
-    var channelListOpen by mutableStateOf(false)
+    private var channelListOpenState by mutableStateOf(false)
+    /** The channel list over full-screen live TV. Opening it closes the info bar and the controls (Peter, 2026-11-16). */
+    var channelListOpen: Boolean
+        get() = channelListOpenState
+        set(v) {
+            if (v && !channelListOpenState) { bannerVisible = false; osdVisible = false }
+            channelListOpenState = v
+        }
     var backLongPress by mutableStateOf(false)
     var backHoldJob by mutableStateOf<kotlinx.coroutines.Job?>(null)
     var pipBackHeld by mutableStateOf(false)

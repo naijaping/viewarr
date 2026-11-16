@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.ui.draw.drawBehind
@@ -253,7 +254,10 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
     // the fades' soft parts) bend the slider instead of capping it (a multiply-and-clamp left Floating card the same
     // from 0 to 30%, and Outline could never be solid).
     val see = 1f - glassAlpha
-    fun more(k: Float) = (1f - Math.pow(see.toDouble(), k.toDouble()).toFloat()).coerceIn(0f, 1f)
+    // (Lighter styles bend the other way: alpha = (1 − see)^(1/k). The first way, 1 − see^k, made them jump to about
+    // half see-through at the slider's first step and barely change after; Peter, 2026-11-16.)
+    fun more(k: Float) = (if (k >= 1f) 1f - Math.pow(see.toDouble(), k.toDouble()).toFloat()
+        else Math.pow(glassAlpha.toDouble(), 1.0 / k).toFloat()).coerceIn(0f, 1f)
     val outer = when (p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_STYLE)) {
         // Square glass: the same panel, sharp corners.
         1 -> modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp).glass(radius = 0.dp).padding(horizontal = 24.dp, vertical = 18.dp)
@@ -363,6 +367,8 @@ internal fun InfoBarTop(
     title: String,
     progress: @Composable () -> Unit,
     nextLine: String? = null,
+    /** Keep the "Next" line's room even without one (live TV's info bar, so it doesn't change size between channels). */
+    reserveNext: Boolean = false,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         if (number != null) Text(
@@ -374,10 +380,13 @@ internal fun InfoBarTop(
         )
         Box(Modifier.size(width = 110.dp, height = 62.dp), contentAlignment = Alignment.Center, content = logo)
         Column(Modifier.weight(1f).padding(start = 24.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, content = smallLine)
+            // The same size from one channel to the next (Peter, 2026-11-16: it grew and shrank while changing channel):
+            // the badge line keeps room for its badges (they arrive a moment after the channel starts, and are a little
+            // taller than its text), and the "Next" line keeps its place when a channel has none.
+            Row(Modifier.heightIn(min = 20.dp), verticalAlignment = Alignment.CenterVertically, content = smallLine)
             Text(title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
             progress()
-            if (nextLine != null) Text(nextLine, fontSize = 14.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (reserveNext || nextLine != null) Text(nextLine ?: " ", fontSize = 14.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         // Settings → Appearance → Info bar → Clock: the time at the right of the top row.
         if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_CLOCK) == 1) InfoBarClock()
@@ -487,6 +496,7 @@ internal fun InfoBanner(
                 }
             },
             nextLine = next?.let { "Next  ${it.startTime.hhmm()}  ${title(it)}" },
+            reserveNext = true,
         )
     }
 }

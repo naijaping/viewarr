@@ -1,7 +1,6 @@
 # Shown once, the first time a new version opens (not on a fresh install). Keep it to the few things worth knowing.
 # Lines starting with "- " are the points; the first line without "#" or "-" is the heading.
-Quicker source switching, and sound that comes back
-- Live TV: switching source keeps the channel playing, then swaps in the new stream in a second or two; stalled streams reconnect by themselves
-- Films and shows: Match frame rate switches the TV as they open (frame rate from Plex / Jellyfin / Emby), so the sound works from the start
-- Auto-play match: pick which addon stream plays (4K, Dolby Vision, Atmos…), sorted by importance (Settings → Playback)
-- Transparency that does what it says (0–100%), a clock on the info bar, and your provider shown on it
+A tidier channel list
+- Channel list: narrower (choose the width), long programme names scroll, progress on the highlighted channel only if you like
+- The info bar stays the same size from channel to channel
+- The mic shows it's listening when you search by voice

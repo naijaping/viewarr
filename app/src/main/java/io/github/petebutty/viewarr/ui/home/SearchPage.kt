@@ -19,6 +19,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -319,19 +321,23 @@ internal fun SearchPage(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                 // Voice: a round mic button before the bar, as on Android TV's own search.
                 if (canVoice) {
+                    // Listening: rings pulse out from the mic, swelling with your voice, as Android TV's own search does.
+                    Box(contentAlignment = Alignment.Center) {
+                    if (voice.listening) MicPulse(voice.level)
                     androidx.tv.material3.Surface(
                         onClick = ::listen,
                         modifier = Modifier.size(44.dp).focusRequester(micFocus).focusProperties { canFocus = fieldFree && focusEnabled }.instantFocusScale(1.1f),
                         shape = androidx.tv.material3.ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.CircleShape),
                         scale = io.github.petebutty.viewarr.ui.common.focusScale(1.1f),
                         colors = androidx.tv.material3.ClickableSurfaceDefaults.colors(
-                            containerColor = AppColors.Panel, contentColor = AppColors.TextPrimary,
+                            containerColor = if (voice.listening) AppColors.Accent else AppColors.Panel, contentColor = if (voice.listening) AppColors.OnAccent else AppColors.TextPrimary,
                             focusedContainerColor = AppColors.Accent, focusedContentColor = AppColors.OnAccent,
                         ),
                     ) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             androidx.tv.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Mic, contentDescription = "Voice search", modifier = Modifier.size(22.dp))
                         }
+                    }
                     }
                     Spacer(Modifier.width(12.dp))
                 }
@@ -466,4 +472,27 @@ internal fun SearchPage(
         searchFooter = if (tvFirst) null else ({ Column(Modifier.padding(horizontal = 48.dp)) { tvSections(); if (showMusic && query.trim().length >= 2) io.github.petebutty.viewarr.ui.music.MusicSearchResults(query, fieldFree && focusEnabled, onMusic) } }),
         vm = media,
     )
+}
+
+
+/**
+ * Listening on the mic: two rings pulsing out from it in the highlight colour, and a glow that swells with how loud
+ * you're speaking ([level] 0–1, from the recogniser), so it's plain it's hearing you (Peter, 2026-11-16).
+ */
+@Composable
+private fun MicPulse(level: Float) {
+    val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "mic")
+    val p by t.animateFloat(initialValue = 0f, targetValue = 1f, animationSpec = androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(1400, easing = androidx.compose.animation.core.LinearEasing)), label = "ring")
+    val loud by androidx.compose.animation.core.animateFloatAsState(level, androidx.compose.animation.core.tween(120), label = "level")
+    val colour = AppColors.Accent
+    Box(Modifier.size(44.dp).then(androidx.compose.ui.Modifier.drawBehind {
+        val r = size.minDimension / 2f
+        // The glow with your voice.
+        drawCircle(colour.copy(alpha = 0.35f), radius = r * (1.05f + 0.45f * loud))
+        // Two rings, half a beat apart, growing and fading.
+        for (k in 0..1) {
+            val f = (p + k * 0.5f) % 1f
+            drawCircle(colour.copy(alpha = 0.6f * (1f - f)), radius = r * (1f + 0.9f * f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3.dp.toPx()))
+        }
+    }))
 }

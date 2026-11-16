@@ -338,6 +338,8 @@ object UiOpts {
     const val CHLIST_PROGRESS = "chlist_progress"
     /** The channel list: the highlighted channel's progress bar colour (on the highlight). */
     const val CHLIST_PROGRESS_COLOUR = "chlist_progress_colour"
+    /** The channel list over live TV: how wide it is. */
+    const val CHLIST_WIDTH = "chlist_width"
     /** Live TV info bar: the stream's provider (Dispatcharr's account for the stream playing, e.g. a backup). */
     const val BANNER_SOURCE = "banner_source"
     /** Live TV keeps playing in a corner while you browse from a shortcut (or any page, Live TV hub style). */
@@ -426,7 +428,8 @@ object UiOpts {
         BANNER_CORNERS to listOf("Rounded", "Square"),
         BANNER_BADGES to listOf("HD · FHD · 4K", "720p · 1080p · 2160p", "Off"),
         BANNER_FPS to listOf("On", "Off"),
-        CHLIST_PROGRESS to listOf("On", "Off"),
+        CHLIST_PROGRESS to listOf("Every channel", "Off", "Highlighted channel only"),
+        CHLIST_WIDTH to listOf("Medium", "Narrow", "Wide"),
         CHLIST_PROGRESS_COLOUR to listOf("White", "Black", "Grey", "Your highlight colour", "Dark highlight"),
         BANNER_SOURCE to listOf("On", "Off"),
         LIVE_CORNER to listOf("On", "Off (browsing stops the channel)"),

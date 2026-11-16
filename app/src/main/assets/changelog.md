@@ -1,12 +1,27 @@
 # Viewarr changelog (built by tools/changelog.py from the GitHub releases; don't edit by hand)
 
+## 0.28.6 · 16 Nov 2026
+
+### Channel list
+- **Narrower**: Settings → Appearance → TV guide → **Channel list width** (Medium, the new standard; Narrow; or Wide, as before).
+- **Long programme names scroll** on the highlighted channel, so they can be read in full; every row stays one line.
+- **Progress bars**: Channel list progress can now be **Highlighted channel only**, and the highlighted channel's bar has its own colour (**Highlighted progress colour**, white as standard), so it shows on the highlight.
+- Opening the channel list closes the info bar and the controls.
+
+### Info bar
+- Stays the same size from channel to channel (it grew and shrank between channels with and without picture / sound badges, or without a "Next" programme).
+- The lighter styles (Faded glass, Feathered glass, Outline…) follow Pop-up glass evenly, instead of jumping to half see-through at the first step.
+
+### Search
+- **The mic shows it's listening**: rings pulse out from it and a glow swells with your voice.
+
 ## 0.28.5 · 15 Nov 2026
 
 ### Live TV
 - **Switching source** (the Source button) is quick and clean now: the channel keeps playing while the new stream opens in the background, then it swaps in, usually in 1–3 seconds, with no black, no hang and no second load. A busy backup just leaves you on the current one.
 - **Stalled streams reconnect by themselves**: live TV stuck loading for 8 seconds after it had been playing (Dispatcharr moving to a backup stream, for one) reconnects, as turning the channel off and on did.
 - **Your provider on the info bar** (Happy TV, a backup after switching…). Settings → Appearance → Info bar: source.
-- **Progress bars in the channel list**. Settings → Appearance → Live TV → Channel list progress.
+- **Progress bars in the channel list**. Settings → Appearance → TV guide → Channel list progress.
 - The info bar waits until the picture has finished growing to full screen when you open a channel from the guide.
 
 ### Films and shows

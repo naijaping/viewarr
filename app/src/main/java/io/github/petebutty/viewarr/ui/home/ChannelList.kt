@@ -5,6 +5,7 @@ import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import io.github.petebutty.viewarr.ui.common.followingSetting
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -144,7 +145,7 @@ internal fun ChannelListOverlay(
     Box(
         Modifier
             .fillMaxHeight()
-            .width(460.dp)
+            .width(channelListWidth())
             // The menu strip's colour (in the strip, the strip draws it once behind every column).
             .then(if (embedded) Modifier else Modifier.background(AppColors.MenuPanel))
             .padding(start = 24.dp, top = 24.dp, bottom = 24.dp, end = 36.dp),
@@ -219,9 +220,17 @@ internal fun ChannelListOverlay(
                         Spacer(Modifier.width(10.dp))
                         Column(Modifier.weight(1f)) {
                             Text(ch.name, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            nowOn?.let { Text(it, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            // On the highlighted channel a long programme name slides along after a moment, so it can be
+                            // read in full (rows stay one line and the same height); the others end in "…".
+                            nowOn?.let {
+                                if (rowFocused) Text(it, fontSize = 12.sp, maxLines = 1, softWrap = false,
+                                    modifier = Modifier.basicMarquee(iterations = Int.MAX_VALUE, initialDelayMillis = 1_200, repeatDelayMillis = 2_000))
+                                else Text(it, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                             // Settings → Appearance → Live TV → Channel list progress: how far through what's on now.
-                            if (nowProg != null && nowProg.endTime > nowProg.startTime && AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_PROGRESS) == 0) {
+                            // (Every channel, the highlighted one only, or off.)
+                            val progressMode = AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_PROGRESS)
+                            if (nowProg != null && nowProg.endTime > nowProg.startTime && (progressMode == 0 || (progressMode == 2 && rowFocused))) {
                                 val f = ((now - nowProg.startTime).toFloat() / (nowProg.endTime - nowProg.startTime)).coerceIn(0f, 1f)
                                 // On the highlighted row (your highlight colour behind it): a solid white bar on a darker
                                 // track, so it stands out (it was faint, the row's text colour on the highlight).
@@ -343,3 +352,9 @@ internal fun whenText(start: Long, now: Long): String {
     }
     return day + " " + d.format(io.github.petebutty.viewarr.ui.theme.Dates.time)
 }
+
+
+/** Settings → Appearance → TV guide → Channel list width: Narrow, Medium (the standard since 0.28.6) or Wide (as before). */
+@Composable
+internal fun channelListWidth(): androidx.compose.ui.unit.Dp =
+    when (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_WIDTH)) { 0 -> 380.dp; 1 -> 320.dp; else -> 460.dp }
