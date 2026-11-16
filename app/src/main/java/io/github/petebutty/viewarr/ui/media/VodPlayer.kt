@@ -116,6 +116,15 @@ fun VodPlayer(
             .setRenderersFactory(
                 // FFmpeg audio (DTS, TrueHD…) only when the box can't decode or pass through a soundtrack itself.
                 object : DefaultRenderersFactory(context) {
+                    // (The picture's shape from the file when the decoder says square pixels wrongly: playback/SarFix.kt.)
+                    override fun buildVideoRenderers(
+                        ctx: android.content.Context, mode: Int, selector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector, fallback: Boolean,
+                        handler: android.os.Handler, listener: androidx.media3.exoplayer.video.VideoRendererEventListener, joiningMs: Long,
+                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+                    ) {
+                        super.buildVideoRenderers(ctx, mode, selector, fallback, handler, listener, joiningMs, out)
+                        io.github.petebutty.viewarr.playback.SarFixVideoRenderer.replaceIn(out, ctx, codecAdapterFactory, selector, fallback, handler, listener, joiningMs)
+                    }
                     override fun buildAudioSink(ctx: android.content.Context, floatOutput: Boolean, audioTrackPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink? =
                         androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(ctx)
                             // Passthrough off: always decode to PCM in the box (no Dolby/DTS bitstream to a receiver).

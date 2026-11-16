@@ -1,5 +1,10 @@
 # Viewarr changelog (built by tools/changelog.py from the GitHub releases; don't edit by hand)
 
+## 0.28.8 · 16 Nov 2026
+
+### Fixes
+- **Widescreen SD channels show at the right shape**: on some boxes (Amlogic ones, such as the Ugoos AM9 Pro) the box's video decoder reported square pixels, so SD widescreen channels (720×576 marked 16:9) came out narrow with black bars, like 4:3. Viewarr now goes by the stream's own shape when the decoder gets it wrong, for live TV and for films and shows. Boxes that already showed it right are unchanged.
+
 ## 0.28.7 · 16 Nov 2026
 
 ### Source switching that copes with every provider

@@ -761,6 +761,16 @@ class PlaybackViewModel @Inject constructor(
                 object : DefaultRenderersFactory(context) {
                     override fun buildAudioSink(ctx: Context, floatOutput: Boolean, audioTrackPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink? =
                         super.buildAudioSink(ctx, floatOutput, audioTrackPlaybackParams)?.let(AvSync::wrap)
+
+                    // (The picture's shape from the stream when the decoder says square pixels wrongly: SarFix.kt.)
+                    override fun buildVideoRenderers(
+                        ctx: Context, mode: Int, selector: androidx.media3.exoplayer.mediacodec.MediaCodecSelector, fallback: Boolean,
+                        handler: android.os.Handler, listener: androidx.media3.exoplayer.video.VideoRendererEventListener, joiningMs: Long,
+                        out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
+                    ) {
+                        super.buildVideoRenderers(ctx, mode, selector, fallback, handler, listener, joiningMs, out)
+                        SarFixVideoRenderer.replaceIn(out, ctx, codecAdapterFactory, selector, fallback, handler, listener, joiningMs)
+                    }
                 }
                     .setEnableDecoderFallback(true)
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON),
