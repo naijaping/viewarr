@@ -27,7 +27,9 @@ object FrameRateMatcher {
                 val multiple = ratio.roundToInt()
                 if (multiple in 1..3 && abs(ratio - multiple) < 0.01f) m to multiple else null
             }
-            .minByOrNull { it.second }?.first ?: return null
+            // The lowest multiple first; among those the closest rate (59.94 for 59.94 fps, not 60: a 60 Hz mode
+            // picked by list order for 29.97 / 59.94 video judders every few seconds).
+            .minWithOrNull(compareBy<Pair<Display.Mode, Int>> { it.second }.thenBy { abs(it.first.refreshRate / it.second - fps) })?.first ?: return null
         if (best.modeId == current.modeId) return null
         Log.i(TAG, "video ${"%.3f".format(fps)} fps: switching ${current.refreshRate} → ${best.refreshRate} Hz")
         val previous = activity.window.attributes.preferredDisplayModeId

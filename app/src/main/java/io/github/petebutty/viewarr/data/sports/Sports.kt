@@ -1,5 +1,6 @@
 package io.github.petebutty.viewarr.data.sports
 
+import android.content.Context
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -16,6 +17,12 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import java.net.URLEncoder
+import java.time.LocalDate
+import java.time.OffsetDateTime
+import java.time.format.DateTimeFormatter
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -74,8 +81,12 @@ data class SportGame(
     val id: String, val league: String, val leagueName: String,
     val home: String, val away: String, val homeLogo: String?, val awayLogo: String?,
     val start: Long, val state: String, val score: String?, val detail: String?,
+    /** Every name ESPN gives each team (full, short, the club's own), for matching it to channels (GameMatch). */
+    val homeNames: List<String> = emptyList(), val awayNames: List<String> = emptyList(),
 ) {
-    val title get() = "$home v $away"
+    /** An event with no two sides (a race, a golf tournament, a fight card): its name is [home], [away] is blank. */
+    val isEvent get() = away.isBlank()
+    val title get() = if (isEvent) home else "$home v $away"
 }
 
 /**
@@ -86,7 +97,7 @@ data class SportGame(
 @Singleton
 class SportsRepository @Inject constructor(
     private val http: HttpJson,
-    @ApplicationContext private val context: android.content.Context,
+    @ApplicationContext private val context: Context,
 ) {
     val leagues: List<SportLeague> = listOf(
         SportLeague("soccer/sco.1", "Scottish Premiership", "SPFL", "⚽"),
@@ -143,7 +154,7 @@ class SportsRepository @Inject constructor(
         leagues.firstOrNull { it.path == path } ?: found[path] ?: SportLeague(path, path.substringAfter('/'), path.substringAfter('/'), Sport.of(path).emoji, hasTeams(path))
 
     /** Whether a sport has clubs to pick (not golf, tennis, racing or fights: players and drivers, not teams). */
-    private fun hasTeams(path: String) = Sport.of(path) !in setOf(Sport.Golf, Sport.Tennis, Sport.Motor, Sport.Fighting)
+    private fun hasTeams(path: String) = Sport.of(path) !in NO_TEAMS
 
     private val base = "https://site.api.espn.com/apis/site/v2/sports"
 
@@ -211,7 +222,7 @@ class SportsRepository @Inject constructor(
 
     /** ESPN's search (teams and leagues, best match first). Null: it couldn't be reached. */
     private suspend fun espnSearch(q: String): List<SportFollow>? {
-        val url = "https://site.web.api.espn.com/apis/common/v3/search?query=${java.net.URLEncoder.encode(q, "UTF-8")}&limit=40&type=team,league"
+        val url = "https://site.web.api.espn.com/apis/common/v3/search?query=${URLEncoder.encode(q, "UTF-8")}&limit=40&type=team,league"
         val res = withTimeoutOrNull(10_000) { runCatching { http.get(url) }.getOrNull() }?.takeIf { it.ok } ?: return null
         return res.body.array("items").mapNotNull { i ->
             val sport = i.str("sport") ?: return@mapNotNull null
@@ -219,7 +230,7 @@ class SportsRepository @Inject constructor(
             val path = "$sport/$slug"
             val name = i.str("displayName") ?: return@mapNotNull null
             val logo = i.array("logos").firstOrNull().str("href")
-            val women = Regex("(^|\\.)w(\\.|$)|wchampions|women|wnba|nwsl").containsMatchIn(slug)
+            val women = WOMEN_SLUG.containsMatchIn(slug)
             when (i.str("type")) {
                 "team" -> {
                     val lg = leagues.firstOrNull { it.path == path } ?: found[path]
@@ -237,6 +248,51 @@ class SportsRepository @Inject constructor(
     }
 
     // ---- Games
+
+    private var headlineCache: Pair<Long, List<SportGame>>? = null
+
+    /**
+     * ESPN's headline games across every sport today (the feed behind its site's scores bar: the big NFL, NBA, NHL,
+     * football, tennis, golf… games, about 40), with their state and score. One request, kept two minutes. For Live
+     * now: what's on in any sport, not only what you follow, and which games are over (their channels are dead).
+     */
+    suspend fun headline(): List<SportGame> {
+        headlineCache?.takeIf { System.currentTimeMillis() - it.first < 2 * 60_000L }?.let { return it.second }
+        val body = withTimeoutOrNull(10_000) {
+            runCatching { http.get("https://site.web.api.espn.com/apis/v2/scoreboard/header?lang=en&region=gb") }.getOrNull()
+        }?.takeIf { it.ok }?.body ?: return headlineCache?.second.orEmpty()
+        val out = body.array("sports").flatMap { sp ->
+            val sport = sp.str("slug") ?: return@flatMap emptyList()
+            sp.array("leagues").flatMap { lg ->
+                val path = "$sport/" + (lg.str("slug") ?: return@flatMap emptyList())
+                lg.array("events").mapNotNull { e -> headlineGame(e, path, lg.str("name") ?: lg.str("abbreviation")) }
+            }
+        }
+        headlineCache = System.currentTimeMillis() to out
+        return out
+    }
+
+    private fun headlineGame(e: JsonElement, league: String, leagueName: String?): SportGame? {
+        val id = e.str("id") ?: return null
+        val start = e.str("date")?.let { runCatching { OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() } ?: return null
+        val st = e.child("fullStatus").child("type")
+        val state = st.str("state") ?: e.str("status") ?: "pre"
+        val sides = e.array("competitors")
+        val teams = league(league).teams && sides.size == 2 && sides.all { it.str("type") != "athlete" }
+        if (!teams) {
+            val title = e.str("name") ?: return null
+            return SportGame(id, league, leagueName ?: league(league).name, title, "", null, null, start, state, null, st.str("shortDetail"),
+                homeNames = listOfNotNull(title, e.str("shortName")).distinct())
+        }
+        val h = sides.firstOrNull { it.str("homeAway") == "home" } ?: sides[0]
+        val a = sides.firstOrNull { it.str("homeAway") == "away" } ?: sides[1]
+        fun names(c: JsonElement) = listOfNotNull(c.str("displayName"), c.str("shortDisplayName"), c.str("name"), c.str("location")).distinct()
+        val score = if (state != "pre") listOfNotNull(h.str("score")?.ifBlank { null }, a.str("score")?.ifBlank { null }).takeIf { it.size == 2 }?.joinToString(" – ") else null
+        return SportGame(
+            id, league, leagueName ?: league(league).name, h.str("displayName") ?: return null, a.str("displayName") ?: return null,
+            h.str("logo"), a.str("logo"), start, state, score, st.str("shortDetail"), homeNames = names(h), awayNames = names(a),
+        )
+    }
 
     private val gamesCache = ConcurrentHashMap<String, Pair<Long, List<SportGame>>>()
 
@@ -262,8 +318,8 @@ class SportsRepository @Inject constructor(
             async {
                 val res = withTimeoutOrNull(10_000) { runCatching { http.get(u) }.getOrNull() }
                 val games = res?.takeIf { it.ok }?.body.array("events").mapNotNull { game(it, c) }
-                // Answered, with nothing for this team: not in it (a failed request isn't remembered).
-                if (c != f.league && res != null && (games.isEmpty() || !res.ok)) notIn["${f.id}|$c"] = now
+                // Answered, with nothing for this team (or a 4xx): not in it. A failed request or a server error isn't remembered.
+                if (c != f.league && res != null && ((res.ok && games.isEmpty()) || res.code in 400..499)) notIn["${f.id}|$c"] = now
                 games
             }
         }.awaitAll().flatten().distinctBy { it.id }.sortedBy { it.start }
@@ -296,17 +352,17 @@ class SportsRepository @Inject constructor(
      * over an international break, and a cup's next round weeks away.
      */
     private suspend fun leagueGames(league: String): List<SportGame> = coroutineScope {
-        val today = java.time.LocalDate.now()
-        val fmt = java.time.format.DateTimeFormatter.BASIC_ISO_DATE
+        val today = LocalDate.now()
+        val fmt = DateTimeFormatter.BASIC_ISO_DATE
         suspend fun board(q: String) = withTimeoutOrNull(10_000) { runCatching { http.get("$base/$league/scoreboard$q") }.getOrNull() }?.takeIf { it.ok }?.body
         val plain = board("")
-        fun day(s: String?) = s?.take(10)?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() }
+        fun day(s: String?) = s?.take(10)?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         val cal = plain.array("leagues").firstOrNull().array("calendar")
-        val days = sortedSetOf<java.time.LocalDate>()
+        val days = sortedSetOf<LocalDate>()
         val horizon = today.plusDays(35)
-        if (cal.isNotEmpty() && cal.first() is kotlinx.serialization.json.JsonPrimitive) {
+        if (cal.isNotEmpty() && cal.first() is JsonPrimitive) {
             // A list of match days: the next few.
-            cal.mapNotNull { day((it as? kotlinx.serialization.json.JsonPrimitive)?.content) }.filter { !it.isBefore(today) && !it.isAfter(horizon) }.take(5).forEach { days += it }
+            cal.mapNotNull { day((it as? JsonPrimitive)?.content) }.filter { !it.isBefore(today) && !it.isAfter(horizon) }.take(5).forEach { days += it }
         } else {
             // Rounds / stages with dates: the days of the current or next one, up to four weeks.
             cal.flatMap { it.array("entries").ifEmpty { listOf(it) } }.forEach { r ->
@@ -324,28 +380,43 @@ class SportsRepository @Inject constructor(
         (plain.array("events").mapNotNull { game(it, league) } + ahead).distinctBy { it.id }.sortedBy { it.start }
     }
 
-    private fun game(e: kotlinx.serialization.json.JsonElement, league: String): SportGame? {
+    private fun game(e: JsonElement, league: String): SportGame? {
         val id = e.str("id") ?: return null
         val comp = e.array("competitions").firstOrNull()
         // "2026-11-21T15:00Z" (no seconds): the offset parser takes it.
-        val start = e.str("date")?.let { runCatching { java.time.OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() } ?: return null
+        val start = e.str("date")?.let { runCatching { OffsetDateTime.parse(it).toInstant().toEpochMilli() }.getOrNull() } ?: return null
         val sides = comp.array("competitors")
         fun side(which: String) = sides.firstOrNull { it.str("homeAway") == which } ?: sides.getOrNull(if (which == "home") 0 else 1)
+        val status = comp.child("status").child("type") ?: e.child("status").child("type")
+        // A race, tournament or fight card (no two sides): the event by its own name ("Las Vegas Grand Prix", "UFC
+        // Fight Night: Procházka vs. Stirling"). Its first two competitors aren't home and away (a golf tournament
+        // showed as "Chad Ramey v Ben Kohles").
+        if (!league(league).teams) {
+            val title = e.str("name") ?: return null
+            return SportGame(
+                id = id, league = league, leagueName = e.child("league").str("name") ?: league(league).name,
+                home = title, away = "", homeLogo = null, awayLogo = null, start = start, state = status.str("state") ?: "pre",
+                score = null, detail = status.str("shortDetail"), homeNames = listOfNotNull(title, e.str("shortName")).distinct(),
+            )
+        }
         val h = side("home"); val a = side("away")
-        fun name(c: kotlinx.serialization.json.JsonElement?) = c.child("team").str("displayName") ?: c.child("athlete").str("displayName")
+        fun name(c: JsonElement?) = c.child("team").str("displayName") ?: c.child("athlete").str("displayName")
         val home = name(h); val away = name(a)
-        val status = comp.child("status").child("type").takeIf { it != null } ?: e.child("status").child("type")
+        fun names(c: JsonElement?) = c.child("team").let { t ->
+            listOfNotNull(t.str("displayName"), t.str("shortDisplayName"), t.str("name"), t.str("location"))
+        }.ifEmpty { listOfNotNull(c.child("athlete").str("displayName")) }.distinct()
         val state = status.str("state") ?: "pre"
-        fun score(c: kotlinx.serialization.json.JsonElement?) = (c.child("score") as? kotlinx.serialization.json.JsonPrimitive)?.content
+        fun score(c: JsonElement?) = (c.child("score") as? JsonPrimitive)?.content
             ?: c.child("score").str("displayValue")
         val sc = if (state != "pre") listOfNotNull(score(h), score(a)).takeIf { it.size == 2 }?.joinToString(" – ") else null
         return SportGame(
             id = id, league = league,
-            leagueName = e.child("league").str("name") ?: league(league)?.name ?: "",
+            leagueName = e.child("league").str("name") ?: league(league).name,
             home = home ?: e.str("name") ?: return null, away = away ?: "",
             homeLogo = h.child("team").array("logos").firstOrNull().str("href") ?: h.child("team").str("logo"),
             awayLogo = a.child("team").array("logos").firstOrNull().str("href") ?: a.child("team").str("logo"),
             start = start, state = state, score = sc, detail = status.str("shortDetail"),
+            homeNames = names(h), awayNames = names(a),
         )
     }
 
@@ -353,5 +424,8 @@ class SportsRepository @Inject constructor(
         const val KEY = "sports_follow"
         const val SEP = "\u001F"
         const val REC = "\u001E"
+        val NO_TEAMS = setOf(Sport.Golf, Sport.Tennis, Sport.Motor, Sport.Fighting)
+        /** A women's league's slug ("eng.w.1", "uefa.wchampions", "wnba"). */
+        val WOMEN_SLUG = Regex("(^|\\.)w(\\.|$)|wchampions|women|wnba|nwsl")
     }
 }

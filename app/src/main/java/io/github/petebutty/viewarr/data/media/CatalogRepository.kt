@@ -19,14 +19,29 @@ import io.github.petebutty.viewarr.data.remote.services.int
 import io.github.petebutty.viewarr.data.remote.services.long
 import io.github.petebutty.viewarr.data.remote.services.obj
 import io.github.petebutty.viewarr.data.remote.services.str
+import io.github.petebutty.viewarr.data.session.Session
+import io.github.petebutty.viewarr.data.session.SessionStore
+import io.github.petebutty.viewarr.data.settings.PlaybackStore
+import io.github.petebutty.viewarr.data.settings.RowLayoutStore
+import io.github.petebutty.viewarr.data.xtream.XtreamClient
+import io.github.petebutty.viewarr.data.xtream.XtreamSeries
+import io.github.petebutty.viewarr.data.xtream.XtreamVod
+import io.github.petebutty.viewarr.ui.theme.Dates
+import kotlin.math.abs
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.first
@@ -36,7 +51,9 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.JsonPrimitive
@@ -46,7 +63,16 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import java.io.IOException
+import java.net.URI
 import java.net.URLEncoder
+import java.text.Normalizer
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -57,13 +83,15 @@ private const val TMDB_IMG = "https://image.tmdb.org/t/p/"
 const val PROVIDER = "IPTV"
 /** plex.tv's own service for watchlists (not your server). */
 private const val PLEX_DISCOVER = "https://discover.provider.plex.tv"
+private val NOT_ALNUM = Regex("[^a-z0-9]")
+private val MARKS = Regex("\\p{Mn}+")
 
 /**
  * A home-network address: 192.168.x / 10.x / 172.16–31.x, a .local or single-word name, or Plex's
  * "192-168-1-5.<id>.plex.direct" form of those. Anything else (a domain, Tailscale) counts as away.
  */
 fun isHomeAddress(url: String): Boolean {
-    val host = runCatching { java.net.URI(url).host }.getOrNull()?.lowercase() ?: return false
+    val host = runCatching { URI(url).host }.getOrNull()?.lowercase() ?: return false
     val ip = if (host.endsWith(".plex.direct")) host.substringBefore('.').replace('-', '.') else host
     if (ip.endsWith(".local") || !ip.contains('.')) return true
     val p = ip.split('.').mapNotNull { it.toIntOrNull() }
@@ -132,15 +160,15 @@ class CatalogRepository @Inject constructor(
     private val store: AccountStore,
     private val tmdb: TmdbService,
     private val trakt: TraktService,
-    private val playbackStore: io.github.petebutty.viewarr.data.settings.PlaybackStore,
+    private val playbackStore: PlaybackStore,
     private val plex: PlexService,
     private val mediaServers: MediaServerService,
-    private val sessions: io.github.petebutty.viewarr.data.session.SessionStore,
-    private val xtream: io.github.petebutty.viewarr.data.xtream.XtreamClient,
-    private val rowLayouts: io.github.petebutty.viewarr.data.settings.RowLayoutStore,
+    private val sessions: SessionStore,
+    private val xtream: XtreamClient,
+    private val rowLayouts: RowLayoutStore,
 ) {
     /** Background work that outlives a screen (copying Trakt's history to Plex). */
-    private val appScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * What one person's or provider's lookups found, forgotten when the Live TV source or profile changes (profiles are
@@ -165,16 +193,16 @@ class CatalogRepository @Inject constructor(
         }
         // Trakt watched history: checked soon after start and every half hour (copied to Plex too, if that's on).
         appScope.launch {
-            kotlinx.coroutines.delay(5_000)
+            delay(5_000)
             while (true) {
                 runCatching { traktWatched() }
-                kotlinx.coroutines.delay(30 * 60_000L)
+                delay(30 * 60_000L)
             }
         }
     }
-    private val tmdbCache = ConcurrentHashMap<String, MediaItem>()
+    private val tmdbCache = BoundedCache<String, MediaItem>(2000)
     private val tmdbLimit = Semaphore(6)
-    @Volatile private var traktWatchlist: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val traktWatchlist: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     fun rows(type: MediaType): Flow<RowsState> = channelFlow {
         val a = store.current()
@@ -355,14 +383,13 @@ class CatalogRepository @Inject constructor(
         return MediaRow("search-people", "People", people.take(20))
     }
 
-    /** A person's films and shows (acting, and directing / writing), most popular first. */
     /** Who they are: photo, born / died, where, and their biography (British English, else any English). */
     suspend fun personInfo(personId: String, name: String): PersonInfo? {
         val key = store.current().tmdbKey ?: return null
         suspend fun get(lang: String) = runCatching { http.get(tmdb.url("/person/$personId", key, mapOf("language" to lang)), tmdb.headers(key)) }.getOrNull()?.takeIf { it.ok }?.body
         val j = get("en-GB") ?: return null
         val bio = j.str("biography")?.takeIf { it.isNotBlank() } ?: get("en-US")?.str("biography")?.takeIf { it.isNotBlank() }
-        fun date(k: String) = j.str(k)?.let { d -> runCatching { java.time.LocalDate.parse(d).format(io.github.petebutty.viewarr.ui.theme.Dates.long) }.getOrNull() }
+        fun date(k: String) = j.str(k)?.let { d -> runCatching { LocalDate.parse(d).format(Dates.long) }.getOrNull() }
         return PersonInfo(
             name = j.str("name") ?: name,
             photo = j.str("profile_path")?.let { "https://image.tmdb.org/t/p/w300$it" },
@@ -374,6 +401,7 @@ class CatalogRepository @Inject constructor(
         )
     }
 
+    /** A person's films and shows (acting, and directing / writing), most popular first. */
     suspend fun personCredits(personId: String, name: String): List<MediaRow> {
         val key = store.current().tmdbKey ?: return emptyList()
         val r = http.get(tmdb.url("/person/$personId/combined_credits", key, mapOf("language" to "en-GB")), tmdb.headers(key))
@@ -417,7 +445,7 @@ class CatalogRepository @Inject constructor(
         val key = store.current().tmdbKey ?: return null
         val clean = title.removePrefix("New: ").trim()
         // Guides abbreviate ("Pt1" for "Part 1") and punctuate differently: compare letters and numbers only.
-        fun norm(t: String) = t.lowercase().replace("&", "and").replace(Regex("\\bpart\\s*"), "pt").replace(Regex("[^a-z0-9]"), "")
+        fun norm(t: String) = t.lowercase().replace("&", "and").replace(Regex("\\bpart\\s*"), "pt").replace(NOT_ALNUM, "")
         val types = if (show) listOf(MediaType.Show) else listOf(MediaType.Movie, MediaType.Show)
         /**
          * Only a sure match opens by itself: the one title with this name (a show, when the guide gives a season or
@@ -555,15 +583,15 @@ class CatalogRepository @Inject constructor(
      * Jellyfin and Emby). One card per show, soonest first, the next five weeks.
      */
     private suspend fun upcomingRow(a: Accounts, traktAuth: TraktAuth?): MediaRow? {
-        val zone = java.time.ZoneId.systemDefault()
-        val today = java.time.LocalDate.now(zone)
-        data class Up(val item: MediaItem, val date: java.time.LocalDate, val time: java.time.ZonedDateTime?, val s: Int?, val e: Int?, val name: String?)
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        data class Up(val item: MediaItem, val date: LocalDate, val time: ZonedDateTime?, val s: Int?, val e: Int?, val name: String?)
         val found = ArrayList<Up>()
         if (traktAuth != null) {
             val r = runCatching { http.get("https://api.trakt.tv/calendars/my/shows/$today/35", trakt.headers(traktAuth.accessToken)) }.getOrNull()
             r?.takeIf { it.ok }?.body?.asArray()?.forEach { j ->
                 val item = traktItem(j.child("show"), MediaType.Show, "Trakt") ?: return@forEach
-                val at = j.str("first_aired")?.let { runCatching { java.time.Instant.parse(it).atZone(zone) }.getOrNull() } ?: return@forEach
+                val at = j.str("first_aired")?.let { runCatching { Instant.parse(it).atZone(zone) }.getOrNull() } ?: return@forEach
                 val ep = j.child("episode")
                 found += Up(item, at.toLocalDate(), at, ep.int("season"), ep.int("number"), ep.str("title"))
             }
@@ -583,7 +611,7 @@ class CatalogRepository @Inject constructor(
                         tmdbLimit.withPermit {
                             val r = runCatching { http.get(tmdb.url("/tv/${show.tmdbId}", key, mapOf("language" to "en-GB")), tmdb.headers(key)) }.getOrNull()
                             val next = r?.takeIf { it.ok }?.body?.child("next_episode_to_air") ?: return@withPermit null
-                            val date = next.str("air_date")?.let { runCatching { java.time.LocalDate.parse(it) }.getOrNull() } ?: return@withPermit null
+                            val date = next.str("air_date")?.let { runCatching { LocalDate.parse(it) }.getOrNull() } ?: return@withPermit null
                             val item = (tmdbItem(r.body, MediaType.Show) ?: show).copy(origin = show.origin)
                             Up(item, date, null, next.int("season_number"), next.int("episode_number"), next.str("name"))
                         }
@@ -591,7 +619,7 @@ class CatalogRepository @Inject constructor(
                 }.awaitAll().filterNotNull().forEach { found += it }
             }
         }
-        val now = java.time.ZonedDateTime.now(zone)
+        val now = ZonedDateTime.now(zone)
         // Not yet aired: a timed episode (Trakt) still to come; a dated one (TMDB) today or later.
         val soon = found.filter { (it.time?.isAfter(now) ?: !it.date.isBefore(today)) && it.date.isBefore(today.plusDays(35)) }
             .sortedWith(compareBy({ it.date }, { it.time }))
@@ -602,10 +630,10 @@ class CatalogRepository @Inject constructor(
             val day = when {
                 u.date == today -> "Today"
                 u.date == today.plusDays(1) -> "Tomorrow"
-                u.date.isBefore(today.plusDays(7)) -> u.date.format(java.time.format.DateTimeFormatter.ofPattern("EEEE"))
-                else -> u.date.format(io.github.petebutty.viewarr.ui.theme.Dates.day)
+                u.date.isBefore(today.plusDays(7)) -> u.date.format(DateTimeFormatter.ofPattern("EEEE"))
+                else -> u.date.format(Dates.day)
             }
-            val clock = u.time?.format(io.github.petebutty.viewarr.ui.theme.Dates.time)
+            val clock = u.time?.format(Dates.time)
             val ep = if (u.s != null && u.e != null) "S${u.s} · E${u.e}" else null
             item.copy(
                 key = item.key + ":upcoming",
@@ -619,7 +647,7 @@ class CatalogRepository @Inject constructor(
 
     /** One refresh at a time: Trakt's refresh tokens work once, so two at once (Movies and Shows loading together) left
      *  the second with a spent token and Trakt signed out. */
-    private val traktRefreshLock = kotlinx.coroutines.sync.Mutex()
+    private val traktRefreshLock = Mutex()
 
     private suspend fun freshTrakt(cached: TraktAuth): TraktAuth = traktRefreshLock.withLock {
         // The saved login, not the caller's copy (another call may just have refreshed it).
@@ -673,7 +701,10 @@ class CatalogRepository @Inject constructor(
         val r = http.get("https://api.trakt.tv/sync/watchlist/$kind/added", trakt.headers(t.accessToken))
         if (!r.ok) return null
         val items = r.body.asArray().mapNotNull { traktItem(it.child(field), type, "Trakt watchlist") }
-        items.mapNotNull { it.tmdbId }.forEach { traktWatchlist.add("${type.name}:$it") }
+        // This type's part of the set becomes what Trakt has now, so titles removed on trakt.tv drop out too.
+        val now = items.mapNotNull { it.tmdbId }.map { "${type.name}:$it" }.toSet()
+        traktWatchlist.removeAll { it.startsWith("${type.name}:") && it !in now }
+        traktWatchlist.addAll(now)
         return MediaRow("trakt-watchlist-${type.name}", "Your watchlist", enrich(a, items.take(40)))
     }
 
@@ -698,7 +729,7 @@ class CatalogRepository @Inject constructor(
         if (r == null || !r.ok) return@coroutineScope emptyList()
         // The shows in the order you last watched them.
         val shows = r.body.asArray().map { it.child("show") }.distinctBy { it.child("ids").int("trakt") }.take(15)
-        val limit = kotlinx.coroutines.sync.Semaphore(4)
+        val limit = Semaphore(4)
         val items = shows.map { show ->
             async {
                 val id = show.child("ids").int("trakt") ?: return@async null
@@ -926,7 +957,6 @@ class CatalogRepository @Inject constructor(
         (plexParts + others + provider + groups).awaitAll().flatten()
     }
 
-    /** One page of a library and how many titles it has in all; null if the server didn't answer. */
     /** A library's genres, from the server itself (id to name), for filtering. */
     suspend fun libraryGenres(lib: MediaLibrary, type: MediaType): List<Pair<String, String>> {
         if (lib.kind != LibKind.Library) return emptyList()
@@ -936,7 +966,7 @@ class CatalogRepository @Inject constructor(
             if (dispatcharrVod() != null) {
                 val want = if (type == MediaType.Movie) "movie" else "series"
                 val list = dvodGet("categories/", emptyMap())
-                val cats = ((list as? kotlinx.serialization.json.JsonArray) ?: list.array("results")).filter { c ->
+                val cats = ((list as? JsonArray) ?: list.array("results")).filter { c ->
                     c.str("category_type") == want && c.array("m3u_accounts").any { it.child("enabled")?.toString() == "true" }
                 }
                 return cats.mapNotNull { c -> c.str("name")?.let { n -> "$n|$want" to tidyCategory(n) } }.distinctBy { it.second }.sortedBy { it.second.lowercase() }
@@ -1053,14 +1083,17 @@ class CatalogRepository @Inject constructor(
                 ?.body.array("Items").mapNotNull { s -> val id = s.str("Id") ?: return@mapNotNull null; FilterValue(id, s.str("Name") ?: id) }
             else -> {
                 val f = runCatching { http.get("${srv.serverUrl}/Items/Filters?$base", h) }.getOrNull()?.takeIf { it.ok }?.body
-                val list = ((f as? kotlinx.serialization.json.JsonObject)?.get(group) as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
+                val list = ((f as? JsonObject)?.get(group) as? JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content }
                 val values = list.map { FilterValue(it, it) }
                 if (group == "Years") values.sortedByDescending { it.id.toIntOrNull() ?: 0 } else values
             }
         }
     }
 
-    /** One stretch of [lib] with [q] applied: titles from [start], and how many match in all. */
+    /**
+     * One stretch of [lib] with [q] applied: titles from [start], and how many match in all; null if the server
+     * didn't answer.
+     */
     suspend fun libraryPage(lib: MediaLibrary, type: MediaType, q: LibraryQuery, start: Int, size: Int): Pair<List<MediaItem>, Int>? {
         val a = store.current()
         val text = q.query.trim()
@@ -1204,8 +1237,14 @@ class CatalogRepository @Inject constructor(
         )
     }
 
-    private suspend fun plexGet(a: Accounts, p: PlexAuth, path: String) =
+    /** A Plex reply's MediaContainer, or null when the server says no or can't be reached (it never throws). */
+    private suspend fun plexGet(a: Accounts, p: PlexAuth, path: String): JsonElement? = try {
         http.get(p.serverUrl + path, plex.headers(a.deviceId, p.token)).takeIf { it.ok }?.body.child("MediaContainer")
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }
 
     private suspend fun plexSections(a: Accounts, p: PlexAuth, type: MediaType) =
         plexGet(a, p, "/library/sections")?.array("Directory").orEmpty()
@@ -1222,7 +1261,7 @@ class CatalogRepository @Inject constructor(
                     val items = runCatching {
                         withTimeoutOrNull(15_000) {
                             plexGet(a, p, "/library/sections/$key/all?sort=addedAt:desc&includeGuids=1&X-Plex-Container-Start=0&X-Plex-Container-Size=40")
-                                ?.array("Metadata").orEmpty().mapNotNull { plexItem(p, it, type) }
+                                ?.array("Metadata")?.mapNotNull { plexItem(p, it, type) } // null: no answer
                         }
                     }.getOrNull() ?: run { Log.w(TAG, "plex library '$name' didn't answer in time"); return@async null }
                     // The main server keeps its old row ids (Home rows settings); others are told apart by server.
@@ -1268,7 +1307,7 @@ class CatalogRepository @Inject constructor(
                                 "${srv.serverUrl}/Users/${srv.userId}/Items?IncludeItemTypes=$kind&SortBy=DateCreated&SortOrder=Descending&Recursive=true&Limit=8&Fields=ProviderIds,Overview,ProductionYear,DateCreated",
                                 mediaServers.headers(emby, a.deviceId, srv.token),
                             ).takeIf { it.ok }?.body?.array("Items").orEmpty().mapNotNull { j ->
-                                val added = runCatching { java.time.Instant.parse(j.str("DateCreated")).epochSecond }.getOrDefault(0L)
+                                val added = runCatching { Instant.parse(j.str("DateCreated")).epochSecond }.getOrDefault(0L)
                                 serverItem(srv, j, type, name)?.let { it to added }
                             }
                         }
@@ -1322,9 +1361,9 @@ class CatalogRepository @Inject constructor(
     // ------------------------------------------------------------------ your collections and playlists
 
     /** Each server's collections / playlists (for 10 minutes), by "<what>|<server>|<type>". */
-    private val groupCache = ConcurrentHashMap<String, Pair<Long, List<MediaLibrary>>>()
+    private val groupCache = ConcurrentHashMap<String, Timed<List<MediaLibrary>>>()
     /** What's in a collection / playlist (for 5 minutes): each title with when it was added. */
-    private val groupItemsCache = ConcurrentHashMap<String, Pair<Long, List<Pair<MediaItem, Long>>>>()
+    private val groupItemsCache = BoundedCache<String, Pair<Long, List<Pair<MediaItem, Long>>>>(60)
     /** Collections and playlists seen so far, by key: a card ("col:<key>") opens its own. */
     private val groupByKey = ConcurrentHashMap<String, MediaLibrary>()
 
@@ -1332,10 +1371,11 @@ class CatalogRepository @Inject constructor(
     fun groupFor(itemKey: String): MediaLibrary? = groupByKey[itemKey.removePrefix("col:")]
 
     private suspend fun cachedGroups(key: String, load: suspend () -> List<MediaLibrary>): List<MediaLibrary> {
-        groupCache[key]?.takeIf { System.currentTimeMillis() - it.first < 10 * 60_000L }?.let { return it.second }
+        groupCache[key]?.takeIf { it.fresh }?.let { return it.value }
         val got = load()
         got.forEach { groupByKey[it.key] = it }
-        groupCache[key] = System.currentTimeMillis() to got
+        // Nothing may mean the server didn't answer: kept 1 minute instead of 10.
+        groupCache[key] = Timed.forMs(got, if (got.isEmpty()) 60_000L else 10 * 60_000L)
         return got
     }
 
@@ -1429,7 +1469,8 @@ class CatalogRepository @Inject constructor(
         val got: List<Pair<MediaItem, Long>> = if (g.server != null) {
             val p = plexServers(a).firstOrNull { it.machineId == g.server } ?: return emptyList()
             val path = if (g.kind == LibKind.Playlist) "/playlists/${g.id}/items?includeGuids=1" else "/library/collections/${g.id}/children?includeGuids=1"
-            runCatching { plexGet(a, p, path) }.getOrNull()?.array("Metadata").orEmpty().mapNotNull { j ->
+            // Not remembered when Plex couldn't be reached.
+            (plexGet(a, p, path) ?: return emptyList()).array("Metadata").mapNotNull { j ->
                 val added = j.long("addedAt") ?: 0L
                 when (j.str("type")) {
                     "movie" -> plexItem(p, j, MediaType.Movie)
@@ -1451,7 +1492,7 @@ class CatalogRepository @Inject constructor(
                 else "${srv.serverUrl}/Users/${srv.userId}/Items?ParentId=${g.id}&$fields"
             val r = runCatching { http.get(url, mediaServers.headers(emby, a.deviceId, srv.token)) }.getOrNull()?.takeIf { it.ok } ?: return emptyList()
             r.body.array("Items").mapNotNull { j ->
-                val added = j.str("DateCreated")?.let { d -> runCatching { java.time.Instant.parse(d).epochSecond }.getOrNull() } ?: 0L
+                val added = j.str("DateCreated")?.let { d -> runCatching { Instant.parse(d).epochSecond }.getOrNull() } ?: 0L
                 when (j.str("Type")) {
                     "Movie" -> serverItem(srv, j, MediaType.Movie, g.source)
                     "Series" -> serverItem(srv, j, MediaType.Show, g.source)
@@ -1572,7 +1613,6 @@ class CatalogRepository @Inject constructor(
 
     // ------------------------------------------------------------------ Stremio addons
 
-    /** Where each addon row came from (its catalogue), so one shortcut's rows can be fetched again on their own. */
     /** Where a row comes from, by its id: Plex, Jellyfin, Emby, an add-on (AIOStreams, AIOMetadata…), Trakt, TMDB, IPTV. */
     fun rowOrigin(id: String): String {
         addonRowSources[id]?.let { return it.addon.name }
@@ -1593,6 +1633,7 @@ class CatalogRepository @Inject constructor(
     }
 
     private class AddonRowSource(val addon: AddonInfo, val catalog: String, val catType: String, val type: MediaType, val take: Int, val name: String)
+    /** Where each addon row came from (its catalogue), so one shortcut's rows can be fetched again on their own. */
     private val addonRowSources = ConcurrentHashMap<String, AddonRowSource>()
 
     /** [rowId] fetched again from its addon's catalogue (a shortcut's Refresh); null if it isn't an addon row or failed. */
@@ -1624,10 +1665,10 @@ class CatalogRepository @Inject constructor(
         // A few at a time (an addon can have a hundred). Groups: its other catalogues, then each network's rows; as a
         // group completes, everything so far is handed over, so networks (and their shortcuts) appear one by one
         // instead of all waiting for the slowest catalogue.
-        val gate = kotlinx.coroutines.sync.Semaphore(6)
-        val done = java.util.concurrent.ConcurrentHashMap<Int, MediaRow>()
+        val gate = Semaphore(6)
+        val done = ConcurrentHashMap<Int, MediaRow>()
         val groupOf = catalogs.map { setName(it) ?: "" }
-        val left = java.util.concurrent.ConcurrentHashMap(groupOf.groupingBy { it }.eachCount())
+        val left = ConcurrentHashMap(groupOf.groupingBy { it }.eachCount())
         val handOver = Mutex()
         coroutineScope {
             catalogs.forEachIndexed { i, c ->
@@ -1672,8 +1713,8 @@ class CatalogRepository @Inject constructor(
 
     // ------------------------------------------------------------------ In your library
 
-    /** Answers already worked out this run (title key → copies), kept for 10 minutes. */
-    private val copyCache = ConcurrentHashMap<String, Pair<Long, List<LibraryCopy>>>()
+    /** Answers already worked out this run (title key → copies), kept for 10 minutes; 1 minute when a server didn't answer. */
+    private val copyCache = BoundedCache<String, Timed<List<LibraryCopy>>>(300)
     private val plexSectionCache = ConcurrentHashMap<String, Pair<Long, List<JsonElement>>>()
 
     /**
@@ -1682,20 +1723,24 @@ class CatalogRepository @Inject constructor(
      * took minutes, or ran the TV out of memory, on big Plex servers.
      */
     suspend fun copiesOf(item: MediaItem): List<LibraryCopy> {
-        copyCache[item.key]?.takeIf { System.currentTimeMillis() - it.first < 10 * 60_000L }?.let { return it.second }
+        copyCache[item.key]?.takeIf { it.fresh }?.let { return it.value }
         val a = store.current()
-        val found = coroutineScope {
+        // null = that server timed out or failed (not "it hasn't got it").
+        val answers = coroutineScope {
             val jobs = buildList {
-                plexServers(a).forEach { p -> add(async { runCatching { withTimeoutOrNull(15_000) { plexCopiesOf(a, p, item) } }.getOrNull().orEmpty() }) }
+                plexServers(a).forEach { p -> add(async { runCatching { withTimeoutOrNull(15_000) { plexCopiesOf(a, p, item) } }.getOrNull() }) }
                 listOfNotNull(a.jellyfin?.let { it to false }, a.emby?.let { it to true }).forEach { (srv, emby) ->
-                    add(async { runCatching { withTimeoutOrNull(15_000) { serverCopies(a, srv, emby, item) } }.getOrNull().orEmpty() })
+                    add(async { runCatching { withTimeoutOrNull(15_000) { serverCopies(a, srv, emby, item) } }.getOrNull() })
                 }
-                add(async { runCatching { withTimeoutOrNull(20_000) { providerCopies(item) } }.getOrNull().orEmpty() })
+                add(async { runCatching { withTimeoutOrNull(20_000) { providerCopies(item) } }.getOrNull() })
             }
-            jobs.awaitAll().flatten()
+            jobs.awaitAll()
+        }
         // One copy per source, but every Plex server's own: if one server's file has gone, another's can play.
-        }.distinctBy { it.source + "|" + (if (it.source == "Plex") it.ref?.substringAfter('@', "") else "") + "|" + it.version?.plexMedia + "|" + it.version?.sourceId }
-        copyCache[item.key] = System.currentTimeMillis() to found
+        val found = answers.flatMap { it.orEmpty() }
+            .distinctBy { it.source + "|" + (if (it.source == "Plex") it.ref?.substringAfter('@', "") else "") + "|" + it.version?.plexMedia + "|" + it.version?.sourceId }
+        // A server that didn't answer would show the title as "not in your library" for 10 minutes: ask again sooner.
+        copyCache[item.key] = Timed.forMs(found, if (answers.any { it == null }) 60_000L else 10 * 60_000L)
         return found
     }
 
@@ -1704,13 +1749,13 @@ class CatalogRepository @Inject constructor(
         if (item.tmdbId != null && tmdbId != null) return item.tmdbId == tmdbId
         if (item.imdbId != null && imdbId != null) return item.imdbId == imdbId
         if (name == null || !name.equals(item.title, ignoreCase = true)) return false
-        return item.year == null || year == null || kotlin.math.abs(item.year - year) <= 1
+        return item.year == null || year == null || abs(item.year - year) <= 1
     }
 
     /** Names to ask for: the title, and its part before a colon ("Batman: Year One" is "Batman Year One" on some servers). */
     private fun searchNames(title: String): List<String> {
         // Also without accents: "Filipiñana" may be stored as "Filipinana".
-        val plain = java.text.Normalizer.normalize(title, java.text.Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
+        val plain = Normalizer.normalize(title, Normalizer.Form.NFD).replace(MARKS, "")
         return listOf(title, plain, title.substringBefore(':').trim()).filter { it.length >= 2 }.distinct()
     }
 
@@ -1770,7 +1815,8 @@ class CatalogRepository @Inject constructor(
             return if (item.type == MediaType.Movie) plexCopies(p, m) else listOf(plexCopies(p, m).first())
         }
         val sections = (plexSectionCache[p.machineId]?.takeIf { System.currentTimeMillis() - it.first < 30 * 60_000L }?.second
-            ?: (plexGet(a, p, "/library/sections")?.array("Directory").orEmpty().also { plexSectionCache[p.machineId] = System.currentTimeMillis() to it }))
+            ?: plexGet(a, p, "/library/sections")?.array("Directory")?.also { plexSectionCache[p.machineId] = System.currentTimeMillis() to it }
+            ?: throw IOException("${p.serverName} didn't answer")) // a failure, not "no copy" (see copiesOf)
             .filter { it.str("type") == if (item.type == MediaType.Movie) "movie" else "show" }
             .mapNotNull { it.str("key") }
         for (name in searchNames(item.title)) {
@@ -1868,7 +1914,7 @@ class CatalogRepository @Inject constructor(
                 val hits = dvodGet(dvodPath(item.type), mapOf("name" to item.title, "page_size" to "50"))?.array("results").orEmpty()
                 hits.firstOrNull { h -> item.tmdbId != null && (h.str("tmdb_id")?.toIntOrNull() ?: h.int("tmdb_id")) == item.tmdbId }?.int("id")
                     ?: hits.firstOrNull { h ->
-                        io.github.petebutty.viewarr.data.xtream.XtreamClient.cleanTitle(h.str("name").orEmpty()).equals(item.title, ignoreCase = true) &&
+                        XtreamClient.cleanTitle(h.str("name").orEmpty()).equals(item.title, ignoreCase = true) &&
                             (item.year == null || h.int("year") == null || h.int("year") == item.year)
                     }?.int("id")
             } ?: return emptyList()
@@ -1944,7 +1990,7 @@ class CatalogRepository @Inject constructor(
             "directPlay" to "0", "directStream" to "1", "directStreamAudio" to "1",
             "videoQuality" to "100", "maxVideoBitrate" to maxKbps.toString(), "videoResolution" to "1920x1080",
             "subtitles" to "auto", "location" to "lan",
-            "session" to java.util.UUID.randomUUID().toString(),
+            "session" to UUID.randomUUID().toString(),
             "X-Plex-Token" to p.token,
             "X-Plex-Client-Identifier" to a.deviceId,
             "X-Plex-Product" to "Viewarr", "X-Plex-Platform" to "Android", "X-Plex-Device" to "Android TV",
@@ -2105,7 +2151,7 @@ class CatalogRepository @Inject constructor(
                 item.tmdbId?.let { put("tmdb", it) }
                 item.imdbId?.takeIf { it.isNotBlank() }?.let { put("imdb", it) }
             }
-            val body = buildJsonObject { put("movies", kotlinx.serialization.json.buildJsonArray { add(buildJsonObject { put("ids", ids) }) }) }
+            val body = buildJsonObject { put("movies", buildJsonArray { add(buildJsonObject { put("ids", ids) }) }) }
             val url = if (watched) "https://api.trakt.tv/sync/history" else "https://api.trakt.tv/sync/history/remove"
             done = runCatching { http.post(url, body, trakt.headers(t.accessToken)).ok }.getOrDefault(false) || done
             runCatching { traktWatched(force = true) }
@@ -2126,7 +2172,6 @@ class CatalogRepository @Inject constructor(
         }
     }
 
-    /** A Jellyfin / Emby film or episode: the file itself (mpv plays almost anything), resuming where you left off. */
     /** True when this copy's server is on the home network (tried first: quicker, and no internet upload needed). */
     suspend fun isHomeCopy(copy: LibraryCopy): Boolean {
         val a = store.current()
@@ -2139,6 +2184,7 @@ class CatalogRepository @Inject constructor(
         return isHomeAddress(url)
     }
 
+    /** A Jellyfin / Emby film or episode: the file itself (mpv plays almost anything), resuming where you left off. */
     suspend fun serverStream(source: String, itemId: String, title: String, watch: WatchTarget?, sourceId: String? = null): VodStream? {
         val (s, emby) = serverFor(source) ?: return null
         val a = store.current()
@@ -2165,7 +2211,7 @@ class CatalogRepository @Inject constructor(
         )
     }
 
-    private val introDbCache = ConcurrentHashMap<String, List<SkipMarker>>()
+    private val introDbCache = BoundedCache<String, Timed<List<SkipMarker>>>(500)
 
     /**
      * Intro and credits from the community databases, for a film or episode whose own server has no markers (addon
@@ -2176,13 +2222,17 @@ class CatalogRepository @Inject constructor(
         val episode = w.type == MediaType.Show
         if (episode && (w.season == null || w.episode == null)) return emptyList()
         val key = listOf(w.imdbId, w.tmdbId, w.type, w.season, w.episode).joinToString("|")
-        introDbCache[key]?.let { return it }
+        introDbCache[key]?.takeIf { it.fresh }?.let { return it.value }
+        // A timeout or server error isn't "no markers": remembered only briefly.
+        var failed = false
         val ep = if (episode) "&season=${w.season}&episode=${w.episode}" else ""
         fun ms(j: JsonElement?, k: String) = (j.child(k) as? JsonPrimitive)?.content?.toDoubleOrNull()?.toLong()
         // TheIntroDB: "intro" and "credits" lists; a missing start is the beginning, a missing end the end of the file.
         val id = w.imdbId?.let { "imdb_id=$it" } ?: w.tmdbId?.let { "tmdb_id=$it&type=${if (episode) "tv" else "movie"}" }
         val tidb = id?.let { q ->
-            withTimeoutOrNull(8_000) { runCatching { http.get("https://api.theintrodb.org/v4/media?$q$ep") }.getOrNull() }?.takeIf { it.ok }?.body
+            val r = withTimeoutOrNull(8_000) { runCatching { http.get("https://api.theintrodb.org/v4/media?$q$ep") }.getOrNull() }
+            if (r == null || r.code >= 500) failed = true
+            r?.takeIf { it.ok }?.body
         }
         fun list(arr: List<JsonElement>, kind: SkipMarker.Kind) = arr.mapNotNull { j ->
             val st = ms(j, "start_ms") ?: 0L
@@ -2193,13 +2243,15 @@ class CatalogRepository @Inject constructor(
         // IntroDB: one "intro" and one "outro" each, by IMDb id.
         if (found.isEmpty() && w.imdbId != null) {
             val q = "imdb_id=${w.imdbId}" + if (episode) ep else "&is_movie=true"
-            val idb = withTimeoutOrNull(8_000) { runCatching { http.get("https://api.introdb.app/segments?$q") }.getOrNull() }?.takeIf { it.ok }?.body
+            val r = withTimeoutOrNull(8_000) { runCatching { http.get("https://api.introdb.app/segments?$q") }.getOrNull() }
+            if (r == null || r.code >= 500) failed = true
+            val idb = r?.takeIf { it.ok }?.body
             found = listOfNotNull(
-                idb.child("intro")?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.let { j -> ms(j, "end_ms")?.let { SkipMarker(SkipMarker.Kind.Intro, ms(j, "start_ms") ?: 0L, it) } },
-                idb.child("outro")?.takeIf { it !is kotlinx.serialization.json.JsonNull }?.let { j -> ms(j, "start_ms")?.let { SkipMarker(SkipMarker.Kind.Credits, it, ms(j, "end_ms") ?: 0L) } },
+                idb.child("intro")?.takeIf { it !is JsonNull }?.let { j -> ms(j, "end_ms")?.let { SkipMarker(SkipMarker.Kind.Intro, ms(j, "start_ms") ?: 0L, it) } },
+                idb.child("outro")?.takeIf { it !is JsonNull }?.let { j -> ms(j, "start_ms")?.let { SkipMarker(SkipMarker.Kind.Credits, it, ms(j, "end_ms") ?: 0L) } },
             )
         }
-        introDbCache[key] = found
+        introDbCache[key] = Timed.forMs(found, if (failed && found.isEmpty()) Timed.MISS_MS else Long.MAX_VALUE / 2)
         return found
     }
 
@@ -2207,7 +2259,7 @@ class CatalogRepository @Inject constructor(
      * Where the intro and credits are. Jellyfin (10.10+): its media segments (the Intro Skipper plugin or its own
      * detection fill them). Emby (4.8+): chapter markers IntroStart / IntroEnd / CreditsStart. None: no skipping.
      */
-    private suspend fun serverMarkers(s: MediaServerAuth, emby: Boolean, itemId: String, info: kotlinx.serialization.json.JsonElement?): List<SkipMarker> {
+    private suspend fun serverMarkers(s: MediaServerAuth, emby: Boolean, itemId: String, info: JsonElement?): List<SkipMarker> {
         val ticks = 10_000L
         if (!emby) {
             val a = store.current()
@@ -2233,7 +2285,7 @@ class CatalogRepository @Inject constructor(
      * Seek-bar previews from the server. Jellyfin: trickplay sheets listed on the item (smallest width).
      * Emby: its BIF index, if it made one (a missing one just falls back to the box's own pictures).
      */
-    private fun serverThumbs(s: MediaServerAuth, emby: Boolean, itemId: String, info: kotlinx.serialization.json.JsonElement?): ThumbSource? {
+    private fun serverThumbs(s: MediaServerAuth, emby: Boolean, itemId: String, info: JsonElement?): ThumbSource? {
         val key = "api_key=${enc(s.token)}"
         if (emby) return ThumbSource.Bif("${s.serverUrl}/Videos/$itemId/index.bif?width=320&$key")
         val tp = info.child("Trickplay").obj() ?: return null
@@ -2249,7 +2301,6 @@ class CatalogRepository @Inject constructor(
         ).takeIf { it.width > 0 && it.height > 0 && it.tileWidth > 0 && it.tileHeight > 0 && it.count > 0 && it.intervalMs > 0 }
     }
 
-    /** A Jellyfin / Emby series' episodes as (season, episode) → id, resume point and watched. */
     /**
      * Where to carry on with a show: (season, episode, part-way through). Plex's on deck first, then Jellyfin /
      * Emby's next up, then your Trakt progress; null when none of them know (start at the first episode).
@@ -2303,6 +2354,7 @@ class CatalogRepository @Inject constructor(
         return found.maxWithOrNull(compareBy<Triple<Int, Int, Boolean>>({ it.first }, { it.second }, { it.third }))
     }
 
+    /** A Jellyfin / Emby series' episodes as (season, episode) → id, resume point and watched. */
     suspend fun serverEpisodes(source: String, seriesId: String): Map<Pair<Int, Int>, PlexEpisode> {
         val (s, emby) = serverFor(source) ?: return emptyMap()
         val a = store.current()
@@ -2378,9 +2430,9 @@ class CatalogRepository @Inject constructor(
             .coerceAtLeast(episodes.filterKeys { it.startsWith("imdb:") }.values.sumOf { it.size })
     }
 
-    private val _traktWatched = kotlinx.coroutines.flow.MutableStateFlow<TraktWatched?>(null)
+    private val _traktWatched = MutableStateFlow<TraktWatched?>(null)
     /** The last Trakt history fetched (null until then, or without Trakt). */
-    val traktWatchedState: kotlinx.coroutines.flow.StateFlow<TraktWatched?> = _traktWatched
+    val traktWatchedState: StateFlow<TraktWatched?> = _traktWatched
     private val traktLock = Mutex()
 
     private fun idKeys(tmdb: Int?, imdb: String?) = listOfNotNull(tmdb?.let { "tmdb:$it" }, imdb?.takeIf { it.isNotBlank() }?.let { "imdb:$it" })
@@ -2449,9 +2501,9 @@ class CatalogRepository @Inject constructor(
         return idKeys(item.tmdbId, item.imdbId).any { it in w.movies }
     }
 
-    private val _plexCopyStatus = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
+    private val _plexCopyStatus = MutableStateFlow<String?>(null)
     /** What the last copy to Plex did (Settings shows it). */
-    val plexCopyStatus: kotlinx.coroutines.flow.MutableStateFlow<String?> = _plexCopyStatus
+    val plexCopyStatus: MutableStateFlow<String?> = _plexCopyStatus
     private val plexCopyLock = Mutex()
 
     /**
@@ -2576,7 +2628,9 @@ class CatalogRepository @Inject constructor(
         plexEpisodeCache[showRef]?.let { return it }
         val a = store.current()
         val (p, showKey) = plexResolve(a, showRef) ?: return emptyMap()
-        val map = plexGet(a, p, "/library/metadata/$showKey/allLeaves")?.array("Metadata").orEmpty().mapNotNull { e ->
+        // Not cached when Plex couldn't be reached, so the next try asks again.
+        val c = plexGet(a, p, "/library/metadata/$showKey/allLeaves") ?: return emptyMap()
+        val map = c.array("Metadata").mapNotNull { e ->
             val s = e.int("parentIndex") ?: return@mapNotNull null
             val n = e.int("index") ?: return@mapNotNull null
             val rk = e.str("ratingKey") ?: return@mapNotNull null
@@ -2609,7 +2663,7 @@ class CatalogRepository @Inject constructor(
                     return r.body.array("streams").mapNotNull { st ->
                         val url = st.str("url")?.takeIf { it.startsWith("http") } ?: return@mapNotNull null
                         val headers = st.child("behaviorHints").child("proxyHeaders").child("request").let { h ->
-                            (h as? kotlinx.serialization.json.JsonObject)?.mapValues { (it.value as? JsonPrimitive)?.content.orEmpty() }.orEmpty()
+                            (h as? JsonObject)?.mapValues { (it.value as? JsonPrimitive)?.content.orEmpty() }.orEmpty()
                         }
                         StreamOption(
                             addon = addon.name,
@@ -2626,7 +2680,7 @@ class CatalogRepository @Inject constructor(
     /** An addon title's own episode (its id is what the addon's streams are asked for). */
     private data class AddonVideo(val id: String, val season: Int, val episode: Int, val title: String, val overview: String?, val thumb: String?, val released: String?)
     private data class AddonMeta(val description: String?, val background: String?, val genres: List<String>, val videos: List<AddonVideo>)
-    private val addonMetaCache = ConcurrentHashMap<String, AddonMeta>()
+    private val addonMetaCache = BoundedCache<String, AddonMeta>(50)
 
     /** A title from an addon with no IMDb / TMDB id (One Pace and the like): Viewarr uses the addon's own details. */
     fun isAddonOwnTitle(item: MediaItem) = item.key.startsWith("stremio:") &&
@@ -2667,8 +2721,6 @@ class CatalogRepository @Inject constructor(
             seasons = seasons,
         )
     }
-
-    fun hasAddons(a: Accounts) = a.activeAddons.isNotEmpty()
 
     // ------------------------------------------------------------------ detail
 
@@ -2724,7 +2776,7 @@ class CatalogRepository @Inject constructor(
             writers = j.child("credits").array("crew").filter { it.str("department") == "Writing" }.mapNotNull { it.str("name") }.distinct().take(4),
             studio = (if (movie) j.array("production_companies") else j.array("networks")).firstOrNull()?.str("name"),
             released = (j.str("release_date") ?: j.str("first_air_date"))?.takeIf { it.isNotBlank() }?.let { d ->
-                runCatching { java.time.LocalDate.parse(d).format(io.github.petebutty.viewarr.ui.theme.Dates.long) }.getOrDefault(d)
+                runCatching { LocalDate.parse(d).format(Dates.long) }.getOrDefault(d)
             },
             language = j.array("spoken_languages").firstOrNull()?.let { it.str("english_name") ?: it.str("name") },
             budget = j.long("budget")?.takeIf { it > 0 },
@@ -2736,7 +2788,7 @@ class CatalogRepository @Inject constructor(
                     author = r.str("author") ?: "Someone",
                     rating = (r.child("author_details").child("rating") as? JsonPrimitive)?.doubleOrNull,
                     text = text,
-                    date = r.str("created_at")?.take(10)?.let { d -> runCatching { java.time.LocalDate.parse(d).format(io.github.petebutty.viewarr.ui.theme.Dates.medium) }.getOrNull() },
+                    date = r.str("created_at")?.take(10)?.let { d -> runCatching { LocalDate.parse(d).format(Dates.medium) }.getOrNull() },
                 )
             },
             similar = j.child("recommendations").array("results").mapNotNull { tmdbItem(it, item.type) }.filter { it.poster != null }.take(20),
@@ -2760,7 +2812,7 @@ class CatalogRepository @Inject constructor(
      * Ratings from more places: IMDb and Rotten Tomatoes (critics and audience) as your Plex server has them, and
      * Trakt's. TMDB's own is on the detail already.
      */
-    private val ratingsCache = ConcurrentHashMap<String, Pair<Long, List<RatingBadge>>>()
+    private val ratingsCache = BoundedCache<String, Pair<Long, List<RatingBadge>>>(300)
 
     suspend fun extraRatings(item: MediaItem, copies: List<LibraryCopy>): List<RatingBadge> {
         ratingsCache[item.key]?.takeIf { System.currentTimeMillis() - it.first < 30 * 60_000L }?.let { return it.second }
@@ -2773,13 +2825,14 @@ class CatalogRepository @Inject constructor(
      * MDBList (with the user's key): IMDb, Rotten Tomatoes critics and audience, Metacritic, Letterboxd and Trakt for
      * any title, by its IMDb or TMDB id. Null without a key or an answer.
      */
-    private val mdbCache = ConcurrentHashMap<String, List<RatingBadge>>()
+    private val mdbCache = BoundedCache<String, Timed<List<RatingBadge>>>(300)
 
     private suspend fun mdblistRatings(a: Accounts, item: MediaItem): List<RatingBadge>? {
         val key = a.mdblistKey ?: return null
-        mdbCache[item.key]?.let { return it.ifEmpty { null } }
+        mdbCache[item.key]?.takeIf { it.fresh }?.let { return it.value.ifEmpty { null } }
         val got = fetchMdblist(key, item)
-        mdbCache[item.key] = got.orEmpty()
+        // No answer (network, 429, not listed) is asked again after a while; an answer keeps for the run.
+        mdbCache[item.key] = Timed.forMs(got.orEmpty(), if (got == null) Timed.MISS_MS else Long.MAX_VALUE / 2)
         return got
     }
 
@@ -2834,13 +2887,13 @@ class CatalogRepository @Inject constructor(
         if (TraktService.CLIENT_ID.isBlank()) return emptyList()
         val kind = if (item.type == MediaType.Movie) "movies" else "shows"
         val r = runCatching { http.get("https://api.trakt.tv/$kind/$imdb/comments/likes?limit=15", trakt.headers()) }.getOrNull()?.takeIf { it.ok } ?: return emptyList()
-        return (r.body as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { c ->
+        return (r.body as? JsonArray).orEmpty().mapNotNull { c ->
             val text = c.str("comment")?.trim()?.takeIf { it.length >= 40 } ?: return@mapNotNull null
             Review(
                 author = c.child("user").str("username") ?: "Trakt user",
                 rating = (c.child("user_rating") as? JsonPrimitive)?.doubleOrNull,
                 text = text,
-                date = c.str("created_at")?.take(10)?.let { d -> runCatching { java.time.LocalDate.parse(d).format(io.github.petebutty.viewarr.ui.theme.Dates.medium) }.getOrNull() },
+                date = c.str("created_at")?.take(10)?.let { d -> runCatching { LocalDate.parse(d).format(Dates.medium) }.getOrNull() },
                 source = "Trakt",
                 spoiler = c.str("spoiler") == "true",
                 likes = c.int("likes") ?: 0,
@@ -2894,7 +2947,7 @@ class CatalogRepository @Inject constructor(
 
     // ------------------------------------------------------------------ IPTV provider films & series (Xtream Codes)
 
-    @Volatile private var xcCache: Triple<Long, List<io.github.petebutty.viewarr.data.xtream.XtreamVod>, List<io.github.petebutty.viewarr.data.xtream.XtreamSeries>>? = null
+    @Volatile private var xcCache: Triple<Long, List<XtreamVod>, List<XtreamSeries>>? = null
     private val xcLock = Mutex()
 
     /**
@@ -2902,7 +2955,7 @@ class CatalogRepository @Inject constructor(
      * Provider VOD switched on in setup, Dispatcharr's own XC side (player_api.php) with this user's XC password
      * (Dispatcharr → Users → the user's XC password), read once with the API key.
      */
-    private suspend fun xcSession(): io.github.petebutty.viewarr.data.session.Session? {
+    private suspend fun xcSession(): Session? {
         val s = sessions.session.first() ?: return null
         if (s.isXc) return s
         if (s.isM3u) return null
@@ -2917,7 +2970,7 @@ class CatalogRepository @Inject constructor(
         if (xc == null) Log.w(TAG, "provider VOD: Dispatcharr user ${s.username} has no XC password") else dispatcharrXc = id to xc
         return xc
     }
-    @Volatile private var dispatcharrXc: Pair<String, io.github.petebutty.viewarr.data.session.Session?>? = null
+    @Volatile private var dispatcharrXc: Pair<String, Session?>? = null
 
     // ---- Provider VOD through Dispatcharr: its own API pages, sorts and searches on the server, so the TV never
     // holds the whole list (20,000+ films froze the box when it was fetched in one go over XC).
@@ -2938,8 +2991,8 @@ class CatalogRepository @Inject constructor(
         return MediaItem(
             key = tmdbId?.let { "tmdb:${type.name}:$it" } ?: xcKey(type, id),
             type = type,
-            title = io.github.petebutty.viewarr.data.xtream.XtreamClient.cleanTitle(raw),
-            year = j.int("year") ?: io.github.petebutty.viewarr.data.xtream.XtreamClient.yearIn(raw),
+            title = XtreamClient.cleanTitle(raw),
+            year = j.int("year") ?: XtreamClient.yearIn(raw),
             poster = j.child("logo").str("url"),
             overview = j.str("description")?.takeIf { it.isNotBlank() },
             rating = j.str("rating")?.toDoubleOrNull(),
@@ -2964,13 +3017,13 @@ class CatalogRepository @Inject constructor(
         LibrarySort.Released -> mapOf("ordering" to "-year", "year_lte" to (java.time.Year.now().value + 1).toString())
     }
 
-    private fun providerFilm(v: io.github.petebutty.viewarr.data.xtream.XtreamVod) = MediaItem(
+    private fun providerFilm(v: XtreamVod) = MediaItem(
         key = v.tmdbId?.let { "tmdb:Movie:$it" } ?: xcKey(MediaType.Movie, v.streamId),
         type = MediaType.Movie, title = v.name, year = v.year, poster = v.poster, rating = v.rating, tmdbId = v.tmdbId,
         origin = "IPTV",
     )
 
-    private fun providerSeries(v: io.github.petebutty.viewarr.data.xtream.XtreamSeries) = MediaItem(
+    private fun providerSeries(v: XtreamSeries) = MediaItem(
         key = v.tmdbId?.let { "tmdb:Show:$it" } ?: xcKey(MediaType.Show, v.seriesId),
         type = MediaType.Show, title = v.name, year = v.year, poster = v.poster, backdrop = v.backdrop, overview = v.plot,
         rating = v.rating, tmdbId = v.tmdbId, origin = "IPTV",
@@ -3007,7 +3060,7 @@ class CatalogRepository @Inject constructor(
     private fun xcKey(type: MediaType, id: Int) = "xc:${type.name}:$id"
 
     /** The provider's whole film and series lists, fetched once every few hours (they can be large). */
-    private suspend fun xcCatalog(s: io.github.petebutty.viewarr.data.session.Session) = xcLock.withLock {
+    private suspend fun xcCatalog(s: Session) = xcLock.withLock {
         xcCache?.takeIf { System.currentTimeMillis() - it.first < 6 * 3_600_000L }?.let { it.second to it.third }
             ?: run {
                 val films = runCatching { xtream.vodStreams(s) }.getOrDefault(emptyList())
@@ -3088,7 +3141,6 @@ class CatalogRepository @Inject constructor(
         return url
     }
 
-    /** A title's TMDB id: its own, or looked up from its IMDb id (Stremio addons such as AIOStreams use IMDb ids). */
     /**
      * The film or show a guide programme is, on TMDB: by title (without "New: " / "Live"), a series number meaning
      * a show, a year (films) meaning a film first. Only a close title match counts: a wrong guess is worse than none.
@@ -3097,7 +3149,7 @@ class CatalogRepository @Inject constructor(
         val key = store.current().tmdbKey ?: return null
         val q = title.removePrefix("New: ").replace(Regex("^Live:?\\s+", RegexOption.IGNORE_CASE), "").substringBefore(" - ").trim()
         if (q.isEmpty()) return null
-        fun norm(s: String) = s.lowercase().replace("&", "and").replace(Regex("[^a-z0-9]"), "")
+        fun norm(s: String) = s.lowercase().replace("&", "and").replace(NOT_ALNUM, "")
         val types = when { season != null -> listOf(MediaType.Show); year != null -> listOf(MediaType.Movie, MediaType.Show); else -> listOf(MediaType.Show, MediaType.Movie) }
         for (type in types) {
             val path = if (type == MediaType.Movie) "/search/movie" else "/search/tv"
@@ -3106,7 +3158,7 @@ class CatalogRepository @Inject constructor(
             // With a year known, it has to agree (a film: that year; a show: started within a year of it), so a
             // 2024 film called "Trap" isn't taken for the 2022 series of the same name.
             val hit = r.body.array("results").mapNotNull { tmdbItem(it, type) }.firstOrNull { c ->
-                norm(c.title) == norm(q) && (year == null || season != null || c.year == null || kotlin.math.abs(c.year - year) <= 1)
+                norm(c.title) == norm(q) && (year == null || season != null || c.year == null || abs(c.year - year) <= 1)
             }
             if (hit != null) { tmdbCache[hit.key] = hit; return hit }
         }
@@ -3117,27 +3169,30 @@ class CatalogRepository @Inject constructor(
      * A title with no TMDB / IMDb id (IPTV films and series), found by name: the same close match as the guide's
      * (its name, and its year within one when known), its type only. Null rather than a wrong guess.
      */
-    private val titleMatchCache = ConcurrentHashMap<String, Int>()
+    private val titleMatchCache = BoundedCache<String, Timed<Int>>(1000)
     private suspend fun titleMatch(key: String, item: MediaItem): Int? {
         val q = item.title.trim().takeIf { it.isNotEmpty() } ?: return null
         val cacheKey = "${item.type}|$q|${item.year}"
-        titleMatchCache[cacheKey]?.let { return it.takeIf { id -> id > 0 } }
-        fun norm(s: String) = s.lowercase().replace("&", "and").replace(Regex("[^a-z0-9]"), "")
+        titleMatchCache[cacheKey]?.takeIf { it.fresh }?.let { return it.value.takeIf { id -> id > 0 } }
+        fun norm(s: String) = s.lowercase().replace("&", "and").replace(NOT_ALNUM, "")
         val movie = item.type == MediaType.Movie
         val params = buildMap {
             put("language", "en-GB"); put("query", q); put("include_adult", "false")
             if (item.year != null) put(if (movie) "year" else "first_air_date_year", item.year.toString())
         }
+        // A search that failed (network, 429, 5xx) isn't "no match": that's remembered only briefly.
+        var failed = false
         suspend fun search(p: Map<String, String>) = runCatching { http.get(tmdb.url(if (movie) "/search/movie" else "/search/tv", key, p), tmdb.headers(key)) }
-            .getOrNull()?.takeIf { it.ok }?.body.array("results").mapNotNull { tmdbItem(it, item.type) }
+            .getOrNull()?.takeIf { it.ok }.also { if (it == null) failed = true }?.body.array("results").mapNotNull { tmdbItem(it, item.type) }
         // With its year first; a provider's year can be off by one (UK vs US release), so then without it.
         val found = (search(params).ifEmpty { if (item.year != null) search(params - "year" - "first_air_date_year") else emptyList() })
-            .firstOrNull { c -> norm(c.title) == norm(q) && (item.year == null || c.year == null || kotlin.math.abs(c.year - item.year) <= 1) }
+            .firstOrNull { c -> norm(c.title) == norm(q) && (item.year == null || c.year == null || abs(c.year - item.year) <= 1) }
         val id = found?.tmdbId
-        titleMatchCache[cacheKey] = id ?: 0
+        titleMatchCache[cacheKey] = Timed.forMs(id ?: 0, if (id == null && failed) Timed.MISS_MS else Long.MAX_VALUE / 2)
         return id
     }
 
+    /** A title's TMDB id: its own, or looked up from its IMDb id (Stremio addons such as AIOStreams use IMDb ids). */
     suspend fun tmdbIdFor(item: MediaItem): Int? {
         item.tmdbId?.let { return it }
         val imdb = item.imdbId ?: item.key.substringAfterLast(':').takeIf { it.startsWith("tt") } ?: return null
@@ -3148,7 +3203,7 @@ class CatalogRepository @Inject constructor(
     // ------------------------------------------------------------ shortcut logos
 
     private var providerList: List<Pair<String, String>>? = null
-    private val serviceLogoCache = java.util.concurrent.ConcurrentHashMap<String, ServiceLogo>()
+    private val serviceLogoCache = ConcurrentHashMap<String, Timed<ServiceLogo>>()
 
     private fun normName(s: String) = s.lowercase().replace("+", "plus").filter { it.isLetterOrDigit() }
 
@@ -3158,7 +3213,7 @@ class CatalogRepository @Inject constructor(
      * provider whose name starts with it. Null when nothing matches (the shortcut keeps its plain icon).
      */
     suspend fun serviceLogo(name: String, sample: MediaItem?): ServiceLogo? {
-        serviceLogoCache[name]?.let { return it.takeIf { l -> l.url.isNotEmpty() } }
+        serviceLogoCache[name]?.takeIf { it.fresh }?.let { return it.value.takeIf { l -> l.url.isNotEmpty() } }
         val key = store.current().tmdbKey ?: return null
         val n = normName(name)
         val providers = providerList ?: runCatching {
@@ -3177,7 +3232,8 @@ class CatalogRepository @Inject constructor(
         val found = provider { it == n } ?: provider { it == n.removeSuffix("plus") || it.removeSuffix("plus") == n }
             ?: networkLogo(key, n, sample)
             ?: if (n.length >= 3) provider { it.startsWith(n) } else null
-        serviceLogoCache[name] = found ?: ServiceLogo("", false)
+        // A miss may only be TMDB not answering: asked again after a while.
+        serviceLogoCache[name] = if (found != null) Timed(found, Long.MAX_VALUE) else Timed.forMs(ServiceLogo("", false), Timed.MISS_MS)
         return found
     }
 

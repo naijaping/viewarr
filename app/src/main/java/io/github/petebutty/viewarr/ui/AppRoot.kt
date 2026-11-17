@@ -40,6 +40,44 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.net.Reach
+import io.github.petebutty.viewarr.data.net.SmallerImages
+import io.github.petebutty.viewarr.data.profiles.AccessLoader
+import io.github.petebutty.viewarr.data.profiles.House
+import io.github.petebutty.viewarr.data.settings.LocalPlayback
+import io.github.petebutty.viewarr.data.settings.LocalRemote
+import io.github.petebutty.viewarr.data.settings.PlaybackSettings
+import io.github.petebutty.viewarr.data.settings.PlaybackStore
+import io.github.petebutty.viewarr.data.settings.RemoteSettings
+import io.github.petebutty.viewarr.data.settings.RemoteStore
+import io.github.petebutty.viewarr.data.sync.SettingsSync
+import io.github.petebutty.viewarr.playback.AvSync
+import io.github.petebutty.viewarr.ui.common.ButtonHint
+import io.github.petebutty.viewarr.ui.common.RemoteKeys
+import io.github.petebutty.viewarr.ui.common.ViewarrSplash
+import io.github.petebutty.viewarr.ui.media.VodHost
+import io.github.petebutty.viewarr.ui.media.VodHostLayer
+import io.github.petebutty.viewarr.ui.music.MusicLayer
+import io.github.petebutty.viewarr.ui.music.UserActivity
+import io.github.petebutty.viewarr.ui.onboarding.InvitedSetup
+import io.github.petebutty.viewarr.ui.onboarding.RoleScreen
+import io.github.petebutty.viewarr.ui.onboarding.Tour
+import io.github.petebutty.viewarr.ui.onboarding.TourScreen
+import io.github.petebutty.viewarr.ui.profiles.ProfileHost
+import io.github.petebutty.viewarr.ui.profiles.ProfileUi
+import io.github.petebutty.viewarr.ui.settings.InfoRowsEditor
+import io.github.petebutty.viewarr.ui.settings.InfoRowsScreen
+import io.github.petebutty.viewarr.ui.settings.ReportScreen
+import io.github.petebutty.viewarr.ui.settings.ReportUi
+import io.github.petebutty.viewarr.ui.sync.SyncOfferHost
+import io.github.petebutty.viewarr.ui.theme.Dates
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+import io.github.petebutty.viewarr.ui.theme.WallpaperLoader
+import io.github.petebutty.viewarr.ui.update.ChangelogHost
+import io.github.petebutty.viewarr.ui.update.UpdateHost
+import io.github.petebutty.viewarr.ui.update.WhatsNewHost
+import io.github.petebutty.viewarr.data.sync.WatchSync
+import io.github.petebutty.viewarr.ui.common.StartupGate
 
 sealed interface StartState {
     data object Loading : StartState
@@ -54,26 +92,29 @@ class AppViewModel @Inject constructor(
     private val accounts: AccountStore,
     private val auth: AuthRepository,
     private val guide: GuideRepository,
-    remoteStore: io.github.petebutty.viewarr.data.settings.RemoteStore,
-    playbackStore: io.github.petebutty.viewarr.data.settings.PlaybackStore,
-    private val settingsSync: io.github.petebutty.viewarr.data.sync.SettingsSync,
-    accessLoader: io.github.petebutty.viewarr.data.profiles.AccessLoader,
-    house: io.github.petebutty.viewarr.data.profiles.House,
+    remoteStore: RemoteStore,
+    playbackStore: PlaybackStore,
+    private val settingsSync: SettingsSync,
+    private val watchSync: WatchSync,
+    accessLoader: AccessLoader,
+    house: House,
 ) : ViewModel() {
     /** Setup was shown in this run of the app (so the tour follows it). */
     var sawSetup by androidx.compose.runtime.mutableStateOf(false)
 
     init {
         settingsSync.start()
+        // IPTV / addon watch progress shared between boxes through Dispatcharr (WatchSync).
+        watchSync.start()
         // What the signed-in person may do (an admin's locks on their Dispatcharr user).
         accessLoader.start(viewModelScope)
         // The house's outside addresses from the Viewarr plugin on Dispatcharr (when it's installed).
-        if (io.github.petebutty.viewarr.ui.profiles.ProfileUi.ENABLED) house.start(viewModelScope)
+        if (ProfileUi.ENABLED) house.start(viewModelScope)
         // Away addresses from the setup (empty: everything stays on its home address).
-        viewModelScope.launch { accounts.accounts.collect { io.github.petebutty.viewarr.data.net.Reach.setPairs(it.away) } }
+        viewModelScope.launch { accounts.accounts.collect { Reach.setPairs(it.away) } }
     }
-    val playback = playbackStore.settings.stateIn(viewModelScope, SharingStarted.Eagerly, io.github.petebutty.viewarr.data.settings.PlaybackSettings())
-    val remote = remoteStore.settings.stateIn(viewModelScope, SharingStarted.Eagerly, io.github.petebutty.viewarr.data.settings.RemoteSettings())
+    val playback = playbackStore.settings.stateIn(viewModelScope, SharingStarted.Eagerly, PlaybackSettings())
+    val remote = remoteStore.settings.stateIn(viewModelScope, SharingStarted.Eagerly, RemoteSettings())
 
     // Installs from before optional setup steps existed have no flag: a saved session means they're set up.
     val state = combine(sessions.session, accounts.setupComplete) { session, done ->
@@ -103,7 +144,7 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
     val remote by vm.remote.collectAsStateWithLifecycle()
     val playbackSettings by vm.playback.collectAsStateWithLifecycle()
     // Audio sync starts from Settings → Playback → Lip sync (the info bars' button changes it from there).
-    androidx.compose.runtime.LaunchedEffect(playbackSettings.audioDelay) { io.github.petebutty.viewarr.playback.AvSync.set(playbackSettings.audioDelay.ms) }
+    androidx.compose.runtime.LaunchedEffect(playbackSettings.audioDelay) { AvSync.set(playbackSettings.audioDelay.ms) }
     // The splash stays up for at least 3.8 s (the logo's animation, then a moment's hold) while the start page loads
     // underneath it, and then until that page is ready (StartupGate: the guide's channels are in), so the first press
     // after it fades lands on a ready page. Slow boxes get longer; a guide that never comes (no live TV yet) doesn't
@@ -114,9 +155,9 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
         if (splashDone) return@LaunchedEffect
         kotlinx.coroutines.delay(3_800)
         val am = appCtx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
-        val slow = am?.isLowRamDevice == true || io.github.petebutty.viewarr.ui.theme.AppColors.palette.lowMemory
+        val slow = am?.isLowRamDevice == true || AppColors.palette.lowMemory
         kotlinx.coroutines.withTimeoutOrNull(if (slow) 12_000L else 7_000L) {
-            androidx.compose.runtime.snapshotFlow { io.github.petebutty.viewarr.ui.common.StartupGate.ready }.first { it }
+            androidx.compose.runtime.snapshotFlow { StartupGate.ready }.first { it }
         }
         splashDone = true
     }
@@ -135,20 +176,20 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
         val tv = minOf(wPx / 960f, hPx / 540f)
         if (wPx >= 1200f && tv > 0f) androidx.compose.ui.unit.Density(tv, systemDensity.fontScale) else systemDensity
     }
-    val scale = io.github.petebutty.viewarr.ui.theme.AppColors.palette.textScale
+    val scale = AppColors.palette.textScale
     // Buttons taught in Settings → Remote: read wherever a press is turned into an action.
-    androidx.compose.runtime.SideEffect { io.github.petebutty.viewarr.ui.common.RemoteKeys.setTaught(remote.buttons) }
+    androidx.compose.runtime.SideEffect { RemoteKeys.setTaught(remote.buttons) }
     // Weak boxes get smaller pictures (Low-memory mode counts, as well as what Android says about the box).
-    val lowMem = io.github.petebutty.viewarr.ui.theme.AppColors.palette.lowMemory
+    val lowMem = AppColors.palette.lowMemory
     val lowRam = androidx.compose.runtime.remember { (appCtx.getSystemService(android.content.Context.ACTIVITY_SERVICE) as? android.app.ActivityManager)?.isLowRamDevice == true }
-    androidx.compose.runtime.SideEffect { io.github.petebutty.viewarr.data.net.SmallerImages.weak = lowMem || lowRam }
+    androidx.compose.runtime.SideEffect { SmallerImages.weak = lowMem || lowRam }
     // Every list follows the highlight per Settings → Appearance → List scrolling (instant: no trail going fast).
     val baseScroll = androidx.compose.foundation.gestures.LocalBringIntoViewSpec.current
     val appScroll = androidx.compose.runtime.remember(baseScroll) { baseScroll.followingSetting() }
     androidx.compose.runtime.CompositionLocalProvider(
         androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides appScroll,
-        io.github.petebutty.viewarr.data.settings.LocalRemote provides remote,
-        io.github.petebutty.viewarr.data.settings.LocalPlayback provides playbackSettings,
+        LocalRemote provides remote,
+        LocalPlayback provides playbackSettings,
         androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(baseDensity.density * scale, baseDensity.fontScale),
         // Settings → Appearance → Font.
         androidx.tv.material3.LocalTextStyle provides androidx.tv.material3.LocalTextStyle.current.copy(fontFamily = appFont()),
@@ -157,89 +198,89 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
     Box(
         Modifier
             .fillMaxSize()
-            .appBackground()
+            .appBackground(titleArt = io.github.petebutty.viewarr.ui.theme.Wallpaper.titleBehind)
             // Presses during the splash are swallowed rather than lost on a half-loaded page.
             // (Every press also counts as being there: the music screensaver waits for a quiet spell.)
-            .onPreviewKeyEvent { io.github.petebutty.viewarr.ui.music.UserActivity.touch(); splashShown },
+            .onPreviewKeyEvent { UserActivity.touch(); splashShown },
     ) {
         // (After the splash: decoding pictures competed with the start page loading.)
-        if (!splashShown) io.github.petebutty.viewarr.ui.theme.WallpaperLoader()
+        if (!splashShown) WallpaperLoader()
         when (val s = state) {
             StartState.Loading -> Unit
             StartState.NeedsSetup -> if (!splashShown) {
                 // A new install: running your own server, or invited by someone who does.
                 // (Profiles off for now: no "invited by someone" choice, straight to setting up your own.)
-                var role by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(if (io.github.petebutty.viewarr.ui.profiles.ProfileUi.ENABLED) null else "admin") }
+                var role by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf<String?>(if (ProfileUi.ENABLED) null else "admin") }
                 androidx.compose.runtime.LaunchedEffect(Unit) { vm.sawSetup = true }
                 when (role) {
-                    null -> io.github.petebutty.viewarr.ui.onboarding.RoleScreen(onAdmin = { role = "admin" }, onInvited = { role = "invited" })
-                    "invited" -> io.github.petebutty.viewarr.ui.onboarding.InvitedSetup(onBack = { role = null })
+                    null -> RoleScreen(onAdmin = { role = "admin" }, onInvited = { role = "invited" })
+                    "invited" -> InvitedSetup(onBack = { role = null })
                     // Running your own: first how Viewarr works (the tour), then what setting up will ask for (1-2-3),
                     // then the setup itself. (The tour's then done: it isn't shown again after setting up.)
                     else -> {
                         val ctx = androidx.compose.ui.platform.LocalContext.current
                         var stage by androidx.compose.runtime.saveable.rememberSaveable {
-                            androidx.compose.runtime.mutableStateOf(if (io.github.petebutty.viewarr.ui.onboarding.Tour.done(ctx)) "setup" else "tour")
+                            androidx.compose.runtime.mutableStateOf(if (Tour.done(ctx)) "setup" else "tour")
                         }
                         when (stage) {
-                            "tour" -> io.github.petebutty.viewarr.ui.onboarding.TourScreen(
-                                onDone = { io.github.petebutty.viewarr.ui.onboarding.Tour.markDone(ctx); stage = "prep" },
+                            "tour" -> TourScreen(
+                                onDone = { Tour.markDone(ctx); stage = "prep" },
                                 finishLabel = "Next: setting up  ›",
-                                onBack = { if (io.github.petebutty.viewarr.ui.profiles.ProfileUi.ENABLED) role = null },
+                                onBack = { if (ProfileUi.ENABLED) role = null },
                             )
-                            "prep" -> io.github.petebutty.viewarr.ui.onboarding.TourScreen(onDone = { stage = "setup" }, prep = true, finishLabel = "Start setup", onBack = { stage = "tour" })
+                            "prep" -> TourScreen(onDone = { stage = "setup" }, prep = true, finishLabel = "Start setup", onBack = { stage = "tour" })
                             else -> SetupWizard()
                         }
                     }
                 }
                 // Signed in to a Dispatcharr user another TV saved its setup to: offer it.
-                io.github.petebutty.viewarr.ui.sync.SyncOfferHost()
+                SyncOfferHost()
             }
             is StartState.Ready -> {
                 val ctx = androidx.compose.ui.platform.LocalContext.current
                 var tourNow by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
-                androidx.compose.runtime.LaunchedEffect(vm.sawSetup) { if (vm.sawSetup && !io.github.petebutty.viewarr.ui.onboarding.Tour.done(ctx)) tourNow = true }
-                val touring = !splashShown && (tourNow || io.github.petebutty.viewarr.ui.onboarding.Tour.requested)
+                androidx.compose.runtime.LaunchedEffect(vm.sawSetup) { if (vm.sawSetup && !Tour.done(ctx)) tourNow = true }
+                val touring = !splashShown && (tourNow || Tour.requested)
                 // Composed straight away, under the splash, so rows and the guide load while it shows. Not while the
                 // tour is up: a channel playing underneath kept the remote (Left / Right there mean skip).
                 // (No offscreen layer for the page while a film glides: switching it on cost one very slow frame at the
                 // start of every glide, more than it saved; measured on a Formuler.)
                 // (Drawn above the film while the menu is open over it: Left from the film controls' first button.)
-                if (!touring) androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().zIndex(if (io.github.petebutty.viewarr.ui.media.VodHost.behind) 2f else 0f)) {
+                if (!touring) androidx.compose.foundation.layout.Box(Modifier.fillMaxSize().zIndex(if (VodHost.behind) 2f else 0f)) {
                     HomeScreen(session = s.session, onSignOut = vm::signOut)
                 }
                 // Films, episodes and recordings: above every page, full screen or shrunk to a corner.
-                io.github.petebutty.viewarr.ui.media.VodHostLayer()
+                VodHostLayer()
                 // A film or episode on full screen: Back makes it the mini player, holding Back closes it.
-                if (io.github.petebutty.viewarr.ui.media.VodHost.covering) io.github.petebutty.viewarr.ui.common.ButtonHint(
+                if (VodHost.covering) ButtonHint(
                     "film-full", "Back: mini player  ·  hold Back: close the player")
                 // Music: the Now Playing screen, or the small now-playing bar while you browse.
-                io.github.petebutty.viewarr.ui.music.MusicLayer()
+                MusicLayer()
                 // Settings → Appearance → Clock.
-                if (!splashShown && io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CLOCK) == 1) Clock(Modifier.align(Alignment.TopEnd))
+                if (!splashShown && AppColors.palette.opt(UiOpts.CLOCK) == 1) Clock(Modifier.align(Alignment.TopEnd))
                 // Over everything: the "update available" pop-up (and the automatic check on start).
-                if (!splashShown) io.github.petebutty.viewarr.ui.update.UpdateHost()
+                if (!splashShown) UpdateHost()
                 // Once after an update: a few lines on what's new.
-                if (!splashShown) io.github.petebutty.viewarr.ui.update.WhatsNewHost()
+                if (!splashShown) WhatsNewHost()
                 // Settings → About → Changelog, or Full changelog on the What's new card.
-                io.github.petebutty.viewarr.ui.update.ChangelogHost()
-                if (!splashShown) io.github.petebutty.viewarr.ui.sync.SyncOfferHost()
+                ChangelogHost()
+                if (!splashShown) SyncOfferHost()
                 // Who's watching? (on start and from Settings), and the admin Users page.
-                if (!splashShown) io.github.petebutty.viewarr.ui.profiles.ProfileHost()
+                if (!splashShown) ProfileHost()
                 // The tour: once, straight after setting up on this TV (and from Settings → About).
-                if (touring) io.github.petebutty.viewarr.ui.onboarding.TourScreen(onDone = {
-                    io.github.petebutty.viewarr.ui.onboarding.Tour.markDone(ctx); tourNow = false; io.github.petebutty.viewarr.ui.onboarding.Tour.requested = false
+                if (touring) TourScreen(onDone = {
+                    Tour.markDone(ctx); tourNow = false; Tour.requested = false
                 })
             }
         }
         // Settings → Appearance → Rows under the info bar, over everything.
-        io.github.petebutty.viewarr.ui.settings.InfoRowsEditor.open?.let { pl ->
-            io.github.petebutty.viewarr.ui.settings.InfoRowsScreen(start = pl, onClose = { io.github.petebutty.viewarr.ui.settings.InfoRowsEditor.open = null })
+        InfoRowsEditor.open?.let { pl ->
+            InfoRowsScreen(start = pl, onClose = { InfoRowsEditor.open = null })
         }
         // Settings → Troubleshooting → Send a report, over everything.
-        if (io.github.petebutty.viewarr.ui.settings.ReportUi.open) io.github.petebutty.viewarr.ui.settings.ReportScreen(onClose = { io.github.petebutty.viewarr.ui.settings.ReportUi.open = false })
+        if (ReportUi.open) ReportScreen(onClose = { ReportUi.open = false })
         if (splashAlpha > 0f) Box(Modifier.fillMaxSize().graphicsLayer { alpha = splashAlpha }) {
-            io.github.petebutty.viewarr.ui.common.ViewarrSplash()
+            ViewarrSplash()
         }
     }
 }
@@ -248,9 +289,9 @@ fun AppRoot(vm: AppViewModel = hiltViewModel()) {
 /** The time, small, in the top corner (Settings → Appearance → Clock). */
 @Composable
 private fun Clock(modifier: Modifier) {
-    var now by remember { androidx.compose.runtime.mutableStateOf(io.github.petebutty.viewarr.ui.theme.Dates.time(System.currentTimeMillis())) }
-    androidx.compose.runtime.LaunchedEffect(io.github.petebutty.viewarr.ui.theme.AppColors.palette) {
-        while (true) { now = io.github.petebutty.viewarr.ui.theme.Dates.time(System.currentTimeMillis()); kotlinx.coroutines.delay(5_000) }
+    var now by remember { androidx.compose.runtime.mutableStateOf(Dates.time(System.currentTimeMillis())) }
+    androidx.compose.runtime.LaunchedEffect(AppColors.palette) {
+        while (true) { now = Dates.time(System.currentTimeMillis()); kotlinx.coroutines.delay(5_000) }
     }
     androidx.tv.material3.Text(
         now, fontSize = 15.sp, color = Color.White,
@@ -263,7 +304,7 @@ private fun Clock(modifier: Modifier) {
 /** Settings → Appearance → Font: one of the fonts every Android TV box has (null: the standard one). */
 @Composable
 private fun appFont(): androidx.compose.ui.text.font.FontFamily? {
-    val i = io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.FONT)
+    val i = AppColors.palette.opt(UiOpts.FONT)
     return androidx.compose.runtime.remember(i) {
         when (i) {
             1 -> androidx.compose.ui.text.font.FontFamily(android.graphics.Typeface.create("sans-serif-condensed", android.graphics.Typeface.NORMAL))

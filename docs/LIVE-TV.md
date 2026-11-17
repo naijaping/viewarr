@@ -2,23 +2,33 @@
 
 Live TV comes from your own [Dispatcharr](https://github.com/Dispatcharr/Dispatcharr) server, or straight from an IPTV provider's login or an M3U playlist. This guide covers the TV guide, watching, recording, catch-up and sport.
 
-Button names below are the **Viewarr** preset. If you chose the **TiviMate** preset, or changed buttons yourself, see [Remote control](REMOTE.md).
+Button names below are the **Viewarr** preset. If you chose the **Classic** preset, or changed buttons yourself, see [Remote control](REMOTE.md).
 
 ## The TV guide
 
 ![The TV guide](screenshots/epg.png)
 
-A TiviMate-style guide with channel logos, categories, and programmes going back and forward in time.
+A classic IPTV-style guide with channel logos, categories, and programmes going back and forward in time.
 
 - **Programme title logos**: the highlighted programme's own title logo (from TMDB) at the top of the guide, instead of plain text. Settings → Appearance → **Programme title logos**; **Title logos by group** switches them off for chosen channel groups (sports and event groups, say). *(0.28.7 and later.)*
 - **Long programme names scroll** on the highlighted programme, so they can be read in full. *(0.28.7 and later.)*
+
+### Guide times out by an hour or more
+
+When a provider's guide is hours out (another time zone, or summer time handled wrongly), move it:
+
+- **The whole source**: Settings → Live TV → **Guide time offset**, from −12 h to +12 h in half hours.
+- **Only some channels**: hold OK on one in the guide → **Guide times**, then + / − 30 minutes or an hour (channels sharing its guide move with it). Shifted channels show their offset (for example **+1 h**) beside their name.
+- **M3U playlists**: a channel's own `tvg-shift` is used by itself.
+
+The programmes are moved when the guide is fetched (it's fetched again straight after a change), so the times are right everywhere: the guide, the info bar, reminders, recordings sent to Dispatcharr and catch-up. Dispatcharr's own series rules still record by its own guide's times. *(0.28.9 and later.)*
 
 - **OK** on a programme on now: it plays in the preview window at the top left. OK again goes full screen.
 - **OK** on a past programme: replay it (catch-up, where the channel has it).
 - **OK** on a programme still to come: its details.
 - **Hold OK**: more options for that programme (see [Hold OK in the guide](#hold-ok-in-the-guide)).
 - **Number keys**: type a channel number.
-- **Left** goes back a programme, and carries on into catch-up (tap or hold; it stops at the start of catch-up). With the **TiviMate** preset, Left on what's on now opens the channel groups instead, and **hold Left** goes into catch-up.
+- **Left** goes back a programme, and carries on into catch-up (tap or hold; it stops at the start of catch-up). With the **Classic** preset, Left on what's on now opens the channel groups instead, and **hold Left** goes into catch-up.
 - **Menu (≡)** opens the main menu. **Play / pause** or **Info** shows the programme's details.
 - With a channel in the preview window: **Back** takes it full screen, **Hold Back** closes the player.
 - With nothing playing: **Back** jumps to what's on now, then opens the menu; **Hold Back** opens the menu on the channel groups.
@@ -109,13 +119,13 @@ Press **Down** from the info bar's buttons for rows of channels and titles to ju
 
 ### Arranging the info bar's buttons
 
-Hold OK on any button in the controls (OK while watching) to edit them, right there:
+Choose the buttons in **Settings → Appearance → Info bar buttons** (or hold OK on any button in the controls for the same list): every button by name, ticked if it's on the bar. *(0.28.9 and later.)*
 
-- **OK** shows or hides the highlighted button (hidden ones are dimmed while you edit).
-- **Hold OK** picks it up; **Left / Right** move it; OK puts it down.
-- **Back** (or **Done** at the end) finishes.
+- **OK** puts a button on the bar or takes it off.
+- **Right** picks one up; **Up / Down** move it; Right again puts it down.
+- **TV guide, Play / Pause, Stop, Audio and Subtitles** are always on the bar. They can be moved, not removed.
 
-**Extra buttons** show in edit mode marked *not added*: OK adds one (OK again removes it). They are **Favourite** (add or remove this channel), **Last channel**, **Audio sync** (the sound up to 300 ms earlier or later, starting from Settings → Playback → Lip sync), **Sleep timer** (each press: 15, 30, 60 or 90 minutes, the end of the programme, off; then everything stops), **Movies**, **Shows** and **Recordings** (the page, with the channel in the corner), **Info bar style** (each press switches the bar to the next style: Glass, Square, Pill, Fade, Full-width, Minimal), **TV settings** (frame rate matching, picture size, deinterlace, surround passthrough, channels, night mode and volume boost, changed over the picture with OK, with the TV's current mode shown at the top), and for films **Episodes** (the next episodes row).
+**Extra buttons** start off the bar. They are **Favourite** (add or remove this channel), **Last channel**, **Audio sync** (the sound up to 300 ms earlier or later, starting from Settings → Playback → Lip sync), **Sleep timer** (each press: 15, 30, 60 or 90 minutes, the end of the programme, off; then everything stops), **Movies**, **Shows** and **Recordings** (the page, with the channel in the corner), **Info bar style** (each press switches the bar to the next style: Glass, Square, Pill, Fade, Full-width, Minimal), **TV settings** (frame rate matching, picture size, deinterlace, surround passthrough, channels, night mode and volume boost, changed over the picture with OK, with the TV's current mode shown at the top), and for films **Episodes** (the next episodes row).
 
 The TV guide button always stays. The arrangement is shared with the film and episode controls, so both bars stay the same; live TV's extras (Aspect, Source, Record, Multi-view) keep their places in it, and you can edit it from either bar. *(0.28.0 and later.)*
 
@@ -183,13 +193,15 @@ Each window counts as a stream on your provider. Dispatcharr's failover to a bac
 
 *(Dispatcharr admin users only.)*
 
-- **Source**: see every stream behind a channel (and which provider it's from) and switch to another one from the remote. Viewarr picks the way by itself:
-  - **A connection free at that provider**: the channel keeps playing while the new stream opens in the background, then it swaps in (usually 1–3 seconds, no black).
-  - **No connection to spare** (a provider allowing one line, or all in use): Dispatcharr switches the channel itself, with a short pause.
-  - **Another source from the same one-line provider**: the stream is let go first, then the new one starts (a loading screen of a couple of seconds), so the provider never sees two connections.
-  - If a source can't connect (busy or down), you stay on the current one with a note within a few seconds; if the new picture never arrives, the channel starts afresh rather than freezing.
+- **Source**: see every stream behind a channel (and which provider it's from) and switch to another one from the remote. Viewarr decides how before switching, from Dispatcharr's own count of each provider's connections:
+  - **A connection free at that provider**: gap-free. The channel keeps playing while the new stream opens, then it swaps in.
+  - **None free** (a backup allowing one connection, already in use, or an account allowing one): the stream playing is let go first, then the new one starts, so the provider never sees two (a loading screen of a second or two).
+  - A provider that turns out to allow fewer connections than it says is remembered on the TV (for a week), and switched the safe way.
+  - If a stream can't start, you're back on the channel with a note saying why.
+  - The list shows each stream's quality from Dispatcharr's last check (for example **1080p · 25 fps · H264**) and marks streams that can't play right now: **⚠ busy** (its provider has no connection free), **⚠ didn't start just now**, **⚠ gone from the provider's list**.
+  - While you watch, Viewarr keeps an eye on the stream through Dispatcharr: if no new picture comes in for about 20 seconds, a note says the source is struggling and how to try another.
 
-  **Settings → Playback → Live TV → Source switching**: **Automatic**, or **Classic only** to never open a second connection. While on a stream you picked, Dispatcharr's own automatic failover doesn't watch it; changing channel goes back to normal. *(0.28.7 and later.)*
+  While on a stream you picked, Dispatcharr's own automatic failover doesn't watch it; changing channel goes back to normal. *(0.28.9 and later.)*
 - **The provider on the info bar**: where the channel's stream is coming from (your provider, or a backup), always shown; Settings → Appearance → **Info bar: source** turns it off.
 - **Stalled streams**: live TV stuck loading for 8 seconds after it had been playing (Dispatcharr moving to a backup, a provider hiccup) reconnects by itself.
 - **Stream info**: Dispatcharr's live view of the channel: source, provider, resolution, codecs, bitrate and viewers.
@@ -219,7 +231,11 @@ ESPN's data covers almost every competition.
 
 **The game page** *(0.28.7 and later)*: with **Settings → Sports → Game page** on, OK on a game opens its page: both line-ups and formations, each side's last five results, this season's meetings, goals and cards, match stats, the venue and the TV channels, refreshed every minute while it's live. From there (or holding OK on a game card): **Watch**, **Remind me**, **Record**, or **Record all of a team's games**. Reminders and recordings asked for before the guide lists a game are set up by themselves as soon as it does (a Viewarr box has to be on once the game is listed), never twice.
 
-With the **UK Sport on TV** Dispatcharr plugin installed, games show their UK channel weeks ahead, and games not on UK TV show the club channel that streams them.
+Viewarr finds where each game is on by itself: first your own TV guide (a programme naming both teams around kick-off), then Sky's public TV guide (Sky Sports, TNT Sports, Premier Sports, BBC, ITV, Channel 4 and 5, S4C, BBC Alba; about a week ahead; only channel numbers and dates are sent), then an event channel named after the match, then the home or away club's own channel. Teams are matched by every name ESPN gives them plus the names UK TV uses ("Man Utd", "Spurs", "Hibs"), both teams needed. A channel matched on one team only shows grey, as "Possibly …". The game page says where its channel came from.
+
+With the **UK Sport on TV** Dispatcharr plugin installed (optional), games also show their UK channel weeks ahead, including Amazon Prime and club TV.
+
+If your provider has channels for the clubs themselves (for example "BOLTON WANDERERS" or "SPFL - HIBS FC", in a football group), an English, Scottish or Welsh league or cup game that's on none of your other channels points at the home club's channel, or the away club's, marked "(club stream)". That's how the Saturday 3pm games are shown abroad. Televised games come first in each row; games not on UK TV follow them.
 
 ## Dispatcharr plugins
 

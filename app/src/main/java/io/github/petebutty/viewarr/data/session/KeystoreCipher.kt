@@ -14,7 +14,16 @@ object KeystoreCipher {
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private const val IV_SIZE = 12
 
-    private fun key(): SecretKey {
+    /**
+     * The key, once found: loading the key store is a trip into Android's keystore service (often 5-50 ms on a TV
+     * box), and every read of the sign-ins and the session went through here. Dropped if a use fails, so a key store
+     * that hiccuped is asked again next time.
+     */
+    @Volatile private var cached: SecretKey? = null
+
+    private fun key(): SecretKey = cached ?: synchronized(this) { cached ?: loadKey().also { cached = it } }
+
+    private fun loadKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (keyStore.getEntry(ALIAS, null) as? KeyStore.SecretKeyEntry)?.let { return it.secretKey }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
@@ -27,10 +36,13 @@ object KeystoreCipher {
         return generator.generateKey()
     }
 
-    fun encrypt(plain: String): String {
+    fun encrypt(plain: String): String = try {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
-        return Base64.encodeToString(cipher.iv + cipher.doFinal(plain.toByteArray()), Base64.NO_WRAP)
+        Base64.encodeToString(cipher.iv + cipher.doFinal(plain.toByteArray()), Base64.NO_WRAP)
+    } catch (e: Exception) {
+        cached = null
+        throw e
     }
 
     fun decrypt(encoded: String): String? = runCatching {
@@ -38,5 +50,5 @@ object KeystoreCipher {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes, 0, IV_SIZE))
         String(cipher.doFinal(bytes, IV_SIZE, bytes.size - IV_SIZE))
-    }.getOrNull()
+    }.onFailure { cached = null }.getOrNull()
 }

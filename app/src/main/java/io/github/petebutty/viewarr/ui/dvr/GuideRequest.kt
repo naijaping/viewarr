@@ -23,6 +23,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.profiles.Access
+import io.github.petebutty.viewarr.data.profiles.Lock
 
 /** A guide programme matched to a film or show, with what Seerr already has of it. */
 data class GuideMatch(val item: MediaItem, val status: Status, val seasons: List<SeerrService.Season>, val programmeSeason: Int?)
@@ -45,7 +47,7 @@ class GuideRequestViewModel @Inject constructor(
         _match.value = null
         _message.value = null
         job = viewModelScope.launch {
-            if (!io.github.petebutty.viewarr.data.profiles.Access.can(io.github.petebutty.viewarr.data.profiles.Lock.SEERR)) return@launch
+            if (!Access.can(Lock.SEERR)) return@launch
             val a = store.current().seerr ?: return@launch
             // Films in the guide usually end their description with the year, e.g. "(2014)".
             // The year as guides write it: "(2014)", or "Thriller · 2024 — …" (the first year-like number).

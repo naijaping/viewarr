@@ -9,7 +9,7 @@ import androidx.media3.exoplayer.audio.ForwardingAudioSink
 
 /**
  * Audio sync (the info bars' button): the sound moved later (+) or earlier (−) against the picture, for live TV and
- * films alike. Starts from Settings → Playback → Lip sync. The built-in player does it by shifting the audio clock the
+ * films alike. Starts from Settings → Playback → Audio sync. The built-in player does it by shifting the audio clock the
  * picture follows ([wrap]); mpv by its own audio-delay.
  */
 object AvSync {

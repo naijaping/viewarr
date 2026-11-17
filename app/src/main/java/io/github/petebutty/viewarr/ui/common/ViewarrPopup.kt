@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.DialogWindowProvider
+import io.github.petebutty.viewarr.ui.media.VodHost
 
 /**
  * Every pop-up that sits over a page (record options, programme info, confirmations, a title's hold-OK menu, Audio &
@@ -36,7 +37,7 @@ fun ViewarrPopup(onClose: () -> Unit, content: @Composable BoxScope.() -> Unit) 
         // (OK ignored until a fresh press: the hold that opened it, or its release, mustn't pick a choice.)
         Box(Modifier.fillMaxSize().ignoreHeldOk().onPreviewKeyEvent { e ->
             // Over a full-screen film: hold Back still stops it (the pop-up's own window had the press).
-            val film = io.github.petebutty.viewarr.ui.media.VodHost
+            val film = VodHost
             if (e.key == Key.Back && e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 1 && film.active && !film.mini) {
                 onClose(); film.stopHeld(); true
             } else false

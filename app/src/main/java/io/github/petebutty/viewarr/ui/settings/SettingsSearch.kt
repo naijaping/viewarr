@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -40,7 +41,7 @@ class OtherSettingsPage(val title: String, val words: String, val open: () -> Un
 
 /**
  * Search settings: type, and every setting whose name, explanation or section matches is listed with where it lives
- * ("Playback › Video"). OK opens that page on it, highlighted. Pages with their own screens (Remote buttons, Sports…)
+ * ("Playback → Video"). OK opens that page on it, highlighted. Pages with their own screens (Remote buttons, Sports…)
  * are found by what they cover.
  */
 @Composable
@@ -49,8 +50,21 @@ fun SettingsSearchScreen(
     onOpen: (page: String, section: String, title: String) -> Unit,
     others: List<OtherSettingsPage> = emptyList(),
 ) {
+    // Every setting, built here (not where the query is read): typing doesn't build ~200 settings again per key.
+    // Rebuilt only when a setting changes, so descriptions that show current values stay true.
     val pool = settingsPool()
-    val index = remember(pool.map { it.key }) { SettingsMap.index(pool) }
+    val index = remember(pool) { SettingsMap.index(pool) }
+    SettingsSearchResults(index, onBack, onOpen, others)
+}
+
+/** Search settings' box and results over a ready [index] (the query lives here, so only this part redraws as you type). */
+@Composable
+private fun SettingsSearchResults(
+    index: List<SettingsMap.Hit>,
+    onBack: () -> Unit,
+    onOpen: (page: String, section: String, title: String) -> Unit,
+    others: List<OtherSettingsPage>,
+) {
     var query by remember { mutableStateOf("") }
     var typing by remember { mutableStateOf(true) }
     val field = remember { FocusRequester() }
@@ -65,7 +79,9 @@ fun SettingsSearchScreen(
         index.filter { !matches(it.title + " " + it.section) && matches(it.description) }
     val otherHits = others.filter { matches(it.title + " " + it.words) }
     Box(Modifier.fillMaxSize().appBackground(readable = true)) {
-        Column(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 40.dp)) {
+        // (Below the live TV window when one is up, as SettingsPage: the title and box sat under it.)
+        Column(Modifier.fillMaxSize().padding(horizontal = io.github.petebutty.viewarr.ui.theme.Tokens.Gutter, vertical = 40.dp)
+            .padding(top = if (SettingsLayout.belowPreview) 170.dp else 0.dp)) {
             Text("Settings", fontSize = 14.sp, color = AppColors.Accent)
             Text("Search settings", fontSize = 30.sp, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 16.dp))
             Box(
@@ -104,11 +120,11 @@ fun SettingsSearchScreen(
                 fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 10.dp, bottom = 8.dp),
             )
             LazyColumn(Modifier.fillMaxWidth(0.8f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(hits, key = { "${it.page}/${it.section}/${it.title}" }) { h ->
-                    val i = hits.indexOf(h)
+                // The place in the list is part of the key: two settings in one section can share a name.
+                itemsIndexed(hits, key = { i, it -> "${it.page}/${it.section}/${it.title}#$i" }) { i, h ->
                     Column {
                         MenuItem(
-                            text = h.title, trailing = "${h.pageTitle} › ${h.section}", selected = false,
+                            text = h.title, trailing = "${h.pageTitle} → ${h.section}", selected = false,
                             onClick = { onOpen(h.page, h.section, h.title) },
                             modifier = if (i == 0) Modifier.focusRequester(firstResult) else Modifier,
                         )
@@ -118,7 +134,7 @@ fun SettingsSearchScreen(
                 }
                 items(otherHits, key = { "other/" + it.title }) { o ->
                     MenuItem(
-                        text = o.title, trailing = "Settings › ${o.title}", selected = false, onClick = o.open,
+                        text = o.title, trailing = "Settings → ${o.title}", selected = false, onClick = o.open,
                         modifier = if (hits.isEmpty() && otherHits.indexOf(o) == 0) Modifier.focusRequester(firstResult) else Modifier,
                     )
                 }

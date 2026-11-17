@@ -15,6 +15,7 @@ import androidx.media3.exoplayer.dash.DefaultDashChunkSource
 import androidx.media3.exoplayer.dash.manifest.DashManifestParser
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
+import io.github.petebutty.viewarr.data.media.BoundedCache
 import io.github.petebutty.viewarr.data.media.CatalogRepository
 import io.github.petebutty.viewarr.data.media.MediaItem
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +30,7 @@ import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.downloader.Downloader
 import org.schabi.newpipe.extractor.downloader.Request
 import org.schabi.newpipe.extractor.downloader.Response
+import org.schabi.newpipe.extractor.exceptions.ContentNotAvailableException
 import org.schabi.newpipe.extractor.exceptions.ReCaptchaException
 import org.schabi.newpipe.extractor.services.youtube.YoutubeParsingHelper
 import org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators.YoutubeProgressiveDashManifestCreator
@@ -61,16 +63,21 @@ class TrailerRepository @Inject constructor(
 ) {
     private val initLock = Mutex()
     @Volatile private var ready = false
-    /** Stream links last about six hours; keep them for two. */
-    private val infoCache = ConcurrentHashMap<String, Pair<Long, StreamInfo>>()
-    /** Videos that failed to resolve (removed, age-restricted, region-blocked): don't try again this session. */
-    private val dead = ConcurrentHashMap.newKeySet<String>()
+    /** Stream links last about six hours; keep them for two (the last 20: each holds every format's details). */
+    private val infoCache = BoundedCache<String, Pair<Long, StreamInfo>>(20)
+    /**
+     * Videos that failed to resolve → until when they're skipped: removed, age-restricted or region-blocked ones for the
+     * whole session; anything else (a network blip, YouTube's bot check) for 10 minutes.
+     */
+    private val dead = ConcurrentHashMap<String, Long>()
+
+    private fun isDead(id: String) = dead[id]?.let { System.currentTimeMillis() < it } == true
 
     suspend fun youtubeId(item: MediaItem): String? = runCatching { catalog.trailerKey(item) }.getOrNull()
 
     /** Best streams no taller than [maxHeight]. Prefers H.264 (every box decodes it in hardware), then VP9. */
     suspend fun resolve(youtubeId: String, maxHeight: Int): TrailerStreams? = withContext(Dispatchers.IO) {
-        if (youtubeId in dead) return@withContext null
+        if (isDead(youtubeId)) return@withContext null
         val info = info(youtubeId) ?: return@withContext null
         val videos = info.videoOnlyStreams.filter { it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.itagItem != null }
         fun pick(list: List<VideoStream>) = list.filter { it.height in 1..maxHeight }.maxWithOrNull(compareBy({ it.height }, { it.fps }))
@@ -91,7 +98,11 @@ class TrailerRepository @Inject constructor(
         infoCache[id]?.let { (at, info) -> if (System.currentTimeMillis() - at < 2 * 3600_000L) return info }
         init()
         return runCatching { StreamInfo.getInfo(ServiceList.YouTube, "https://www.youtube.com/watch?v=$id") }
-            .onFailure { Log.w(TAG, "$id: ${it.javaClass.simpleName}: ${it.message}"); dead += id }
+            .onFailure {
+                Log.w(TAG, "$id: ${it.javaClass.simpleName}: ${it.message}")
+                if (it !is kotlinx.coroutines.CancellationException)
+                    dead[id] = if (it is ContentNotAvailableException) Long.MAX_VALUE else System.currentTimeMillis() + 10 * 60_000L
+            }
             .getOrNull()
             ?.also { infoCache[id] = System.currentTimeMillis() to it }
     }
@@ -121,7 +132,7 @@ class TrailerRepository @Inject constructor(
         if (audio == null) video else MergingMediaSource(true, video, audio)
     }.onFailure { Log.w(TAG, "${t.youtubeId}: couldn't build source: ${it.message}") }.getOrNull()
 
-    fun markDead(youtubeId: String) { dead += youtubeId; infoCache.remove(youtubeId) }
+    fun markDead(youtubeId: String) { dead[youtubeId] = Long.MAX_VALUE; infoCache.remove(youtubeId) }
 }
 
 /** NewPipe Extractor's web requests, over the app's OkHttp. */

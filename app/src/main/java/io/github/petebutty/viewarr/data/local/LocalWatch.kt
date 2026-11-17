@@ -1,6 +1,7 @@
 package io.github.petebutty.viewarr.data.local
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -23,12 +24,11 @@ import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
 import javax.inject.Singleton
-import android.util.Log
 
 /**
  * One film or episode watched from IPTV (Dispatcharr / Xtream VOD), kept on this box because the provider keeps
  * nothing: where you stopped, and whether you finished it. [id] ties it to the title whatever row it was opened
- * from (TMDB id when known, else the title's own key); episodes carry [season] / [episode].
+ * from (TMDB id when known, else IMDb, else the title's own key); episodes carry [season] / [episode].
  */
 @Serializable
 data class LocalWatch(
@@ -54,7 +54,11 @@ data class LocalWatch(
     val nextEpisode: Int? = null,
     val lastOfShow: Boolean = false,
     val updatedAt: Long = 0,
+    /** When it last changed here (played, or ticked / un-ticked by hand), for syncing between boxes: newest wins.
+     *  ([updatedAt] is the order rows use: a tick by hand deliberately keeps it.) 0: before 0.28.9, use [updatedAt]. */
+    val changedAt: Long = 0,
 ) {
+    val changed get() = maxOf(changedAt, updatedAt)
     val mediaType get() = if (type == "Show") MediaType.Show else MediaType.Movie
     val progress get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 }
@@ -97,8 +101,8 @@ class LocalWatchStore @Inject constructor(
         context.localWatchStore.edit { p -> p[k] = json.encodeToString(serializer, change(decode(p[k])).sortedByDescending { it.updatedAt }.take(MAX)) }
     }
 
-    /** Where you are in a film or episode (playing stopped or paused). */
     /**
+     * Where you are in a film or episode (playing stopped or paused).
      * [creditsMs]: where the credits start, when known (then that counts as the end; else [WATCHED] of the way).
      * [episodes]: the show's episodes as (season, episode), when known, to find the real next one.
      */
@@ -123,7 +127,7 @@ class LocalWatchStore @Inject constructor(
                 id = id, type = item.type.name, title = item.title, year = item.year, poster = item.poster, backdrop = item.backdrop,
                 tmdbId = item.tmdbId, imdbId = item.imdbId, key = baseKey(item.key), season = season, episode = episode,
                 positionMs = if (done) 0 else positionMs, durationMs = durationMs, watched = done || (old?.watched == true && positionMs < 60_000),
-                hidden = false, updatedAt = System.currentTimeMillis(),
+                hidden = false, updatedAt = System.currentTimeMillis(), changedAt = System.currentTimeMillis(),
                 nextSeason = after?.first, nextEpisode = after?.second, lastOfShow = season != null && episodes.isNotEmpty() && after == null,
             )
             Log.i(TAG, "saved ${item.title}${season?.let { " S${it}E$episode" } ?: ""}: ${positionMs / 1000}s of ${durationMs / 1000}s" + if (entry.watched) " (watched)" else "")
@@ -137,7 +141,7 @@ class LocalWatchStore @Inject constructor(
         Log.i(TAG, "marked ${item.title}${season?.let { " S${it}E$episode" } ?: ""} " + if (watched) "watched" else "not watched")
         edit { list ->
             if (item.type == MediaType.Show && season == null) {
-                if (watched) list.map { if (it.id == id) it.copy(watched = true, positionMs = 0) else it }
+                if (watched) list.map { if (it.id == id) it.copy(watched = true, positionMs = 0, changedAt = System.currentTimeMillis()) else it }
                 else list.filterNot { it.id == id }
             } else {
                 val old = list.firstOrNull { it.id == id && it.season == season && it.episode == episode }
@@ -146,11 +150,14 @@ class LocalWatchStore @Inject constructor(
                 // mustn't make it "the last one played", which moved Continue watching and Play back to it.
                 if (watched) listOf(LocalWatch(id = id, type = item.type.name, title = item.title, year = item.year, poster = item.poster,
                     backdrop = item.backdrop, tmdbId = item.tmdbId, imdbId = item.imdbId, key = baseKey(item.key), season = season, episode = episode,
-                    watched = true, updatedAt = old?.updatedAt ?: 0L, nextSeason = old?.nextSeason, nextEpisode = old?.nextEpisode, lastOfShow = old?.lastOfShow == true)) + rest
+                    watched = true, updatedAt = old?.updatedAt ?: 0L, changedAt = System.currentTimeMillis(), nextSeason = old?.nextSeason, nextEpisode = old?.nextEpisode, lastOfShow = old?.lastOfShow == true)) + rest
                 else rest
             }
         }
     }
+
+    /** For the sync with other boxes (WatchSync): changes applied to the active profile's list in one go. */
+    suspend fun syncEdit(change: (List<LocalWatch>) -> List<LocalWatch>) = edit(change)
 
     /** Out of Continue watching (IPTV), without forgetting what's been watched. */
     suspend fun hide(item: MediaItem) {
@@ -223,10 +230,10 @@ class LocalWatchStore @Inject constructor(
         private const val TAG = "LocalWatch"
         private const val MAX = 400
 
-        /** The same title whichever row or source it came from: its TMDB id, else IMDb, else its own key. */
         /** A title's key without a row's marks (Plex's Continue watching adds ":deck", Trakt's ":trakt-next"). */
         fun baseKey(key: String) = key.substringBefore(":iptv-next").substringBefore(":deck").substringBefore(":trakt-next")
 
+        /** The same title whichever row or source it came from: its TMDB id, else IMDb, else its own key. */
         fun idOf(item: MediaItem) = item.tmdbId?.let { "tmdb:${item.type.name}:$it" } ?: item.imdbId?.let { "imdb:$it" }
             ?: baseKey(item.key)
     }

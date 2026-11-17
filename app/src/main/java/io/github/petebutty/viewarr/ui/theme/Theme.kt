@@ -12,6 +12,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.darkColorScheme
 import androidx.compose.material3.MaterialTheme as M3Theme
 import androidx.compose.material3.darkColorScheme as m3DarkColorScheme
+import io.github.petebutty.viewarr.ui.media.PlayOrder
 
 /** Every shade is derived from two user-chosen colours so any combination stays coherent. */
 data class Palette(val main: Color, val highlight: Color, val transparency: Float = 0f, /** Guide: how see-through the channel names and programmes are (0 solid … 1 clear). */ val guideTransparency: Float = 0f, val showNumbers: Boolean = true, val squareCorners: Boolean = true, val hideMedia: Boolean = false, /** Guide progress bars: 0 every channel, 1 only the one you're watching, 2 none. */ val progressBars: Int = 0,
@@ -47,26 +48,26 @@ data class Palette(val main: Color, val highlight: Color, val transparency: Floa
     val progressBadges get() = opt(UiOpts.BADGE_PROGRESS) == 0
     val serverPreviews get() = opt(UiOpts.SEEK_PREVIEWS) != 2
     val boxPreviews get() = opt(UiOpts.SEEK_PREVIEWS) == 0 && !lowMemory
-    /** Player controls (seek bar area and buttons) scale: Medium, Small, Large (the original size). */
     /** Settings → Appearance → Info bar size / Preview cards. */
     val infoBarScale get() = floatArrayOf(1f, 0.85f, 0.72f, 1.12f)[opt(UiOpts.INFOBAR_SIZE).coerceIn(0, 3)]
     /** A library poster's width (dp): Small matches the rows' posters. */
     val libraryPosterDp get() = floatArrayOf(100f, 116f, 88f, 136f)[opt(UiOpts.LIBRARY_POSTERS).coerceIn(0, 3)]
     val infoBarWidth get() = floatArrayOf(1f, 0.9f, 0.8f, 0.7f, 0.6f)[opt(UiOpts.INFOBAR_WIDTH).coerceIn(0, 4)]
     val cardScale get() = floatArrayOf(1f, 0.8f, 0.65f, 1.15f)[opt(UiOpts.CARD_SIZE).coerceIn(0, 3)]
+    /** Player controls (seek bar area and buttons) scale: Medium, Small, Large (the original size). */
     val controlsScale get() = floatArrayOf(0.8f, 0.65f, 1f)[opt(UiOpts.CONTROLS_SIZE).coerceIn(0, 2)]
     val controlsMs get() = longArrayOf(4_000, 3_000, 6_000, 10_000)[opt(UiOpts.CONTROLS_TIME).coerceIn(0, 3)]
-    /** Settings → Playback → Next episode countdown: 0–180 s in 5 s steps (the older four-choice setting carries over). */
     /** Settings → Remote buttons → Live TV → Channel change delay, in milliseconds. */
     val zapDelayMs get() = opt(UiOpts.ZAP_DELAY).coerceIn(0, 20) * 100L
-        val upNextSeconds get() = (opts[UiOpts.UP_NEXT_S] ?: opts[UiOpts.UP_NEXT]?.let { intArrayOf(20, 10, 30, 60)[it.coerceIn(0, 3)] / 5 } ?: 4).coerceIn(0, 36) * 5
+    /** Settings → Playback → Next episode countdown: 0–180 s in 5 s steps (the older four-choice setting carries over). */
+    val upNextSeconds get() = (opts[UiOpts.UP_NEXT_S] ?: opts[UiOpts.UP_NEXT]?.let { intArrayOf(20, 10, 30, 60)[it.coerceIn(0, 3)] / 5 } ?: 4).coerceIn(0, 36) * 5
     val textScale get() = floatArrayOf(1f, 0.9f, 1.12f, 1.25f)[opt(UiOpts.TEXT_SIZE).coerceIn(0, 3)]
-    /** Settings → Live TV → TV guide refresh: how old the guide may get (null: only Refresh channels & guide). */
     /** How long to rest on a channel browsed in the info bar before it changes (null: only on OK). */
     val browseDelayMs: Long? get() = when (opt(UiOpts.BROWSE_DELAY)) { 1 -> 300L; 2 -> 800L; 3 -> 1_000L; 4 -> 1_500L; 5 -> 2_000L; 6 -> null; else -> 500L }
-    /** How far ahead the guide reaches: Settings → Live TV → TV guide days ahead. */
     val hideAllChannels: Boolean get() = opt(UiOpts.GROUP_ALL) == 1
+    /** How far ahead the guide reaches: Settings → Live TV → TV guide days ahead. */
     val guideForwardMs: Long get() = UiOpts.guideForwardMs(opt(UiOpts.GUIDE_DAYS))
+    /** Settings → Live TV → TV guide refresh: how old the guide may get (null: only Refresh channels & guide). */
     val guideRefreshMs: Long? get() = longArrayOf(4, 2, 8, 12, 24, 0)[opt(UiOpts.GUIDE_REFRESH).coerceIn(0, 5)].takeIf { it > 0 }?.times(3_600_000L)
     /** Title pages: the ratings in the order chosen (Settings → Appearance → Ratings). */
     fun ratingRank(source: String): Int = ratingsOrder.indexOf(source).let { if (it < 0) 100 + TitleParts.ratings.indexOfFirst { r -> r.first == source }.coerceAtLeast(0) else it }
@@ -156,7 +157,6 @@ object AppColors {
     val MenuPanel get() = tinted(palette.panel).copy(alpha = palette.menuAlpha)
     /** A glass colour with Settings → Appearance → Glass colour's pastel mixed in. */
     fun tinted(c: Color): Color = palette.glassTint?.let { androidx.compose.ui.graphics.lerp(c, it, 0.35f) } ?: c
-    val MenuPanelAlt get() = palette.panelAlt.copy(alpha = palette.menuAlpha)
     val TextPrimary = Color(0xFFFFFFFF)
     val TextSecondary = Color(0xFFBFC6DA)
     val Error = Color(0xFFFF8A80)
@@ -283,7 +283,6 @@ object UiOpts {
     const val INFOBAR_WIDTH = "infobar_width"
     /** A library's grid: how big the posters are (how many fit across). */
     const val LIBRARY_POSTERS = "library_posters"
-    const val BANNER_GLASS = "banner_glass"
     /** The glass's strength for the info bar and every pop-up, as a slider: 0 the clearest … 10 solid. */
     const val POPUP_GLASS = "popup_glass"
     /** Pop-up glass, 0–100% see-through (replaces [POPUP_GLASS]): see Palette.popupAlpha. */
@@ -297,7 +296,6 @@ object UiOpts {
     const val GUIDE_ART = "guide_art"
     const val GUIDE_TITLE_LOGO = "guide_title_logo"
     const val CHANNEL_LOGOS = "channel_logos"
-    const val MINI_SIZE = "mini_size"
     const val MINI_CORNER = "mini_corner"
     /** Pressing towards the corner picture from the page's edge highlights it (Full screen / Close). */
     const val CORNER_FOCUS = "corner_focus"
@@ -307,11 +305,9 @@ object UiOpts {
     const val AFTER_FILM = "after_film"
     /** Back from a full-screen film: the mini player over the page it was started from (0, standard since 0.28.5), or over the TV guide with the menu (1). */
     const val FILM_BACK = "film_back_v2"
-    const val PLAYER_BACK = "player_back"
     const val AGE_RATING = "age_rating"
     const val BUTTON_HINTS = "button_hints"
     const val ANIM_FILM = "anim_film"
-    const val ANIM_LIVE = "anim_live"
     /** Live TV shortcuts: round, rounded squares (app icons), or wide tiles (wordmark logos). */
     const val SHORTCUT_STYLE = "shortcut_style"
     /** Live TV shortcuts: the poster rows only once you press Down (cleaner), or a dimmed preview always. */
@@ -330,11 +326,9 @@ object UiOpts {
     const val OSD_POSTERS = "osd_posters"
     /** Guide: the catch-up (replay) icon on programmes and channel names. */
     const val CATCHUP_ICONS = "catchup_icons"
-    /** Live TV's info bar (the banner over the picture): channel number, S·E, its look, quality badges. */
+    /** Live TV's info bar (the banner over the picture): channel number, S·E, quality badges. */
     const val BANNER_NUMBER = "banner_number"
     const val BANNER_EPISODE = "banner_episode"
-    const val BANNER_STYLE = "banner_style"
-    const val BANNER_CORNERS = "banner_corners"
     const val BANNER_BADGES = "banner_badges"
     const val BANNER_FPS = "banner_fps"
     /** The channel list: a progress bar under each channel's programme (how far through it is). */
@@ -345,8 +339,6 @@ object UiOpts {
     const val CHLIST_WIDTH = "chlist_width"
     /** Live TV info bar: the stream's provider (Dispatcharr's account for the stream playing, e.g. a backup). */
     const val BANNER_SOURCE = "banner_source"
-    /** Live TV keeps playing in a corner while you browse from a shortcut (or any page, Live TV hub style). */
-    const val LIVE_CORNER = "live_corner"
     const val SEEK_PREVIEWS = "seek_previews"
     const val CONTROLS_TIME = "controls_time"
     const val CONTROLS_SIZE = "controls_size"
@@ -354,11 +346,6 @@ object UiOpts {
     const val UP_NEXT_S = "up_next_s"
     /** Live TV: how long a channel must stay chosen while zapping before its stream is asked for (tenths of a second). */
     const val ZAP_DELAY = "zap_delay"
-    /**
-     * Live TV source switching: Smooth (the new source opened alongside, swapped in once it has pictures) or the
-     * classic switch on the same connection (for a provider allowing one connection at a time).
-     */
-    const val SMOOTH_SWITCH = "smooth_switch"
     /** Sports: OK on a game opens its page (line-ups, form, remind / record), or just a note (as before). */
     const val SPORTS_GAME_PAGE = "sports_game_page"
     /** The news ticker (ui/common/NewsTicker): with the live info bar, in the TV guide, on the Movies / Shows / Sports pages. */
@@ -379,15 +366,12 @@ object UiOpts {
         POPUP_GLASS to 2,
         UP_NEXT_S to 4,
         ZAP_DELAY to 5,
-        // Back closes the film, holding Back puts it in the corner (since 0.23; was: Back = corner).
-        PLAYER_BACK to 2,
     )
     val choices = mapOf(
         TEXT_SIZE to listOf("Normal", "Small", "Large", "Extra large"),
         FONT to listOf("Standard", "Condensed", "Light", "Medium", "Serif", "Thin", "Bold", "Condensed light", "Casual", "Typewriter", "Small caps", "Handwritten"),
         GLASS_TINT to GlassTints.map { it.first },
         GUIDE_EPISODE to listOf("On", "Off"),
-        SMOOTH_SWITCH to listOf("Automatic", "Classic only (one connection at a time)"),
         SPORTS_GAME_PAGE to listOf("On", "Off"),
         NEWS_INFOBAR to listOf("Off", "On"),
         NEWS_GUIDE to listOf("Off", "On"),
@@ -419,7 +403,6 @@ object UiOpts {
         BROWSE_DELAY to listOf("0.5 seconds", "0.3 seconds", "0.8 seconds", "1 second", "1.5 seconds", "2 seconds", "Only when I press OK"),
         GUIDE_DAYS to listOf("3 days", "1 day", "5 days", "7 days"),
         GUIDE_REFRESH to listOf("Every 4 hours", "Every 2 hours", "Every 8 hours", "Every 12 hours", "Once a day", "Only when I ask"),
-        BANNER_GLASS to listOf("Medium", "Light", "Dark"),
         POPUP_GLASS to (0..10).map { if (it == 10) "Solid" else "${100 - (30 + it * 7)}% see-through" },
         POPUP_SEE to (0..10).map { "${it * 10}%" },
         BANNER_BORDER to listOf("On", "Off"),
@@ -430,37 +413,31 @@ object UiOpts {
         GUIDE_ART to listOf("On", "Off"),
         GUIDE_TITLE_LOGO to listOf("On", "Off"),
         CHANNEL_LOGOS to listOf("On", "Off"),
-        MINI_SIZE to listOf("Medium", "Small", "Large"),
         MINI_CORNER to listOf("Bottom right", "Bottom left", "Top right", "Top left"),
         CORNER_FOCUS to listOf("On", "Off"),
         LIST_ENDS to listOf("Jump to the other end", "Stop"),
         AFTER_FILM to listOf("Stay where you were", "Back to live TV"),
         FILM_BACK to listOf("Its own page", "The TV guide and menu"),
         ANIM_FILM to listOf("On", "Off"),
-        ANIM_LIVE to listOf("On", "Off"),
         SHORTCUT_STYLE to listOf("Round", "Rounded squares", "Wide tiles"),
         OSD_PEEK to listOf("When you press Down", "Always show a preview"),
         SHORTCUT_SIZE to listOf("Small", "Medium", "Large"),
         OSD_ROWS to listOf("3", "2", "5", "All"),
-        PLAY_ORDER to io.github.petebutty.viewarr.ui.media.PlayOrder.orders.map(io.github.petebutty.viewarr.ui.media.PlayOrder::label),
+        PLAY_ORDER to PlayOrder.orders.map(PlayOrder::label),
         GUIDE_SPAN to listOf("2½ hours", "1½ hours", "2 hours", "3 hours", "4 hours", "6 hours"),
         SET_ROWS_HOME to listOf("Only through their shortcuts", "On the home page too"),
         OSD_POSTERS to listOf("On", "Off"),
         CATCHUP_ICONS to listOf("Programmes and channels", "Channel names only", "Off"),
         BANNER_NUMBER to listOf("On", "Off"),
         BANNER_EPISODE to listOf("On", "Off"),
-        BANNER_STYLE to listOf("Fade across the bottom", "Glass panel with a border", "Glass panel, no border", "Solid panel"),
-        BANNER_CORNERS to listOf("Rounded", "Square"),
         BANNER_BADGES to listOf("HD · FHD · 4K", "720p · 1080p · 2160p", "Off"),
         BANNER_FPS to listOf("On", "Off"),
         CHLIST_PROGRESS to listOf("Every channel", "Off", "Highlighted channel only"),
         CHLIST_WIDTH to listOf("Medium", "Narrow", "Wide"),
         CHLIST_PROGRESS_COLOUR to listOf("White", "Black", "Grey", "Your highlight colour", "Dark highlight"),
         BANNER_SOURCE to listOf("On", "Off"),
-        LIVE_CORNER to listOf("On", "Off (browsing stops the channel)"),
         BUTTON_HINTS to listOf("First few times", "Always", "Off"),
         AGE_RATING to listOf("UK (BBFC: U, PG, 12A, 15, 18)", "US (MPA: G, PG, PG-13, R · TV-14, TV-MA)"),
-        PLAYER_BACK to listOf("Back: mini player", "Off (Back stops it)", "Hold Back: mini player (Back stops it)"),
         SEEK_PREVIEWS to listOf("Server's, else the box makes them", "Server's only", "Off"),
         CONTROLS_TIME to listOf("4 seconds", "3 seconds", "6 seconds", "10 seconds"),
         CONTROLS_SIZE to listOf("Medium", "Small", "Large"),

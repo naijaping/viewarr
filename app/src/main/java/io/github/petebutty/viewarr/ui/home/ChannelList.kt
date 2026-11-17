@@ -28,7 +28,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -59,6 +58,18 @@ import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import io.github.petebutty.viewarr.ui.theme.Dates
+import io.github.petebutty.viewarr.ui.theme.NoScale
+import io.github.petebutty.viewarr.ui.theme.Tokens
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+
+/**
+ * The channel list's programme panel is open inside the menu strip: the strip hides its channel-groups column
+ * meanwhile, so groups + channels + programmes (230 + 380–460 + 440 dp) aren't squeezed into 960 (UI review, Tier 1).
+ */
+internal object ChannelPanelState {
+    var programmesOpen by mutableStateOf(false)
+}
 
 /** See-through channel list over live TV: Up/Down to browse, OK to switch, Back or Left to close. Hides after 8 s idle. */
 @Composable
@@ -74,7 +85,7 @@ internal fun ChannelListOverlay(
     /** A programme still to come: record / remind options. */
     onFuture: (ChannelListItem, GuideProgram) -> Unit = { _, _ -> },
     /**
-     * Left from the channels: the menu strip opens beside them (channel groups, then the main list), as TiviMate.
+     * Left from the channels: the menu strip opens beside them (channel groups, then the main list), as classic IPTV apps.
      */
     onLeft: () -> Unit = {},
     /** Inside the menu strip (its background, its Back): focus stays with the groups until a group is picked. */
@@ -87,6 +98,9 @@ internal fun ChannelListOverlay(
     var focusedV by remember { mutableStateOf<Int?>(null) }
     var epgFor by remember { mutableStateOf<ChannelListItem?>(null) }
     val epgFocus = remember { FocusRequester() }
+    // (In the menu strip: tells it to make room while the programme panel is open.)
+    androidx.compose.runtime.SideEffect { if (embedded) ChannelPanelState.programmesOpen = epgFor != null }
+    androidx.compose.runtime.DisposableEffect(embedded) { onDispose { if (embedded) ChannelPanelState.programmesOpen = false } }
     // Closing the programme panel puts you back on the channel it was for.
     var returnTo by remember { mutableStateOf<Int?>(null) }
     val returnFocus = remember { FocusRequester() }
@@ -100,7 +114,7 @@ internal fun ChannelListOverlay(
     val groupId by vm.groupId.collectAsStateWithLifecycle()
     val start = channels.indexOfFirst { it.id == current.id }.coerceAtLeast(0)
     // Settings → Live TV → TV guide → End of a list: 1 jumps to the other end on a fresh press, 2 stops.
-    val ends = if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.LIST_ENDS) == 0) 1 else 2
+    val ends = if (AppColors.palette.opt(UiOpts.LIST_ENDS) == 0) 1 else 2
     // (Opening: the highlighted channel at the top of the list.)
     // (Opens with your channel in the middle of the screen, as the guide does: roughly at first, exactly once laid out.)
     val listState = rememberLazyListState(initialFirstVisibleItemIndex = maxOf(0, start - 5))
@@ -155,7 +169,7 @@ internal fun ChannelListOverlay(
         val rowMargin = with(androidx.compose.ui.platform.LocalDensity.current) { 56.dp.toPx() }
         val gentle = remember(rowMargin) {
             object : androidx.compose.foundation.gestures.BringIntoViewSpec {
-                // The highlighted channel kept in the middle, the list moving under it (as the guide and TiviMate do);
+                // The highlighted channel kept in the middle, the list moving under it (as the guide and classic IPTV apps do);
                 // at the top and end of the list it can't move further, so the highlight goes up / down instead.
                 override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float =
                     offset + size / 2f - containerSize / 2f
@@ -196,8 +210,8 @@ internal fun ChannelListOverlay(
                         .focusProperties { canFocus = epgFor == null }
                         .onFocusChanged { if (it.isFocused || it.hasFocus) { focusedCh = ch; focusedV = v } }
                         .fillMaxWidth(),
-                    scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                    scale = NoScale,
+                    shape = ClickableSurfaceDefaults.shape(Tokens.RowShape),
                     colors = ClickableSurfaceDefaults.colors(
                         containerColor = if (ch.id == current.id) AppColors.CellCurrent.copy(alpha = 0.8f) else Color.Transparent,
                         contentColor = AppColors.TextPrimary,
@@ -229,14 +243,14 @@ internal fun ChannelListOverlay(
                             }
                             // Settings → Appearance → Live TV → Channel list progress: how far through what's on now.
                             // (Every channel, the highlighted one only, or off.)
-                            val progressMode = AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_PROGRESS)
+                            val progressMode = AppColors.palette.opt(UiOpts.CHLIST_PROGRESS)
                             if (nowProg != null && nowProg.endTime > nowProg.startTime && (progressMode == 0 || (progressMode == 2 && rowFocused))) {
                                 val f = ((now - nowProg.startTime).toFloat() / (nowProg.endTime - nowProg.startTime)).coerceIn(0f, 1f)
                                 // On the highlighted row (your highlight colour behind it): a solid white bar on a darker
                                 // track, so it stands out (it was faint, the row's text colour on the highlight).
                                 val highlighted = rowFocused
                                 // (Its colour: Settings → Appearance → Live TV → Highlighted progress colour.)
-                                val fill = if (!highlighted) AppColors.Accent else when (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_PROGRESS_COLOUR)) {
+                                val fill = if (!highlighted) AppColors.Accent else when (AppColors.palette.opt(UiOpts.CHLIST_PROGRESS_COLOUR)) {
                                     1 -> Color.Black
                                     2 -> Color(0xFF9AA0A6)
                                     3 -> AppColors.Accent
@@ -286,7 +300,7 @@ internal fun ChannelPrograms(
         awaitFrame(); awaitFrame()
         runCatching { focusRequester.requestFocus() }
     }
-    val hhmm = io.github.petebutty.viewarr.ui.theme.Dates.time
+    val hhmm = Dates.time
     val day = java.time.format.DateTimeFormatter.ofPattern("EEE d")
     val zone = java.time.ZoneId.systemDefault()
     val today = java.time.LocalDate.now(zone)
@@ -315,8 +329,8 @@ internal fun ChannelPrograms(
                             // Hold OK: the same menu as holding OK in the guide (record, from the start, go to show…).
                             onLongClick = { onFuture(p) },
                             modifier = (if (i == nowIndex) Modifier.focusRequester(focusRequester) else Modifier).fillMaxWidth(),
-                            scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                            scale = NoScale,
+                            shape = ClickableSurfaceDefaults.shape(Tokens.RowShape),
                             colors = ClickableSurfaceDefaults.colors(
                                 containerColor = if (live) AppColors.CellCurrent.copy(alpha = 0.8f) else Color.Transparent,
                                 contentColor = if (past && !canCatchup) AppColors.TextSecondary else AppColors.TextPrimary,
@@ -328,7 +342,8 @@ internal fun ChannelPrograms(
                                 Text(time, fontSize = 13.sp, modifier = Modifier.width(if (start.toLocalDate() != today) 92.dp else 52.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(io.github.petebutty.viewarr.ui.guide.guideTitle(p), fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    val tag = when { live -> "● On now"; canCatchup -> "⟲ Catch-up: OK to play"; else -> null }
+                                                    // (Later ones: what holding OK does, as the guide. UI review, Tier 2.)
+                                    val tag = when { live -> "● On now"; canCatchup -> "⟲ Catch-up  ·  OK: play"; !past -> "Hold OK: record or remind"; else -> null }
                                     tag?.let { Text(it, fontSize = 11.sp, maxLines = 1) }
                                 }
                             }
@@ -350,11 +365,11 @@ internal fun whenText(start: Long, now: Long): String {
         today.plusDays(1) -> "Tomorrow"
         else -> d.format(java.time.format.DateTimeFormatter.ofPattern("EEE"))
     }
-    return day + " " + d.format(io.github.petebutty.viewarr.ui.theme.Dates.time)
+    return day + " " + d.format(Dates.time)
 }
 
 
 /** Settings → Appearance → TV guide → Channel list width: Narrow, Medium (the standard since 0.28.6) or Wide (as before). */
 @Composable
 internal fun channelListWidth(): androidx.compose.ui.unit.Dp =
-    when (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CHLIST_WIDTH)) { 0 -> 380.dp; 1 -> 320.dp; else -> 460.dp }
+    when (AppColors.palette.opt(UiOpts.CHLIST_WIDTH)) { 0 -> 380.dp; 1 -> 320.dp; else -> 460.dp }

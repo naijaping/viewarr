@@ -37,7 +37,7 @@ import io.github.petebutty.viewarr.ui.theme.AppColors
  */
 
 /** Drawing on the 640 × 360 grid: [u] is one unit. */
-internal class MockScope(val u: Dp, private val box: BoxScope) {
+internal class MockScope(val u: Dp) {
     @Composable
     fun Rect(x: Float, y: Float, w: Float, h: Float, color: Color, r: Float = 3f, brush: Brush? = null, border: Color? = null) {
         val shape = RoundedCornerShape(u * r)
@@ -71,17 +71,17 @@ private val Dim = Color(0xFF9AA0B4)
 
 /** A drawn screen in a 16:9 frame, with pulsing rings and labels on the parts that matter (x, y as 0…1). */
 @Composable
-internal fun BoxScope.Mock(spots: List<Spot>, pulse: Float, draw: @Composable MockScope.() -> Unit) {
+internal fun BoxScope.Mock(spots: List<Spot>, pulse: () -> Float, draw: @Composable MockScope.() -> Unit) {
     BoxWithConstraints(
         Modifier.align(Alignment.Center).fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(10.dp)).background(Bg)
             .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
     ) {
         val u = maxWidth / 640f
-        Box(Modifier.fillMaxSize()) { MockScope(u, this).draw() }
+        Box(Modifier.fillMaxSize()) { MockScope(u).draw() }
         spots.forEach { sp ->
             val cx = maxWidth * sp.x; val cy = maxHeight * sp.y
             val r = 16.dp
-            Box(Modifier.offset(cx - r, cy - r).size(r * 2).graphicsLayer { scaleX = 1f + pulse * 0.35f; scaleY = 1f + pulse * 0.35f; alpha = 1f - pulse * 0.4f }
+            Box(Modifier.offset(cx - r, cy - r).size(r * 2).graphicsLayer { val p = pulse(); scaleX = 1f + p * 0.35f; scaleY = 1f + p * 0.35f; alpha = 1f - p * 0.4f }
                 .border(3.dp, AppColors.Accent, CircleShape))
             Box(Modifier.offset(if (sp.labelLeft) cx - r - 8.dp - 230.dp else cx + r + 8.dp, cy - 12.dp).width(230.dp),
                 contentAlignment = if (sp.labelLeft) Alignment.CenterEnd else Alignment.CenterStart) {
@@ -147,13 +147,14 @@ private fun MockScope.Grid(x: Float, rows: Int = 9) {
     Rect(x + nameW + 3f + hour * 0.4f, 136f, 1f, 224f, AppColors.Accent, r = 0f)
 }
 
-/** The glass menu on the left: the logo, Edit menus and the entries ([on]: the one highlighted). */
+/** The glass menu on the left: the logo, the Right hint under it and the entries ([on]: the one highlighted). */
 @Composable
 private fun MockScope.MainMenu(on: Int) {
     Rect(0f, 0f, 138f, 360f, Glass, r = 0f)
     Circle(12f, 14f, 15f, Color.Transparent, border = AppColors.Accent)
     Label(32f, 13f, "Viewarr", size = 12f, bold = true, color = Color(0xFFB9E6FF))
-    Label(14f, 58f, "✎  Edit menus", size = 7f, color = Dim)
+    // (Was a ✎ Edit menus button, gone since hold OK edits the menu: the hint the real menu shows there instead.)
+    Label(14f, 58f, "Right › go into Live TV", size = 7f, color = Dim)
     listOf("Live TV", "Sports", "Movies", "Shows", "StreamFlix", "PrimeView", "Music", "Recordings", "Search", "Settings").forEachIndexed { i, t ->
         val y = 80f + i * 22f
         if (i == on) Rect(6f, y - 4f, 126f, 19f, AppColors.Accent, r = 4f)

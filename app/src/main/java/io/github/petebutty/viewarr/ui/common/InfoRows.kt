@@ -62,11 +62,11 @@ object InfoRows {
     }
 
     /**
-     * The order with [kind] switched [on]: on, it joins the end of the rows switched on (it jumps up the list, Peter);
-     * off, it goes to the top of the rest. Save it with saveBarOrder("rows_<player>"). Its new place is the number of
-     * other rows switched on.
+     * The order with [kind] switched on or off: on, it joins the end of the rows switched on (it jumps up the list, Peter);
+     * off, it goes to the top of the rest (the same place either way). Save it with saveBarOrder("rows_<player>"). Its
+     * new place is the number of other rows switched on.
      */
-    fun toggledOrder(player: String, kind: Kind, on: Boolean): List<String> {
+    fun toggledOrder(player: String, kind: Kind): List<String> {
         val all = ordered(player)
         val picked = all.filter { it != kind && shown(player, it) }
         val rest = all.filter { it != kind && !shown(player, it) }

@@ -16,7 +16,6 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,8 +23,6 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,23 +54,20 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
 import io.github.petebutty.viewarr.ui.common.MenuItem
-import io.github.petebutty.viewarr.ui.common.QrImage
 import io.github.petebutty.viewarr.ui.setup.SetupViewModel
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import io.github.petebutty.viewarr.ui.theme.appBackground
 import kotlinx.coroutines.android.awaitFrame
+import io.github.petebutty.viewarr.ui.setup.WizardField
 
 /** First-run tour: shown once after setup on this TV (and from Settings → About → Show the tour). */
 object Tour {
@@ -111,7 +105,7 @@ fun RoleScreen(onAdmin: () -> Unit, onInvited: () -> Unit) {
     Box(Modifier.fillMaxSize().appBackground().onFocusChanged { inside = it.hasFocus }, contentAlignment = Alignment.Center) {
         Column(Modifier.width(520.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                androidx.compose.foundation.Image(androidx.compose.ui.res.painterResource(io.github.petebutty.viewarr.R.drawable.logo_mark), contentDescription = null, modifier = Modifier.size(48.dp))
+                io.github.petebutty.viewarr.ui.common.ViewarrMark(48.dp)
                 Spacer(Modifier.width(10.dp))
                 Text("viewarr", fontSize = 36.sp, fontWeight = FontWeight.Bold, color = AppColors.TextPrimary)
             }
@@ -165,11 +159,11 @@ fun InvitedSetup(onBack: () -> Unit, vm: SetupViewModel = hiltViewModel(key = "s
             Text("The address, your username and your password. Everything else is set up for you.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 14.dp))
         }
         Column(Modifier.weight(0.58f)) {
-            io.github.petebutty.viewarr.ui.setup.WizardField(address, { address = it }, "Address (e.g. tv.example.com)", first, KeyboardType.Uri, ImeAction.Next, {})
+            WizardField(address, { address = it }, "Address (e.g. tv.example.com)", first, KeyboardType.Uri, ImeAction.Next, {})
             Spacer(Modifier.height(10.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(username, { username = it }, "Username", null, KeyboardType.Text, ImeAction.Next, {})
+            WizardField(username, { username = it }, "Username", null, KeyboardType.Text, ImeAction.Next, {})
             Spacer(Modifier.height(10.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(password, { password = it }, "Password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
+            WizardField(password, { password = it }, "Password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
             Spacer(Modifier.height(14.dp))
             MenuItem(text = if (state.busy) "Signing in…" else "Sign in", selected = false, onClick = { if (!state.busy) vm.invitedPasswordSignIn(address, username, password) })
             MenuItem(text = "Back", selected = false, onClick = onBack)
@@ -180,11 +174,14 @@ fun InvitedSetup(onBack: () -> Unit, vm: SetupViewModel = hiltViewModel(key = "s
 
 // ------------------------------------------------------------------ the tour
 
-/** [art]: the picture; pulse goes 0…1…0 (buttons), wave runs 0…1 over and over (things in turn). */
-private data class TourPage(val title: String, val text: String, val art: @Composable BoxScope.(pulse: Float, wave: Float) -> Unit)
+/**
+ * [art]: the picture; pulse goes 0…1…0 (buttons), wave runs 0…1 over and over (things in turn). Both are read where
+ * they're drawn (graphicsLayer), so the page isn't composed again every frame.
+ */
+private data class TourPage(val title: String, val text: String, val art: @Composable BoxScope.(pulse: () -> Float, wave: () -> Float) -> Unit)
 
 /**
- * Short pages on how Viewarr works: Left / Right move, OK on the last one (or Skip) finishes. [pages]: the tour, or the
+ * Short pages on how Viewarr works: Left / Right move, OK on the last one (or Skip, Down from Next) finishes. [pages]: the tour, or the
  * "Before you set up" pages; [finishLabel]: the last page's button.
  */
 @OptIn(ExperimentalComposeUiApi::class)
@@ -193,6 +190,9 @@ fun TourScreen(onDone: () -> Unit, prep: Boolean = false, finishLabel: String = 
     val pages = remember(prep) { if (prep) prepPages() else tourPages() }
     var page by remember { mutableIntStateOf(0) }
     val next = remember { FocusRequester() }
+    // Down from Next reaches Skip (Right turns the page, so Skip couldn't be reached with the remote at all).
+    val skip = remember { FocusRequester() }
+    var onSkip by remember { mutableStateOf(false) }
     var inside by remember { mutableStateOf(false) }
     FocusOnStart(next) { inside }
     // Home loads underneath and can take the remote when it's ready: take it back whenever it's lost.
@@ -201,12 +201,16 @@ fun TourScreen(onDone: () -> Unit, prep: Boolean = false, finishLabel: String = 
     }
     BackHandler { if (page > 0) page-- else onBack() }
     val anim = rememberInfiniteTransition(label = "tour")
-    val pulse by anim.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
-    val wave by anim.animateFloat(0f, 1f, infiniteRepeatable(tween(2600, easing = androidx.compose.animation.core.LinearEasing), RepeatMode.Restart), label = "wave")
+    // Kept as State and read only in graphicsLayer (through these lambdas): composition doesn't run per frame.
+    val pulseState = anim.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
+    val waveState = anim.animateFloat(0f, 1f, infiniteRepeatable(tween(2600, easing = androidx.compose.animation.core.LinearEasing), RepeatMode.Restart), label = "wave")
+    val pulse = remember(pulseState) { { pulseState.value } }
+    val wave = remember(waveState) { { waveState.value } }
     Box(
         Modifier.fillMaxSize().background(AppColors.Background).appBackground().onFocusChanged { inside = it.hasFocus }.focusProperties { exit = { FocusRequester.Cancel } }.focusGroup()
             .onPreviewKeyEvent { e ->
-                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                // On Skip the arrows move the highlight as usual (Left / Up: back to Next).
+                if (e.type != KeyEventType.KeyDown || (onSkip && page < pages.lastIndex)) return@onPreviewKeyEvent false
                 when (e.key) {
                     Key.DirectionRight -> { if (page < pages.lastIndex) page++; true }
                     Key.DirectionLeft -> { if (page > 0) page--; true }
@@ -236,69 +240,26 @@ fun TourScreen(onDone: () -> Unit, prep: Boolean = false, finishLabel: String = 
                 Box(Modifier.padding(horizontal = 5.dp).size(if (i == page) 12.dp else 8.dp).background(if (i == page) AppColors.Accent else AppColors.TextSecondary.copy(alpha = 0.5f), CircleShape))
             }
             Spacer(Modifier.width(30.dp))
-            MenuItem(text = if (page == pages.lastIndex) finishLabel else "Next  ›", selected = false, onClick = { if (page == pages.lastIndex) onDone() else page++ }, modifier = Modifier.width(180.dp).focusRequester(next))
+            MenuItem(text = if (page == pages.lastIndex) finishLabel else "Next  ›", selected = false, onClick = { if (page == pages.lastIndex) onDone() else page++ }, modifier = Modifier.width(180.dp).focusRequester(next)
+                .focusProperties { down = if (page < pages.lastIndex) skip else FocusRequester.Default })
             Spacer(Modifier.width(10.dp))
-            if (page < pages.lastIndex) MenuItem(text = "Skip", selected = false, onClick = onDone, modifier = Modifier.width(120.dp))
+            if (page < pages.lastIndex) MenuItem(text = "Skip", selected = false, onClick = onDone,
+                modifier = Modifier.width(120.dp).focusRequester(skip).onFocusChanged { onSkip = it.isFocused }.focusProperties { up = next })
         }
     }
 }
 
-/** A remote button drawn as a pill, gently pulsing ([pulse] 0…1). */
+/** A remote button drawn as a pill, gently pulsing ([pulse] 0…1, read while drawing). */
 @Composable
-private fun RemoteKey(label: String, pulse: Float, modifier: Modifier = Modifier) {
+private fun RemoteKey(label: String, pulse: () -> Float, modifier: Modifier = Modifier) {
     Box(
-        modifier.graphicsLayer { scaleX = 1f + pulse * 0.08f; scaleY = 1f + pulse * 0.08f }
+        modifier.graphicsLayer { val p = pulse(); scaleX = 1f + p * 0.08f; scaleY = 1f + p * 0.08f }
             .background(AppColors.Accent, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp, vertical = 6.dp),
     ) { Text(label, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = AppColors.OnAccent) }
 }
 
-/** A labelled arrow pointing at something: "←  what it does". */
-@Composable
-private fun Callout(text: String, pulse: Float, modifier: Modifier = Modifier, arrow: String = "←") {
-    Row(modifier.offset(x = (pulse * 6).dp), verticalAlignment = Alignment.CenterVertically) {
-        Text(arrow, fontSize = 22.sp, color = AppColors.Accent, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.width(8.dp))
-        Text(text, fontSize = 15.sp, color = AppColors.TextPrimary, modifier = Modifier.background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
-    }
-}
-
-/** A grey placeholder block (a poster, a programme). */
-@Composable
-private fun Block(w: Dp, h: Dp, on: Boolean = false, label: String? = null) {
-    Box(
-        Modifier.size(w, h).background(if (on) AppColors.Accent else AppColors.PanelAlt, RoundedCornerShape(6.dp))
-            .then(if (on) Modifier.border(2.dp, Color.White, RoundedCornerShape(6.dp)) else Modifier),
-        contentAlignment = Alignment.CenterStart,
-    ) { label?.let { Text(it, fontSize = 12.sp, color = if (on) AppColors.OnAccent else AppColors.TextSecondary, maxLines = 1, modifier = Modifier.padding(horizontal = 8.dp)) } }
-}
-
 /** A spot on a tour screenshot (x, y as 0…1 of its width / height) with what it does. */
 internal data class Spot(val x: Float, val y: Float, val text: String, val labelLeft: Boolean = false)
-
-/** A real (painted) screenshot of Viewarr, with pulsing rings and labels on the parts that matter. */
-@Composable
-private fun BoxScope.Shot(res: Int, spots: List<Spot>, pulse: Float) {
-    androidx.compose.foundation.layout.BoxWithConstraints(Modifier.align(Alignment.Center).fillMaxWidth().aspectRatio(16f / 9f)) {
-        androidx.compose.foundation.Image(
-            androidx.compose.ui.res.painterResource(res), contentDescription = null,
-            modifier = Modifier.fillMaxSize().background(Color.Black, RoundedCornerShape(10.dp)).border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(10.dp)),
-            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-        )
-        spots.forEach { sp ->
-            val cx = maxWidth * sp.x; val cy = maxHeight * sp.y
-            val r = 16.dp
-            Box(Modifier.offset(cx - r, cy - r).size(r * 2).graphicsLayer { scaleX = 1f + pulse * 0.35f; scaleY = 1f + pulse * 0.35f; alpha = 1f - pulse * 0.4f }
-                .border(3.dp, AppColors.Accent, CircleShape))
-            val label = @Composable {
-                Text(sp.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = AppColors.OnAccent, maxLines = 1,
-                    modifier = Modifier.background(AppColors.Accent, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 3.dp))
-            }
-            Box(Modifier.offset(if (sp.labelLeft) cx - r - 8.dp - 230.dp else cx + r + 8.dp, cy - 12.dp).width(230.dp),
-                contentAlignment = if (sp.labelLeft) Alignment.CenterEnd else Alignment.CenterStart) { label() }
-        }
-    }
-}
-
 
 private fun tourPages(): List<TourPage> = listOf(
     TourPage(
@@ -309,10 +270,12 @@ private fun tourPages(): List<TourPage> = listOf(
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 SectionCard.entries.forEachIndexed { i, c ->
                     // A smooth wave across the cards, each in turn (drawn, not laid out again: smooth on weak boxes).
-                    val phase = ((wave - i / 4f) % 1f + 1f) % 1f
-                    val lift = if (phase < 0.5f) kotlin.math.sin(phase * 2f * Math.PI.toFloat()) else 0f
                     Box(
-                        Modifier.graphicsLayer { translationY = -lift * 12.dp.toPx(); scaleX = 1f + lift * 0.04f; scaleY = 1f + lift * 0.04f }.size(104.dp, 146.dp)
+                        Modifier.graphicsLayer {
+                            val phase = ((wave() - i / 4f) % 1f + 1f) % 1f
+                            val lift = if (phase < 0.5f) kotlin.math.sin(phase * 2f * Math.PI.toFloat()) else 0f
+                            translationY = -lift * 12.dp.toPx(); scaleX = 1f + lift * 0.04f; scaleY = 1f + lift * 0.04f
+                        }.size(104.dp, 146.dp)
                             .background(androidx.compose.ui.graphics.Brush.verticalGradient(listOf(c.top, c.bottom)), RoundedCornerShape(12.dp)),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -327,11 +290,13 @@ private fun tourPages(): List<TourPage> = listOf(
     },
     TourPage(
         "The menu",
-        "Press Left to open the menu (it slides in, pushing the page aside). Moving up and down changes the page behind straight away: Live TV, Movies, Shows, your streaming services, Sports, Music, Recordings. Right goes into an entry's own list, Left comes back. Edit menus lets you hide, show and reorder anything.",
+        "Press Left to open the menu (it slides in, pushing the page aside). Moving up and down changes the page behind straight away: Live TV, Movies, Shows, your streaming services, Sports, Music, Recordings. On an entry, Right goes into its page and Left opens its own list (channel groups, libraries…). Hold OK on an entry to hide, show or move it.",
     ) { pulse, _ ->
         Mock(listOf(
-            Spot(0.03f, 0.175f, "Edit menus: tidy it up"),
+            // (The ✎ Edit menus button is gone: hold OK edits the menu. Peter, 2026-11-17.)
+            Spot(0.03f, 0.175f, "Right: into its page"),
             Spot(0.03f, 0.236f, "Up / Down: the page changes"),
+            Spot(0.03f, 0.345f, "Hold OK: hide, show or move"),
             Spot(0.38f, 0.18f, "What's playing stays here"),
         ), pulse) { MenuScreen() }
     },
@@ -354,7 +319,7 @@ private fun tourPages(): List<TourPage> = listOf(
     },
     TourPage(
         "Watching live TV",
-        "Full screen, one info bar does it all: what's on now and next, the picture and sound, and the controls. Change any button in Settings → Remote buttons, the way TiviMate does it.",
+        "Full screen, one info bar does it all: what's on now and next, the picture and sound, and the controls. Change any button in Settings → Remote buttons.",
     ) { pulse, _ ->
         Column(Modifier.align(Alignment.Center), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             listOf("OK" to "The controls (record, start over, audio & subtitles…)", "▲ ▼" to "Change channel", "Left" to "The channel list, or skip back (your choice)",
@@ -387,7 +352,7 @@ private fun tourPages(): List<TourPage> = listOf(
     },
     TourPage(
         "Make it yours",
-        "Settings has it all: Appearance for fonts, text size, the glass and its colour, and what the menu shows. Remote buttons changes what every button does. Sports follows your teams. Search is the remote's search button or Search in the menu. You can see this tour again in Settings → About.",
+        "Settings has it all: Appearance for fonts, text size, the glass and its colour. Menu & navigation for what the menu lists. Remote buttons changes what every button does. Sports follows your teams. Search is the remote's search button or Search in the menu. You can see this tour again in Settings → About.",
     ) { pulse, _ ->
         Column(Modifier.align(Alignment.Center), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             listOf("Appearance" to "Fonts, glass, colours, the menu", "Remote buttons" to "Every button, your way", "Sports" to "Your teams' games and channels",

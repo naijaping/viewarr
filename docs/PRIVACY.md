@@ -6,7 +6,7 @@ Viewarr has no analytics, no ads and no servers of its own. It talks only to the
 
 - **Your sign-ins** (server addresses, logins, API keys and tokens) are stored on the TV, encrypted with the Android Keystore, and left out of Android backups.
 - **Your settings**, for each profile.
-- **Watch progress for IPTV films and episodes** (where you stopped, and what you've finished), for each profile, because Dispatcharr and Xtream don't keep it. It stays on the TV: up to 400 entries per profile, the oldest dropped first.
+- **Watch progress for IPTV films and episodes** (where you stopped, and what you've finished), for each profile, because Dispatcharr and Xtream don't keep it. Up to 400 entries per profile, the oldest dropped first. With Dispatcharr it's also kept on your own Dispatcharr user (its app-data store), so your other TVs share it; nothing goes anywhere else.
 - **Each Live TV source's TV guide** (the three most recent sources keep theirs, so switching is quick). With an IPTV login or playlist, groups you leave out with **Choose groups** aren't stored at all.
 - **Artwork** (posters, logos, backdrops) and other caches, and **downloaded updates**.
 

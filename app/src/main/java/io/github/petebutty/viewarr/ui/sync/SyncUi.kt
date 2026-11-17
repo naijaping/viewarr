@@ -41,6 +41,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.ui.theme.Dates
 
 @HiltViewModel
 class SyncViewModel @Inject constructor(private val sync: SettingsSync) : ViewModel() {
@@ -61,9 +62,9 @@ private fun ago(ms: Long): String {
     val day = when (d.toLocalDate()) {
         today -> "today"
         today.minusDays(1) -> "yesterday"
-        else -> d.format(io.github.petebutty.viewarr.ui.theme.Dates.day)
+        else -> d.format(Dates.day)
     }
-    return "$day at " + d.format(io.github.petebutty.viewarr.ui.theme.Dates.time)
+    return "$day at " + d.format(Dates.time)
 }
 
 /**
@@ -144,19 +145,12 @@ fun BackupSyncItem() {
     val st by vm.status.collectAsStateWithLifecycle()
     var open by remember { mutableStateOf(false) }
     MenuItem(text = "Backup & sync", trailing = if (st.mode == SyncMode.On) "On" else "Off", selected = false, onClick = { open = true })
-    if (open) androidx.compose.ui.window.Dialog(onDismissRequest = { open = false }) {
+    // (The shared pop-up: was a raw Dialog. Peter, 2026-11-17.)
+    if (open) io.github.petebutty.viewarr.ui.common.PopupPanel(onClose = { open = false }, width = io.github.petebutty.viewarr.ui.theme.Tokens.PopupWide) {
         val first = remember { FocusRequester() }
         LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-        BackHandler { open = false }
-        Column(
-            Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text("Backup & sync", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-            Text(
-                "Keeps this TV's setup on your Dispatcharr server, so another TV (or this one after a reinstall) can restore it.",
-                fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 10.dp),
-            )
+        io.github.petebutty.viewarr.ui.common.PopupTitle("Backup & sync", "Keeps this TV's setup on your Dispatcharr server, so another TV (or this one after a reinstall) can restore it.")
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Box(Modifier.focusRequester(first)) { Column { SyncSettingsItems() } }
             MenuItem(text = "Close", selected = false, onClick = { open = false })
         }

@@ -1,7 +1,10 @@
 package io.github.petebutty.viewarr.ui.home
 
+import android.util.Log
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.github.petebutty.viewarr.data.local.ChannelListItem
 import io.github.petebutty.viewarr.data.local.GuideProgram
@@ -18,9 +21,14 @@ import io.github.petebutty.viewarr.ui.player.OsdRow
 import io.github.petebutty.viewarr.ui.player.ShortcutColours
 import io.github.petebutty.viewarr.ui.player.ShortcutLogos
 import io.github.petebutty.viewarr.ui.settings.SportsViewModel
+import io.github.petebutty.viewarr.ui.theme.AppColors
 import io.github.petebutty.viewarr.ui.theme.Dates
-import kotlinx.coroutines.coroutineScope
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * The Sports hub (Settings → Sports) on live TV: your teams' and leagues' games, which of your channels shows each
@@ -37,8 +45,41 @@ internal class SportsHub(
 ) {
     /** Each followed team's / league's games, with the channel showing it (from the guide) where one's found. */
     val games = mutableStateMapOf<String, List<Pair<SportGame, Pair<ChannelListItem, GuideProgram>?>>>()
+    /**
+     * Goes up whenever [games] or [tv] actually change: the remember key for what's built from them. (They were copied
+     * with toMap() and compared game by game on every redraw, so on every move along the Sports page.)
+     */
+    var version by mutableIntStateOf(0)
+        private set
+    private fun setGames(key: String, list: List<Pair<SportGame, Pair<ChannelListItem, GuideProgram>?>>) {
+        if (games[key] == list) return
+        games[key] = list
+        version++
+    }
+    private fun setTv(id: String, names: List<String>) {
+        if (tv[id] == names) return
+        tv[id] = names
+        version++
+    }
     /** The game whose page is open (OK on a game), with its channel if found; null: none. */
-    var openGame by androidx.compose.runtime.mutableStateOf<Pair<SportGame, Pair<ChannelListItem, GuideProgram>?>?>(null)
+    var openGame by mutableStateOf<Pair<SportGame, Pair<ChannelListItem, GuideProgram>?>?>(null)
+    /** The channel showing the open game when the guide doesn't list it (GamePlacer: the listings', an event or club channel). */
+    var openChannel by mutableStateOf<ChannelListItem?>(null)
+    /** Why the open game page's channel is the one it is (the Sports page's reasoning, shown on the page). */
+    var openWhy by mutableStateOf("")
+    /** Settings → Sports → Game page on: OK on a game opens its page. */
+    val gamePages: Boolean get() = AppColors.palette.opt(UiOpts.SPORTS_GAME_PAGE) == 0
+    /** Puts focus back on the game the page was opened from (set by the Sports page). */
+    var restoreFocus: (() -> Unit)? = null
+    /**
+     * Closes the game page with focus moved back to its game first: closing it with the focus still inside left a
+     * moment with none, the menu's Music entry took it and the page switched to Music (Peter, 2026-11-16).
+     */
+    fun closeGame() {
+        val r = runCatching { restoreFocus?.invoke() }
+        Log.i("Sports", "game page closed, focus back on its game: ${r.isSuccess && restoreFocus != null}")
+        openGame = null
+    }
 
     /**
      * Reminders / recordings asked for before [g] was in the guide, and "record all of a team's games": done now that
@@ -57,22 +98,27 @@ internal class SportsHub(
         gw.resolved(g.id)
     }
 
-    /** Games your guide doesn't reach yet: the channels showing them (the UK Sport on TV plugin, else TheSportsDB). */
+    /**
+     * Games your guide doesn't reach yet: the channels showing them (Sky's TV guide, the UK Sport on TV plugin, else
+     * TheSportsDB: see GuideViewModel.ukMatch).
+     */
     val tv = mutableStateMapOf<String, List<String>>()
+    /** How surely each of those listings is the game, and which listing it was (the game page's "why"). */
+    val tvMatch = HashMap<String, GuideViewModel.UkResult>()
 
     /** When each team / league was last fetched (opening Sports again within a few minutes uses what's there). */
     private val loadedAt = HashMap<String, Long>()
 
-    /**
-     * Fetches every followed team's / league's games and where they're on. The games show as soon as they arrive;
-     * their channels (a guide search each, and the UK listings) fill in one by one after.
-     */
     /** Games already looked for in the guide / the listings (so going back to Sports carries on, not starts again). */
     private val lookedUp = HashSet<String>()
     /** When the guide was last fetched again for a game with no channel (step 1b). */
     private var lastFreshen = 0L
     private var running = false
 
+    /**
+     * Fetches every followed team's / league's games and where they're on. The games show as soon as they arrive;
+     * their channels (a guide search each, and the UK listings) fill in one by one after.
+     */
     suspend fun load(follows: List<SportFollow>) {
         if (running) return
         running = true
@@ -85,11 +131,12 @@ internal class SportsHub(
                     async {
                         if (t0 - (loadedAt[f.shortcutId] ?: 0L) < 5 * 60_000L && games.containsKey(f.shortcutId)) return@async
                         val all = runCatching { sportsVm.games(f) }.getOrDefault(emptyList())
-                        // On now, the next few (two months), the last few results; one of each game.
-                        val shown = (all.filter { it.state == "in" } + all.filter { it.state == "pre" && it.start < t0 + 60 * DAY }.take(10) +
+                        // On now, the next few (two months), the last few results; one of each game. (20 coming up, not 10: a league's
+                        // next 10 were mostly one Saturday's 3pm games, not on UK TV, and the televised ones fell off the row.)
+                        val shown = (all.filter { it.state == "in" } + all.filter { it.state == "pre" && it.start < t0 + 60 * DAY }.take(20) +
                             all.filter { it.state == "post" }.takeLast(5)).distinctBy { it.id }
                         val before = games[f.shortcutId].orEmpty().associate { it.first.id to it.second }
-                        games[f.shortcutId] = shown.map { g -> g to before[g.id] }
+                        setGames(f.shortcutId, shown.map { g -> g to before[g.id] })
                         loadedAt[f.shortcutId] = t0
                     }
                 }.forEach { it.await() }
@@ -119,26 +166,69 @@ internal class SportsHub(
                     if (ch != null) {
                         resolvePending(g, ch)
                         games.keys.toList().forEach { k ->
-                            if (games[k].orEmpty().any { it.first.id == g.id }) games[k] = games[k].orEmpty().map { if (it.first.id == g.id) g to ch else it }
+                            if (games[k].orEmpty().any { it.first.id == g.id }) setGames(k, games[k].orEmpty().map { if (it.first.id == g.id) g to ch else it })
                         }
-                        kotlinx.coroutines.delay(150)
+                        delay(150)
                         continue
                     }
                 }
-                // Not in the guide (yet): who's showing it (the UK Sport on TV plugin, else TheSportsDB).
-                if (g.state == "pre" && g.start < t0 + 60 * DAY && g.id !in tv) runCatching { guide.ukChannels(g) }.getOrNull()?.let { tv[g.id] = it }
-                kotlinx.coroutines.delay(150)
+                // Not in the guide (yet): who's showing it (Sky's TV guide, the UK Sport on TV plugin, else TheSportsDB).
+                if (g.state != "post" && g.start < t0 + 60 * DAY && g.id !in tv) {
+                    // No answer yet (listings not read, TheSportsDB busy): looked for again next time, not never.
+                    val m = runCatching { guide.ukMatch(g) }.getOrNull()
+                    if (m != null) { tvMatch[g.id] = m; setTv(g.id, m.channels) } else lookedUp -= g.id
+                }
+                delay(150)
             }
         } finally {
             running = false
         }
     }
 
+    private var placerFor: Pair<List<ChannelListItem>, GamePlacer>? = null
+
+    /**
+     * For Live now: games on now or within three hours, each on the channel the Sports page finds for it (only a sure
+     * one), and every game known (finished ones too, whose channels are dead). Your teams' and leagues' games, plus
+     * ESPN's headline games in any sport (looked up in your guide and the listings, as Sports does; cached there).
+     */
+    suspend fun liveGames(follows: List<SportFollow>, channels: List<ChannelListItem>): Pair<List<GuideViewModel.LiveGame>, List<SportGame>> {
+        // (The channel matching off the screen's thread: thousands of channels.)
+        val placer = placerFor?.takeIf { it.first == channels }?.second
+            ?: withContext(Dispatchers.Default) { GamePlacer(channels) }.also { placerFor = channels to it }
+        val now = System.currentTimeMillis()
+        fun soon(g: SportGame) = g.state == "in" || (g.state == "pre" && g.start < now + 3 * 3_600_000L)
+        val followed = follows.flatMap { games[it.shortcutId].orEmpty() }.distinctBy { it.first.id }
+        val ids = followed.map { it.first.id }.toSet()
+        val extra = sportsVm.headline().filter { it.id !in ids }.map { g ->
+            if (!soon(g)) return@map g to null
+            val ch = runCatching { guide.channelForGame(g) }.getOrNull()
+            if (ch == null && g.id !in tv) runCatching { guide.ukMatch(g) }.getOrNull()?.let { tvMatch[g.id] = it; setTv(g.id, it.channels) }
+            g to ch
+        }
+        val all = followed + extra
+        val live = withContext(Dispatchers.Default) {
+            all.filter { soon(it.first) }.mapNotNull { (g, ch) ->
+                val c = placer.place(this@SportsHub, g, ch)
+                c.channel?.takeIf { c.sure }?.let { GuideViewModel.LiveGame(g, it, ch?.second) }
+            }
+        }
+        return live to all.map { it.first }
+    }
+
+    /** Kick-off reminder on [channel] (a game with no guide listing: a listings channel, club stream…): set, or off again. */
+    fun toggleKickOffReminder(g: SportGame, channel: ChannelListItem) {
+        val r = dvr.reminderAt(channel.id, g.start)
+        if (r != null) { dvr.forget(r.id); toast("Reminder cancelled") }
+        else { dvr.remindAt(channel, g.start, g.start + 2 * 3_600_000L, g.title); toast("We'll remind you at ${Dates.time(g.start)}: ${g.title} on ${channel.name}") }
+    }
+
     /**
      * A game's card (live, coming up, or a result) and what OK does on it; Sports' rows and a team's rows share it.
-     * [f]: the team / league whose row it's in (hold OK: pin or unpin it).
+     * [f]: the team / league whose row it's in (hold OK: pin or unpin it). [known]: the channel the Sports page found
+     * for it without the guide (the UK listings' channel, a club stream, an event channel).
      */
-    fun card(g: SportGame, ch: Pair<ChannelListItem, GuideProgram>?, f: SportFollow? = null): OsdPoster {
+    fun card(g: SportGame, ch: Pair<ChannelListItem, GuideProgram>?, f: SportFollow? = null, known: ChannelListItem? = null): OsdPoster {
         val tvRaw = tv[g.id].orEmpty()
         // (The UK listings say it isn't on UK TV, e.g. a Saturday 3pm game.)
         val notOnTv = tvRaw == listOf(GuideViewModel.NOT_ON_UK_TV)
@@ -146,17 +236,22 @@ internal class SportsHub(
         val started = ch != null && (g.state == "in" || ch.second.startTime <= System.currentTimeMillis())
         // Hold OK: a reminder or a recording (once it's in your guide), and pin / unpin the team or league.
         val gw = sportsVm.gameWatch
-        val pagesOn = io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.SPORTS_GAME_PAGE) == 0
+        val pagesOn = gamePages
         val options = listOfNotNull(
             if (pagesOn) CardOption("Game info") { openGame = g to ch } else null,
             // Not in the guide yet: kept, and done once the guide lists it.
-            if (ch == null && g.state == "pre") CardOption(if (gw.wantsReminder(g.id)) "Cancel reminder" else "Remind me when it's on") {
-                val on = !gw.wantsReminder(g.id); gw.setReminder(g.id, on)
-                toast(if (on) "We'll remind you of ${g.title} once it's in your TV guide" else "Reminder cancelled")
+            // A channel known without the guide: a reminder at kick-off on it, now. (Waiting for the guide never came for
+            // games it doesn't list that way: club streams, listings channels. Peter, 2026-11-16.)
+            if (ch == null && g.state == "pre" && known != null) CardOption(if (dvr.reminderAt(known.id, g.start) != null) "Cancel reminder" else "Remind me at kick-off") {
+                toggleKickOffReminder(g, known)
+            } else null,
+            if (ch == null && g.state == "pre" && known == null) CardOption(if (gw.wantsReminder(g.id)) "Cancel reminder" else "Remind me when it's on") {
+                val want = !gw.wantsReminder(g.id); gw.setReminder(g.id, want)
+                toast(if (want) "We'll remind you of ${g.title} once it's in your TV guide" else "Reminder cancelled")
             } else null,
             if (ch == null && g.state == "pre") CardOption(if (gw.wantsRecording(g.id)) "Don't record" else "Record when it's in the guide") {
-                val on = !gw.wantsRecording(g.id); gw.setRecording(g.id, on)
-                toast(if (on) "${g.title} will be recorded once it's in your TV guide" else "Won't record ${g.title}")
+                val want = !gw.wantsRecording(g.id); gw.setRecording(g.id, want)
+                toast(if (want) "${g.title} will be recorded once it's in your TV guide" else "Won't record ${g.title}")
             } else null,
             if (ch != null && !started) CardOption("Remind me") {
                 dvr.remind(ch.first, ch.second); toast("We'll remind you: ${g.title} on ${ch.first.name}")
@@ -187,7 +282,7 @@ internal class SportsHub(
                 started && ch != null -> watch(ch.first)
                 // Settings → Sports → Game page: the game's page (line-ups, form, remind / record).
                 pagesOn -> openGame = g to ch
-                ch != null -> toast("${g.title}: ${Dates.dayTime(g.start)} on ${ch.first.name}  ·  hold OK to be reminded or record it")
+                ch != null -> toast("${g.title}: ${Dates.dayTime(g.start)} on ${ch.first.name}  ·  Hold OK: remind or record")
                 g.state == "post" -> toast("${g.home} ${g.score ?: ""} ${g.away}")
                 on.isNotEmpty() -> toast("${g.title}: on ${on.joinToString(", ")}, not in your TV guide yet (it lists a few days ahead)")
                 notOnTv -> toast("${g.title}: not shown on UK TV (UK TV listings)")

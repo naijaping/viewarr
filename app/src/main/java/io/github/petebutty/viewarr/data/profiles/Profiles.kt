@@ -70,7 +70,6 @@ class ProfileStore @Inject constructor(@ApplicationContext private val context: 
 
     val profiles: Flow<List<Profile>> = context.profileStore.data.map { decode(it[LIST]).profiles }
     val activeId: Flow<String?> = context.profileStore.data.map { decode(it[LIST]).active }
-    /** "Who's watching?" each time Viewarr opens (with more than one profile). */
     /** "Who's watching?" when Viewarr opens: off unless switched on (it opens on the last profile used). */
     val askOnStart: Flow<Boolean> = context.profileStore.data.map { it[ASK] ?: false }
 

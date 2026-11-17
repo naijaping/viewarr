@@ -1,13 +1,25 @@
 package io.github.petebutty.viewarr.ui.media
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.focus.FocusRequester
+import io.github.petebutty.viewarr.ui.player.BarButtonsEditor
+import io.github.petebutty.viewarr.ui.player.BarItem
+import kotlinx.coroutines.delay
 import io.github.petebutty.viewarr.data.settings.BtnScreen
 import io.github.petebutty.viewarr.data.settings.ButtonMap
 import io.github.petebutty.viewarr.ui.common.BarLayout
 import io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge
+import io.github.petebutty.viewarr.data.settings.LocalRemote
+import io.github.petebutty.viewarr.playback.SleepTimer
+import io.github.petebutty.viewarr.ui.common.EdgeBlocked
+import io.github.petebutty.viewarr.ui.settings.AppearanceViewModel
+import io.github.petebutty.viewarr.ui.theme.AppColors
+import io.github.petebutty.viewarr.ui.theme.UiOpts
 
 /*
  * The film controls both players share (the built-in player, VodPlayer, and mpv, MpvPlayer): what's open over the
@@ -28,26 +40,19 @@ class FilmPanels {
     var syncOpen by mutableStateOf(false)
     /** The TV settings panel (frame rate matching, picture size…), from its button. */
     var tvOpen by mutableStateOf(false)
+    /** The Info bar buttons list (hold OK on a button of the bar; FilmBarEditor). */
+    var barOpen by mutableStateOf(false)
     /** What's playing (poster, synopsis): the Info / Details buttons, or a moment after pausing. */
     var detailsOn by mutableStateOf(false)
     /** Paused for a moment: the film's info shows. */
     var pausedLong by mutableStateOf(false)
     /** A panel over the film has the remote. */
-    val anyOpen get() = tracksOpen || transOpen || syncOpen || tvOpen
-
-    /** A panel with its own remote handling is open (the player's keys stand aside). */
-    val anyPanel get() = tracksOpen || transOpen || syncOpen || tvOpen
-
-    /** The mini player: nothing stays open over the film. */
-    fun closeAll() { tracksOpen = false; transOpen = false; syncOpen = false; tvOpen = false; detailsOn = false }
+    val anyOpen get() = tracksOpen || transOpen || syncOpen || tvOpen || barOpen
 }
 
-/**
- * The info bar's buttons, as you've arranged them (hold OK on one to edit; see BarLayout). [canSwitch]: the other
- * player is available. Also tells [menu] where Play / Pause and the TV guide are.
- */
-fun filmButtons(menu: PlayerMenu, canSwitch: Boolean): List<PlayerButton> {
-    val all = listOfNotNull(
+/** Every button the film bar can have just now (BarLayout arranges them and leaves out the hidden ones). */
+private fun filmAll(canSwitch: Boolean): List<PlayerButton> =
+    listOfNotNull(
         // The TV guide first (live TV comes first in Viewarr).
         PlayerButton.Guide, PlayerButton.PlayPause, PlayerButton.Stop, PlayerButton.Details, PlayerButton.Audio, PlayerButton.Subtitles, PlayerButton.Info,
         if (canSwitch) PlayerButton.SwitchPlayer else null,
@@ -57,9 +62,14 @@ fun filmButtons(menu: PlayerMenu, canSwitch: Boolean): List<PlayerButton> {
         PlayerButton.Sync, PlayerButton.Sleep, PlayerButton.Movies, PlayerButton.Shows, PlayerButton.Recordings,
         PlayerButton.Search, PlayerButton.Transparency, PlayerButton.BarStyle, PlayerButton.TvSettings, PlayerButton.Settings,
     )
-    val buttons = BarLayout.arrange(all, { BarLayout.filmId(it.name) }, menu.editing)
+
+/**
+ * The info bar's buttons, as you've arranged them (hold OK on one: the Info bar buttons list, FilmBarEditor; see
+ * BarLayout). [canSwitch]: the other player is available. Also tells [menu] where Play / Pause is.
+ */
+fun filmButtons(menu: PlayerMenu, canSwitch: Boolean): List<PlayerButton> {
+    val buttons = BarLayout.arrange(filmAll(canSwitch), { BarLayout.filmId(it.name) }, editing = false, bar = BarLayout.Bar.Film)
     menu.home = buttons.indexOf(PlayerButton.PlayPause).coerceAtLeast(0)
-    menu.guideAt = buttons.indexOf(PlayerButton.Guide)
     return buttons
 }
 
@@ -93,7 +103,7 @@ fun pressFilmButton(
         PlayerButton.PrevEpisode -> { menu.open = false; NextUp.playPrevious() }
         PlayerButton.NextEpisode -> { menu.open = false; NextUp.play() }
         PlayerButton.Sync -> { menu.open = false; panels.syncOpen = true; return false }
-        PlayerButton.Sleep -> io.github.petebutty.viewarr.playback.SleepTimer.cycle(
+        PlayerButton.Sleep -> SleepTimer.cycle(
             (p.durationMs - p.positionMs).takeIf { it > 0 }?.let { System.currentTimeMillis() + it },
         )
         // A page over the film (it carries on in the corner).
@@ -102,7 +112,6 @@ fun pressFilmButton(
         PlayerButton.Details -> { panels.detailsOn = !panels.detailsOn; if (panels.detailsOn) menu.open = false }
         PlayerButton.SwitchPlayer -> switchPlayer?.invoke()
         PlayerButton.Stop -> { onClose(); return false }
-        // As on live TV: Settings over what's playing (the film carries on in the corner; Back brings it back).
         // Settings over the film, which carries on full screen behind it (it went to the corner, showing whatever page
         // was underneath, the TV guide if it was started from live TV; Peter, 2026-11-16). Closing Settings: the film.
         PlayerButton.Settings -> { menu.open = false; VodHost.behind = true; LiveShortcutsBridge.openSettings(); return false }
@@ -121,7 +130,7 @@ fun minimiseToLiveTv(onClose: () -> Unit) {
     if (!VodHost.active) { onClose(); return }
     // Settings → Playback → Back from a film: its own page (standard since 0.28.5, Gtunney / Peter) leaves the mini
     // player over the page it was started from (its title page, usually); "The TV guide and menu" opens those.
-    if (io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.FILM_BACK) != 1) return
+    if (AppColors.palette.opt(UiOpts.FILM_BACK) != 1) return
     LiveShortcutsBridge.openMenuOnLiveTv()
 }
 
@@ -129,7 +138,7 @@ fun minimiseToLiveTv(onClose: () -> Unit) {
 fun openGuideOverFilm(menu: PlayerMenu) { toCorner(menu); LiveShortcutsBridge.openGuide() }
 
 /**
- * Back, one step: closes what's open (audio & subtitles, the seek preview, details, button editing, the rows, the
+ * Back, one step: closes what's open (audio & subtitles, the seek preview, details, the rows, the
  * controls), then the next episode's countdown; the last step makes the film the mini player (as live TV's Back
  * into the guide's preview). Stop ends it, its place kept. [hideOsd] closes the controls; [showOsd] shows them.
  */
@@ -138,10 +147,6 @@ fun filmBackStep(panels: FilmPanels, menu: PlayerMenu, scrub: Scrubber, skip: In
         panels.tracksOpen -> panels.tracksOpen = false
         scrub.active -> { scrub.cancel(); showOsd() }
         panels.detailsOn -> panels.detailsOn = false
-        // Editing the buttons: Back puts a picked-up one down, then finishes.
-        menu.open && menu.editing -> { if (menu.carrying) menu.carrying = false else menu.editing = false }
-        // On the rows under the controls: back up to the buttons (one level), not the whole controls closing.
-        menu.open && menu.onRows && !menu.episodesOnly -> menu.onRows = false
         menu.open -> { menu.open = false; hideOsd() }
         // The next episode's countdown: Back keeps watching this one (after anything open over it).
         skip.cancelNext() -> Unit
@@ -151,8 +156,7 @@ fun filmBackStep(panels: FilmPanels, menu: PlayerMenu, scrub: Scrubber, skip: In
 }
 
 /**
- * The remote's hooks into the film controls (VodKeys reads them), the same for both players. [osdShowing]: the
- * controls showing by themselves (after the start or a skip). [seekTo]: a jump to an exact place (intro skip).
+ * The remote's hooks into the film controls (VodKeys reads them), the same for both players.
  */
 @Composable
 fun filmHooks(
@@ -160,42 +164,31 @@ fun filmHooks(
     p: VodRemote,
     panels: FilmPanels,
     menu: PlayerMenu,
-    scrub: Scrubber,
     skip: IntroSkip,
     seekMs: Long,
     press: (PlayerButton) -> Unit,
     showOsd: () -> Unit,
-    osdShowing: () -> Boolean,
     backStep: () -> Unit,
     onClose: () -> Unit,
-    barAppearance: io.github.petebutty.viewarr.ui.settings.AppearanceViewModel,
+    barAppearance: AppearanceViewModel,
 ): VodHooks {
-    val remoteSettings = io.github.petebutty.viewarr.data.settings.LocalRemote.current
+    val remoteSettings = LocalRemote.current
     // The Episodes row opens on the episode playing; the other rows on their first card.
     menu.rowStart = { r -> if (r == FilmShortcuts.nextIndex(menu.withNext)) NextUp.startAt else 0 }
+    // Hold OK on a button: the Info bar buttons list (FilmBarEditor), as on live TV. (It replaced editing the bar in
+    // place, (VodHooks' old toggleButton / moveButton went with it): Peter, 2026-11-17 UI review. [barAppearance] is kept
+    // for the callers; the list saves through its own.)
+    menu.editBar = { panels.barOpen = true }
     return VodHooks(
         buttons = buttons, press = press,
-        toggleButton = { b -> BarLayout.filmId(b.name).let { id -> BarLayout.setShown(id, !BarLayout.shown(id), barAppearance::setTitlePart) } },
-        moveButton = { b, dir -> BarLayout.moved(buttons.map { BarLayout.filmId(it.name) }, BarLayout.filmId(b.name), dir)?.let { barAppearance.setBarOrder("all", it) } },
         seekMs = seekMs, showOsd = showOsd,
         openTracks = { subs -> subs?.let { panels.tracksSubs = it }; panels.tracksOpen = true },
         toggleDetails = { panels.detailsOn = !panels.detailsOn }, showDetails = { panels.detailsOn = true }, stop = onClose,
         // Back: the mini player (its last step); hold Back: close the player (as live TV).
         backMode = 3,
-        atTop = { !panels.anyPanel && !scrub.active && !panels.detailsOn && !menu.open && !(osdShowing() && p.playing) },
-        minimise = { minimiseToLiveTv(onClose) },
         stepBack = backStep,
         skipOk = { skip.ok({ p.seekTo(it) }, onNext = { NextUp.play() }) },
-        // The shortcuts and their rows (FilmShortcuts.kt). (No shortcut row under the buttons: the menu on the left
-        // has every library and service.)
-        shortcutCount = { 0 },
-        pickShortcut = { i -> FilmShortcuts.pick(menu, i) },
-        moveShortcut = { _, d -> FilmShortcuts.move(menu, d) },
-        canHoldShortcut = FilmShortcuts::canHold,
-        rowSizes = FilmShortcuts::rowSizes,
-        pickCard = { r, c -> FilmShortcuts.pickCard(menu, r, c) },
-        holdCard = { r, c -> FilmShortcuts.holdCard(menu, r, c) },
-        // Settings → Remote buttons → Films & shows: buttons changed from standard (FilmShortcuts.kt has the rest).
+        // Settings → Remote buttons → Films & shows: buttons changed from standard.
         tableAction = { e -> ButtonMap.pressOf(e)?.takeIf { it !in ButtonMap.filmNavigation }?.let { ButtonMap.changed(remoteSettings, BtnScreen.Film, it) } },
         mapped = { pr -> ButtonMap.changed(remoteSettings, BtnScreen.Film, pr) },
         // A remote button set to TV guide: the film carries on in the mini player (it used to stop it).
@@ -204,28 +197,48 @@ fun filmHooks(
     )
 }
 
-/** The info bar's buttons as drawn: while editing, each says whether it's hidden, always shown or being moved. */
-fun filmOsdButtons(buttons: List<PlayerButton>, menu: PlayerMenu, paused: Boolean, otherPlayer: String): List<OsdButton>? =
-    if (!menu.open) null else buttons.map { b ->
+/** The info bar's buttons as drawn. */
+fun filmOsdButtons(buttons: List<PlayerButton>, menu: PlayerMenu, paused: Boolean, otherPlayer: String): List<OsdButton>? {
+    if (!menu.open) return null
+    val ids = buttons.map { BarLayout.filmId(it.name) }
+    // The divider after the locked buttons (BarLayout.arrange puts them first), not after Stop and the guide.
+    val dividerAfter = BarLayout.lastLocked(ids, BarLayout.Bar.Film)
+    return buttons.mapIndexed { i, b ->
         val o = b.osd(paused, menu.infoOn, otherPlayer)
-        if (!menu.editing) o else {
-            val id = BarLayout.filmId(b.name)
-            val hidden = !BarLayout.shown(id)
-            val focused = buttons.indexOf(b) == menu.focusIndex(buttons)
-            OsdButton(o.icon, when {
-                focused && menu.carrying -> "◀  ${o.label}  ▶"
-                id in BarLayout.fixed -> "${o.label} (always shown)"
-                hidden -> "${o.label} (" + (if (id in BarLayout.extras) "not added" else "hidden") + ")"
-                else -> o.label
-            }, groupEnd = false, dim = hidden)
-        }
+        OsdButton(o.icon, o.label, groupEnd = ids[i] == dividerAfter && i != buttons.lastIndex)
     }
+}
+
+/**
+ * Hold OK on a film bar button: the Info bar buttons list for the film bar (BarButtonsEditor with Bar.Film, the same
+ * list live TV's hold OK opens and Settings → Appearance → Info bar buttons shows). Its own window has the remote, so
+ * the controls are kept up meanwhile (they close a while after the last key, FilmEffects). The film going to the
+ * corner closes it. Both players call this, beside FilmOverlays.
+ */
+@Composable
+fun FilmBarEditor(panels: FilmPanels, menu: PlayerMenu, canSwitch: Boolean, mini: Boolean, focus: FocusRequester) {
+    LaunchedEffect(mini) { if (mini) panels.barOpen = false }
+    if (!panels.barOpen || mini) return
+    val appearance: AppearanceViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+    LaunchedEffect(Unit) { while (true) { menu.touch(); delay(2_000) } }
+    DisposableEffect(Unit) { menu.editing = true; onDispose { menu.editing = false } }
+    val items = filmAll(canSwitch).map { b ->
+        val id = BarLayout.filmId(b.name)
+        // (Its plain name, as Settings lists it: not "Pause" / "Switch to mpv" as the bar says just now.)
+        BarItem(id, b.osd(paused = false, infoOn = false, otherPlayer = "").icon, BarLayout.labels[id] ?: b.name)
+    }
+    BarButtonsEditor(
+        items, appearance::setTitlePart, { appearance.setBarOrder("all", it) }, onActivity = menu::touch,
+        onClose = { panels.barOpen = false; menu.touch(); takeFilmFocus(focus) },
+        bar = BarLayout.Bar.Film,
+    )
+}
 
 /**
  * The film player takes the remote (back to full screen, a panel closed, focus wandered): through the pages' focus
  * fences (trapFocus on the guide, menus and title pages), which otherwise refuse a request from outside them too, so
  * the film came back full screen with the remote still on the page underneath.
  */
-fun takeFilmFocus(focus: androidx.compose.ui.focus.FocusRequester) {
-    io.github.petebutty.viewarr.ui.common.EdgeBlocked.lettingOut { runCatching { focus.requestFocus() } }
+fun takeFilmFocus(focus: FocusRequester) {
+    EdgeBlocked.lettingOut { runCatching { focus.requestFocus() } }
 }

@@ -56,9 +56,6 @@ object Reach {
         next.keys.forEach { probe(it) }
     }
 
-    /** Away from home right now (any server on its away address). */
-    val away: Boolean get() = where.values.any { it == Where.Away }
-
     private fun swap(u: HttpUrl, to: HttpUrl): HttpUrl = u.newBuilder().scheme(to.scheme).host(to.host).port(to.port).build()
 
     /** [url] as it should be opened now: its away address when its home one can't be reached. */

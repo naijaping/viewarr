@@ -54,14 +54,24 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.sports.GameInfoSource
+import io.github.petebutty.viewarr.data.sports.GameWatch
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+import io.github.petebutty.viewarr.ui.common.OptionsPopup
+import io.github.petebutty.viewarr.ui.common.PopupOption
+import io.github.petebutty.viewarr.ui.common.moveOption
+import io.github.petebutty.viewarr.ui.common.movingHint
+import io.github.petebutty.viewarr.ui.common.rememberCarry
+import io.github.petebutty.viewarr.ui.common.reorderable
+import io.github.petebutty.viewarr.ui.theme.Tokens
 
 @HiltViewModel
 class SportsViewModel @Inject constructor(
     private val repo: SportsRepository,
     /** A game's line-ups, form and the rest (the game page). */
-    val gameInfo: io.github.petebutty.viewarr.data.sports.GameInfoSource,
+    val gameInfo: GameInfoSource,
     /** Reminders / recordings asked for before a game is in the guide, and "record all of a team's games". */
-    val gameWatch: io.github.petebutty.viewarr.data.sports.GameWatch,
+    val gameWatch: GameWatch,
 ) : ViewModel() {
     val follows = repo.follows.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     private val _results = MutableStateFlow<List<SportFollow>>(emptyList())
@@ -124,12 +134,27 @@ class SportsViewModel @Inject constructor(
 
     /** A followed team's or league's games (the Sports hub's rows). */
     suspend fun games(f: SportFollow) = runCatching { repo.games(f) }.getOrDefault(emptyList())
+    /** ESPN's headline games across every sport today (Live now). */
+    suspend fun headline() = runCatching { repo.headline() }.getOrDefault(emptyList())
     fun league(path: String) = repo.league(path)
 
     fun follow(f: SportFollow) = viewModelScope.launch {
         if (follows.value.none { it.shortcutId == f.shortcutId }) repo.setFollows(follows.value + f)
     }
     fun unfollow(f: SportFollow) = viewModelScope.launch { repo.setFollows(follows.value.filter { it.shortcutId != f.shortcutId }) }
+    // The order as last moved here (a held key comes faster than the saved list comes back).
+    private var order: List<SportFollow>? = null
+    init { viewModelScope.launch { follows.collect { order = null } } }
+    /** Moves a followed team / league [by] places (the order of the Sports page's filters and its games). */
+    fun move(f: SportFollow, by: Int) {
+        val list = (order ?: follows.value).toMutableList()
+        val i = list.indexOfFirst { it.shortcutId == f.shortcutId }.takeIf { it >= 0 } ?: return
+        val j = (i + by).coerceIn(0, list.lastIndex)
+        if (i == j) return
+        list.add(j, list.removeAt(i))
+        order = list
+        viewModelScope.launch { repo.setFollows(list) }
+    }
     fun setPinned(f: SportFollow, pinned: Boolean) = viewModelScope.launch {
         repo.setFollows(follows.value.map { if (it.shortcutId == f.shortcutId) it.copy(pinned = pinned) else it })
     }
@@ -150,6 +175,8 @@ fun SportsSettingsScreen(onBack: () -> Unit, vm: SportsViewModel = hiltViewModel
     var leagueFor by remember { mutableStateOf<SportFollow?>(null) }
     var query by remember { mutableStateOf("") }
     var picked by remember { mutableStateOf<SportFollow?>(null) }
+    // A followed one being moved (its shortcut id; the shared ui/common/Reorder.kt, Peter, 2026-11-17).
+    val carry = rememberCarry()
     val searchFocus = remember { FocusRequester() }
     // Opens on the first sport button, not the search box (that would bring the keyboard up straight away).
     val firstPill = remember { FocusRequester() }
@@ -187,6 +214,8 @@ fun SportsSettingsScreen(onBack: () -> Unit, vm: SportsViewModel = hiltViewModel
     }
     BackHandler {
         when {
+            // Carrying a followed one: Back puts it down (Modifier.reorderable takes that press), never leaves the page.
+            carry.active -> Unit
             picked != null -> picked = null
             leagueFor != null -> leagueFor = null
             // One step at a time: a league's teams → the list you picked it from → the sport buttons → out.
@@ -216,8 +245,9 @@ fun SportsSettingsScreen(onBack: () -> Unit, vm: SportsViewModel = hiltViewModel
         runCatching { firstPill.requestFocus() }
     }
     Box(Modifier.fillMaxSize().appBackground(readable = true).trapFocus()) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 40.dp)) {
-            Column(Modifier.width(300.dp).fillMaxHeight()) {
+        Row(Modifier.fillMaxSize().padding(horizontal = Tokens.Gutter, vertical = 40.dp)) {
+            // (Below the live TV window when one is up, as SettingsPage.)
+            Column(Modifier.width(300.dp).fillMaxHeight().padding(top = if (SettingsLayout.belowPreview) 170.dp else 0.dp)) {
                 Text("Settings", fontSize = 14.sp, color = AppColors.Accent)
                 Text("Sports", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 16.dp))
                 Text(
@@ -227,10 +257,10 @@ fun SportsSettingsScreen(onBack: () -> Unit, vm: SportsViewModel = hiltViewModel
                 )
                 // OK on a game: its page (line-ups, form, remind / record), or just a note as before.
                 val optsVm: UiOptsViewModel = androidx.hilt.navigation.compose.hiltViewModel()
-                val pageOn = AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.SPORTS_GAME_PAGE) == 0
+                val pageOn = AppColors.palette.opt(UiOpts.SPORTS_GAME_PAGE) == 0
                 Spacer(Modifier.padding(top = 14.dp))
                 MenuItem(text = "Game page", trailing = if (pageOn) "On" else "Off", selected = false,
-                    onClick = { optsVm.set(io.github.petebutty.viewarr.ui.theme.UiOpts.SPORTS_GAME_PAGE, if (pageOn) 1 else 0) })
+                    onClick = { optsVm.set(UiOpts.SPORTS_GAME_PAGE, if (pageOn) 1 else 0) })
                 Text("OK on a game opens its page: line-ups, each team's last five, this season's meetings, goals and stats, with Remind me / Record (also before it's in your guide, or every game of a team). Off: OK just says when and where it's on.",
                     fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 4.dp, start = 4.dp))
             }
@@ -264,53 +294,57 @@ fun SportsSettingsScreen(onBack: () -> Unit, vm: SportsViewModel = hiltViewModel
                     items(results, key = { "r-" + it.shortcutId }) { f ->
                         val following = follows.any { it.shortcutId == f.shortcutId }
                         val league = f.kind == SportFollow.Kind.League && vm.hasTeams(f.league)
-                        SportRow(f, trailing = when { league -> if (following) "Following · OK: teams" else "OK: follow or pick a team"; following -> "Following"; else -> "OK to follow" },
+                        SportRow(f, trailing = when { league -> if (following) "Following · OK: teams" else "OK: follow or pick a team"; following -> "Following"; else -> "OK: follow" },
                             // Up from the first row: the sport button you came from (not whichever is nearest above).
                             modifier = Modifier.focusRequester(rowReq(f.shortcutId)).onFocusChanged { if (it.isFocused) rowFocused = f.shortcutId else if (rowFocused == f.shortcutId) rowFocused = null }
                                 .then(if (f == results.first()) Modifier.keyTo(androidx.compose.ui.input.key.Key.DirectionUp) { browsed?.let { pillFocus[it] } ?: firstPill } else Modifier)) {
                             if (league) leagueFor = f else if (!following) vm.follow(f)
                         }
                     }
-                    item(key = "h-fol") { Header(if (follows.isEmpty()) "Following: none yet" else "Following") }
+                    item(key = "h-fol") { Header(if (carry.active) movingHint() else if (follows.isEmpty()) "Following: none yet" else "Following") }
+                    // The order of the Sports page's filters along the top. OK or hold OK: options (Move, Move to the
+                    // top, Stop following); Move or Right (the Settings shortcut) picks one up, ▲ ▼ move it, OK / Back /
+                    // Left / Right put it down (the shared Modifier.reorderable).
                     items(follows, key = { "f-" + it.shortcutId }) { f ->
-                        SportRow(f, trailing = "Following · OK: stop", modifier = Modifier.focusRequester(rowReq("f-" + f.shortcutId))
-                            .onFocusChanged { if (it.isFocused) rowFocused = "f-" + f.shortcutId else if (rowFocused == "f-" + f.shortcutId) rowFocused = null }) { picked = f }
+                        val carried = carry.isCarried(f.shortcutId)
+                        SportRow(f, trailing = if (carried) "↕" else "Following · OK: options",
+                            modifier = Modifier.focusRequester(rowReq("f-" + f.shortcutId))
+                            .onFocusChanged { if (it.isFocused) rowFocused = "f-" + f.shortcutId else if (rowFocused == "f-" + f.shortcutId) { rowFocused = null; if (carried) carry.drop() } }
+                            .reorderable(
+                                carried = carried, onMove = { dir -> vm.move(f, dir) }, onDrop = carry::drop,
+                                rightToggles = follows.size >= 2, onPickUp = { carry.pickUp(f.shortcutId) },
+                            ),
+                            onLongClick = { if (!carry.active) picked = f }) { if (carried) carry.drop() else picked = f }
                     }
                 }
             }
         }
         // A league from the list: follow the whole league, or choose one of its teams.
+        // (Both through the shared options pop-up, Cancel last: they were raw Dialogs. Peter, 2026-11-17.)
         leagueFor?.let { f ->
-            androidx.compose.ui.window.Dialog(onDismissRequest = { leagueFor = null; focusKey = f.shortcutId }) {
-                val first = remember { FocusRequester() }
-                LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-                val following = follows.any { it.shortcutId == f.shortcutId }
-                Column(
-                    Modifier.width(420.dp).glass(18.dp).padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(f.name, fontSize = 18.sp, color = AppColors.TextPrimary)
-                    MenuItem(text = "Choose a team", selected = false, modifier = Modifier.focusRequester(first), onClick = { vm.teams(f.league); leagueFor = null; focusKey = "first" })
-                    if (!following) MenuItem(text = "Follow the whole league", selected = false, onClick = { vm.follow(f); leagueFor = null; focusKey = f.shortcutId })
-                    MenuItem(text = "Cancel", selected = false, onClick = { leagueFor = null; focusKey = f.shortcutId })
-                }
-            }
+            val following = follows.any { it.shortcutId == f.shortcutId }
+            OptionsPopup(
+                title = f.name,
+                options = listOfNotNull(
+                    PopupOption("Choose a team") { vm.teams(f.league); focusKey = "first" },
+                    if (!following) PopupOption("Follow the whole league") { vm.follow(f); focusKey = f.shortcutId } else null,
+                ),
+                // (Choose a team set "first" already; Cancel / Back come back to the league.)
+                onClose = { leagueFor = null; if (focusKey == null) focusKey = f.shortcutId },
+            )
         }
-        // A followed team / league: stop following it. (No pinning: the shortcut row it pinned to is gone; its games
+        // A followed team / league: move it, or stop following it. (No pinning: the shortcut row it pinned to is gone; its games
         // are on the Sports page.)
         picked?.let { f ->
-            androidx.compose.ui.window.Dialog(onDismissRequest = { picked = null }) {
-                val first = remember { FocusRequester() }
-                LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-                Column(
-                    Modifier.width(420.dp).glass(18.dp).padding(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    Text(f.name, fontSize = 18.sp, color = AppColors.TextPrimary)
-                    MenuItem(text = "Stop following", selected = false, modifier = Modifier.focusRequester(first), onClick = { removing = f.shortcutId; vm.unfollow(f); picked = null })
-                    MenuItem(text = "Cancel", selected = false, onClick = { picked = null })
-                }
-            }
+            OptionsPopup(
+                title = f.name,
+                options = listOfNotNull(
+                    if (follows.size >= 2) carry.moveOption(f.shortcutId) else null,
+                    if (follows.firstOrNull()?.shortcutId != f.shortcutId) PopupOption("Move to the top") { vm.move(f, -follows.size) } else null,
+                    PopupOption("Stop following") { removing = f.shortcutId; vm.unfollow(f) },
+                ),
+                onClose = { picked = null },
+            )
         }
     }
 }
@@ -320,9 +354,9 @@ private fun Header(t: String) = Text(t, fontSize = 15.sp, fontWeight = FontWeigh
 
 /** A team or league: its crest (or its sport), its name and league, and what OK does. */
 @Composable
-private fun SportRow(f: SportFollow, trailing: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun SportRow(f: SportFollow, trailing: String, modifier: Modifier = Modifier, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     MenuItem(
-        modifier = modifier,
+        modifier = modifier, onLongClick = onLongClick,
         text = f.name + (if (f.kind == SportFollow.Kind.League) "  (league)" else "") + (f.detail?.let { "  ·  $it" } ?: ""),
         trailing = trailing, selected = false, onClick = onClick,
         leading = if (f.logo != null) ({ AsyncImage(f.logo, null, Modifier.size(26.dp).padding(end = 2.dp)) }) else null,

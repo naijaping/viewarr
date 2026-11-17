@@ -1,16 +1,20 @@
 package io.github.petebutty.viewarr.data.repository
 
+import android.util.Log
+import io.github.petebutty.viewarr.data.m3u.M3uClient
+import io.github.petebutty.viewarr.data.m3u.M3uException
 import io.github.petebutty.viewarr.data.remote.ApiFactory
 import io.github.petebutty.viewarr.data.remote.TokenRequest
+import io.github.petebutty.viewarr.data.remote.services.lanScan
 import io.github.petebutty.viewarr.data.session.Session
 import io.github.petebutty.viewarr.data.session.SessionStore
+import io.github.petebutty.viewarr.data.xtream.XtreamClient
+import io.github.petebutty.viewarr.data.xtream.XtreamException
+import kotlinx.coroutines.CancellationException
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import retrofit2.HttpException
 import java.io.IOException
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.sync.withPermit
 import javax.inject.Inject
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import javax.inject.Singleton
 
 sealed interface ProbeResult {
@@ -22,8 +26,8 @@ sealed interface ProbeResult {
 class AuthRepository @Inject constructor(
     private val apiFactory: ApiFactory,
     private val sessions: SessionStore,
-    private val xtream: io.github.petebutty.viewarr.data.xtream.XtreamClient,
-    private val m3u: io.github.petebutty.viewarr.data.m3u.M3uClient,
+    private val xtream: XtreamClient,
+    private val m3u: M3uClient,
 ) {
     /**
      * IPTV provider (Xtream Codes) sign-in: the username and password from the provider. Tries the address as typed,
@@ -34,20 +38,21 @@ class AuthRepository @Inject constructor(
         if (raw.isEmpty()) return Result.failure(IllegalStateException("Enter your provider's server address."))
         if (username.isBlank() || password.isEmpty()) return Result.failure(IllegalStateException("Enter the username and password from your provider."))
         val candidates = if (raw.contains("://")) listOf(raw) else listOf("http://$raw", "https://$raw")
-        var last: Throwable = IllegalStateException("Couldn't reach that server. Check the address with your provider.")
         for (url in candidates) {
             try {
                 val account = xtream.signIn(url, username.trim(), password)
                 val session = Session(url, account.username, apiKey = "", xcPassword = password, xcTimezone = account.timezone)
                 sessions.save(session)
                 return Result.success(session)
-            } catch (e: io.github.petebutty.viewarr.data.xtream.XtreamException) {
+            } catch (e: XtreamException) {
                 return Result.failure(IllegalStateException(e.message))
-            } catch (e: Exception) {
-                last = IllegalStateException("Couldn't reach that server. Check the address with your provider.")
+            } catch (e: CancellationException) {
+                throw e // (Cancelled, e.g. the screen left: not "unreachable, try the next address".)
+            } catch (_: Exception) {
+                // Not reachable this way: the next address, else the message below.
             }
         }
-        return Result.failure(last)
+        return Result.failure(IllegalStateException("Couldn't reach that server. Check the address with your provider."))
     }
 
     /**
@@ -69,10 +74,12 @@ class AuthRepository @Inject constructor(
             val epg = guide?.trim()?.takeIf { it.isNotEmpty() }?.let { if (it.contains("://")) it else "http://$it" }
             val session = Session(url, parsed.host, apiKey = "", isM3u = true, m3uEpg = epg)
             sessions.save(session)
-            android.util.Log.i("Auth", "m3u: ${list.channels.size} channels, guide ${if (epg != null || list.guideUrl != null) "yes" else "no"}")
+            Log.i("Auth", "m3u: ${list.channels.size} channels, guide ${if (epg != null || list.guideUrl != null) "yes" else "no"}")
             Result.success(session)
-        } catch (e: io.github.petebutty.viewarr.data.m3u.M3uException) {
+        } catch (e: M3uException) {
             Result.failure(IllegalStateException(e.message))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(IllegalStateException("Couldn't load that playlist. Check the link with your provider."))
         }
@@ -89,36 +96,9 @@ class AuthRepository @Inject constructor(
      * Looks for Dispatcharr on this TV's own network: every address in the local /24 with port 9191 open, confirmed
      * by Dispatcharr's version endpoint. Takes a few seconds; nothing outside the home network is contacted.
      */
-    suspend fun discover(): List<ProbeResult.Found> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val prefix = localPrefix() ?: return@withContext emptyList()
-        val gate = kotlinx.coroutines.sync.Semaphore(48)
-        kotlinx.coroutines.coroutineScope {
-            (1..254).map { host ->
-                async {
-                    gate.withPermit {
-                        val ip = "$prefix.$host"
-                        val open = runCatching {
-                            java.net.Socket().use { it.connect(java.net.InetSocketAddress(ip, 9191), 300); true }
-                        }.getOrDefault(false)
-                        if (!open) return@withPermit null
-                        val url = "http://$ip:9191"
-                        runCatching { apiFactory.create(url, quick = true).version().version }.getOrNull()
-                            ?.takeIf { it.isNotBlank() }?.let { ProbeResult.Found(url, it) }
-                    }
-                }
-            }.awaitAll().filterNotNull()
-        }
+    suspend fun discover(): List<ProbeResult.Found> = lanScan(9191) { url ->
+        apiFactory.create(url, quick = true).version().version.takeIf { it.isNotBlank() }?.let { ProbeResult.Found(url, it) }
     }
-
-    /** "192.168.1" for a TV at 192.168.1.50: the first private IPv4 address on an active interface. */
-    private fun localPrefix(): String? = runCatching {
-        java.net.NetworkInterface.getNetworkInterfaces().toList()
-            .filter { it.isUp && !it.isLoopback }
-            .flatMap { it.inetAddresses.toList() }
-            .filterIsInstance<java.net.Inet4Address>()
-            .firstOrNull { it.isSiteLocalAddress }
-            ?.hostAddress?.substringBeforeLast('.')
-    }.getOrNull()
 
     suspend fun probe(input: String): ProbeResult {
         val candidates = candidateUrls(input)
@@ -182,10 +162,10 @@ class AuthRepository @Inject constructor(
         )
     } catch (e: IOException) {
         Result.failure(IllegalStateException("Can't reach the server. Check your connection."))
+    } catch (e: CancellationException) {
+        throw e // (Before IllegalStateException: CancellationException is one, and was returned as a failure.)
     } catch (e: IllegalStateException) {
         Result.failure(e)
-    } catch (e: kotlinx.coroutines.CancellationException) {
-        throw e
     } catch (e: Exception) {
         // Anything else (a web page or other reply where Dispatcharr's was expected, a bad address): a message, not a crash.
         Result.failure(IllegalStateException("That server didn't answer like Dispatcharr. Check the address."))
@@ -206,10 +186,10 @@ class AuthRepository @Inject constructor(
         Result.failure(IllegalStateException(if (e.code() in listOf(401, 403)) "Dispatcharr didn't accept that API key." else "Sign-in failed (server error ${e.code()})."))
     } catch (e: IOException) {
         Result.failure(IllegalStateException("Can't reach the server. Check your connection."))
+    } catch (e: CancellationException) {
+        throw e // (As above: before IllegalStateException.)
     } catch (e: IllegalStateException) {
         Result.failure(e)
-    } catch (e: kotlinx.coroutines.CancellationException) {
-        throw e
     } catch (e: Exception) {
         // Anything else (a web page or other reply where Dispatcharr's was expected, a bad address): a message, not a crash.
         Result.failure(IllegalStateException("That server didn't answer like Dispatcharr. Check the address."))

@@ -21,12 +21,9 @@ import androidx.compose.ui.Modifier
 import io.github.petebutty.viewarr.ui.common.glass
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -46,7 +43,28 @@ import androidx.media3.ui.PlayerView
 import androidx.tv.material3.Text
 import io.github.petebutty.viewarr.data.media.VodStream
 import kotlinx.coroutines.android.awaitFrame
-import kotlinx.coroutines.launch
+import io.github.petebutty.viewarr.data.media.FoundMarkers
+import io.github.petebutty.viewarr.data.media.PlayerArt
+import io.github.petebutty.viewarr.data.settings.AutoNext
+import io.github.petebutty.viewarr.data.settings.Downmix
+import io.github.petebutty.viewarr.data.settings.LocalPlayback
+import io.github.petebutty.viewarr.data.settings.LocalRemote
+import io.github.petebutty.viewarr.data.settings.PictureSize
+import io.github.petebutty.viewarr.data.settings.ResumeMode
+import io.github.petebutty.viewarr.data.settings.StatsOverlay
+import io.github.petebutty.viewarr.data.settings.SubtitleBackground
+import io.github.petebutty.viewarr.data.settings.SubtitleMode
+import io.github.petebutty.viewarr.data.settings.VideoView
+import io.github.petebutty.viewarr.playback.AvSync
+import io.github.petebutty.viewarr.playback.DecoderQuirks
+import io.github.petebutty.viewarr.playback.FrameRateMatcher
+import io.github.petebutty.viewarr.playback.HdmiSoundGuard
+import io.github.petebutty.viewarr.playback.SarFixVideoRenderer
+import io.github.petebutty.viewarr.ui.common.MenuItem
+import io.github.petebutty.viewarr.ui.player.StreamQuality
+import io.github.petebutty.viewarr.ui.theme.AppColors
+import io.github.petebutty.viewarr.data.settings.Passthrough
+import io.github.petebutty.viewarr.ui.player.FpsCounter
 
 /**
  * Full-screen player for films, episodes and recordings: the stock Media3 controls (seek bar, pause,
@@ -59,38 +77,31 @@ fun VodPlayer(
     onClose: () -> Unit,
     /** Progress for Plex / Trakt: state is "playing", "paused" or "stopped". */
     onProgress: (state: String, positionMs: Long, durationMs: Long) -> Unit = { _, _, _ -> },
-    /** Hold-OK menu → "Switch to mpv": carry on there from this position. */
-    /** Swap players for this film: where it is, and the audio / subtitle tracks in use (ordinals; subtitles -1 = off). */
+    /**
+     * Hold-OK menu → "Switch to mpv": carry on there from this position, with the audio / subtitle tracks in use
+     * (ordinals; subtitles -1 = off).
+     */
     onSwitchPlayer: ((positionMs: Long, audio: Int?, subtitles: Int?) -> Unit)? = null,
-    art: io.github.petebutty.viewarr.data.media.PlayerArt? = null,
+    art: PlayerArt? = null,
 ) {
     val context = LocalContext.current
     var error by remember(stream) { mutableStateOf<String?>(null) }
     val focus = remember { FocusRequester() }
-    val seekMs = io.github.petebutty.viewarr.data.settings.LocalRemote.current.seek.ms
-    val pb = io.github.petebutty.viewarr.data.settings.LocalPlayback.current
+    val seekMs = LocalRemote.current.seek.ms
+    val pb = LocalPlayback.current
     val activity = context as? android.app.Activity
     var restoreMode by remember { mutableStateOf<Int?>(null) }
     // Match frame rate before it starts, as live TV does (FilmRateStart.kt): the switch can begin right here.
     val rateStart = remember(stream) { FilmRateStart(activity, pb.frameRate.films, stream) }
     // The frame rate counted from the decoder, for files that don't say it (Media info, the badge, Match frame rate).
     var countedFps by remember(stream) { mutableStateOf<Float?>(null) }
-    val startAt = stream.startMs ?: if (pb.resume == io.github.petebutty.viewarr.data.settings.ResumeMode.Start) 0L else stream.resumeMs
-    var view by remember { mutableStateOf<PlayerView?>(null) }
+    val startAt = stream.startMs ?: if (pb.resume == ResumeMode.Start) 0L else stream.resumeMs
     // What's open over the film: shared with the other player (FilmControls.kt), kept under the old names here.
     val panels = remember { FilmPanels() }
     var tracksOpen by panels::tracksOpen
-    // The Transparency panel over the film (the same as live TV's), from its button.
-    var transOpen by panels::transOpen
-    // The Audio sync choices over the film, from its button.
-    var syncOpen by panels::syncOpen
-    // The TV settings panel over the film (frame rate matching, picture size…), from its button.
-    var tvOpen by panels::tvOpen
     // Audio & subtitles opened from the Subtitles button: start on the subtitles.
     var tracksSubs by panels::tracksSubs
     val menu = remember { PlayerMenu() }
-    // What's playing (poster, synopsis): the Info button, the Details button, or a moment after pausing.
-    var detailsOn by panels::detailsOn
     val scrub = remember { Scrubber() }
     val thumbs = rememberFilmThumbs(stream)
     // The app's own controls (as mpv's): state read from the player a few times a second.
@@ -99,9 +110,11 @@ fun VodPlayer(
     var durationMs by remember { mutableStateOf(0L) }
     var paused by remember { mutableStateOf(false) }
     var buffering by remember { mutableStateOf(true) }
-    var osdUntil by remember { mutableStateOf(System.currentTimeMillis() + io.github.petebutty.viewarr.ui.theme.AppColors.palette.controlsMs) }
+    var osdUntil by remember { mutableStateOf(System.currentTimeMillis() + AppColors.palette.controlsMs) }
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
-    fun showOsd() { osdUntil = System.currentTimeMillis() + io.github.petebutty.viewarr.ui.theme.AppColors.palette.controlsMs }
+    // The controls are up: the clock's ticks redraw nothing unless this changes.
+    val osdVisible by remember { androidx.compose.runtime.derivedStateOf { paused || buffering || now < osdUntil || scrub.active || menu.open } }
+    fun showOsd() { osdUntil = System.currentTimeMillis() + AppColors.palette.controlsMs }
     // Shrunk to the corner (picture-in-picture): just the picture; the page has the remote.
     // (The menu over it counts too: the player lets go of the remote and its controls.)
     val mini = VodHost.mini || VodHost.behind
@@ -123,19 +136,20 @@ fun VodPlayer(
                         out: java.util.ArrayList<androidx.media3.exoplayer.Renderer>,
                     ) {
                         super.buildVideoRenderers(ctx, mode, selector, fallback, handler, listener, joiningMs, out)
-                        io.github.petebutty.viewarr.playback.SarFixVideoRenderer.replaceIn(out, ctx, codecAdapterFactory, selector, fallback, handler, listener, joiningMs)
+                        SarFixVideoRenderer.replaceIn(out, ctx, codecAdapterFactory, selector, fallback, handler, listener, joiningMs)
                     }
                     override fun buildAudioSink(ctx: android.content.Context, floatOutput: Boolean, audioTrackPlaybackParams: Boolean): androidx.media3.exoplayer.audio.AudioSink? =
                         androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(ctx)
                             // Passthrough off: always decode to PCM in the box (no Dolby/DTS bitstream to a receiver).
-                            .apply { if (pb.passthrough == io.github.petebutty.viewarr.data.settings.Passthrough.Off) setAudioCapabilities(androidx.media3.exoplayer.audio.AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES) }
+                            .apply { if (pb.passthrough == Passthrough.Off) setAudioCapabilities(androidx.media3.exoplayer.audio.AudioCapabilities.DEFAULT_AUDIO_CAPABILITIES) }
                             .setEnableFloatOutput(floatOutput)
                             .setEnableAudioTrackPlaybackParams(audioTrackPlaybackParams)
                             .build()
                             // The info bar's Audio sync.
-                            .let(io.github.petebutty.viewarr.playback.AvSync::wrap)
+                            .let(AvSync::wrap)
                 }
                     .setEnableDecoderFallback(true)
+                    .apply { if (DecoderQuirks.amlogic) forceDisableMediaCodecAsynchronousQueueing() }
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON),
             )
             .setMediaSourceFactory(DefaultMediaSourceFactory(io.github.petebutty.viewarr.data.net.reachOf(http)))
@@ -148,11 +162,11 @@ fun VodPlayer(
             .build().apply {
                 trackSelectionParameters = trackSelectionParameters.buildUpon().apply {
                     pb.audioCode()?.let { setPreferredAudioLanguage(it) }
-                    if (pb.downmix == io.github.petebutty.viewarr.data.settings.Downmix.Stereo) setMaxAudioChannelCount(2)
+                    if (pb.downmix == Downmix.Stereo) setMaxAudioChannelCount(2)
                     when (pb.subtitles) {
-                        io.github.petebutty.viewarr.data.settings.SubtitleMode.Off -> setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
-                        io.github.petebutty.viewarr.data.settings.SubtitleMode.On -> setPreferredTextLanguage(pb.subtitleCode()).setSelectUndeterminedTextLanguage(true)
-                        io.github.petebutty.viewarr.data.settings.SubtitleMode.Forced -> Unit // only tracks flagged forced/default are picked
+                        SubtitleMode.Off -> setTrackTypeDisabled(androidx.media3.common.C.TRACK_TYPE_TEXT, true)
+                        SubtitleMode.On -> setPreferredTextLanguage(pb.subtitleCode()).setSelectUndeterminedTextLanguage(true)
+                        SubtitleMode.Forced -> Unit // only tracks flagged forced/default are picked
                     }
                     // Match frame rate before it starts: no sound at all until the TV has switched (FilmRateStart),
                     // or the sound opened early on the old HDMI link and stayed silent.
@@ -168,9 +182,9 @@ fun VodPlayer(
     val skipModes by androidx.compose.runtime.rememberUpdatedState(pb.skipIntro to pb.skipCredits)
     // The next episode's countdown over the end of this one (Settings → Playback → Episodes); 0: off.
     val nextCountdown by androidx.compose.runtime.rememberUpdatedState(
-        if (pb.autoNext == io.github.petebutty.viewarr.data.settings.AutoNext.On) maxOf(io.github.petebutty.viewarr.ui.theme.AppColors.palette.upNextSeconds * 1_000L, 1L) else 0L)
+        if (pb.autoNext == AutoNext.On) maxOf(AppColors.palette.upNextSeconds * 1_000L, 1L) else 0L)
     // Its server's markers, else ones the community intro databases had (they can arrive a moment after it starts).
-    val skipMarkers by androidx.compose.runtime.rememberUpdatedState(stream.markers.ifEmpty { io.github.petebutty.viewarr.data.media.FoundMarkers.byUrl[stream.url].orEmpty() })
+    val skipMarkers by androidx.compose.runtime.rememberUpdatedState(stream.markers.ifEmpty { FoundMarkers.byUrl[stream.url].orEmpty() })
     // Report where you are every 15 s while playing, and on pause/stop.
     LaunchedEffect(player) {
         while (true) {
@@ -181,7 +195,8 @@ fun VodPlayer(
             bufferedMs = player.bufferedPosition
             paused = !player.playWhenReady && !rateStart.holding
             buffering = player.playbackState == Player.STATE_BUFFERING || player.playbackState == Player.STATE_IDLE || rateStart.holding
-            now = System.currentTimeMillis()
+            // (In the corner the controls can't show: the clock rests.)
+            if (!VodHost.mini && !VodHost.behind) now = System.currentTimeMillis()
             kotlinx.coroutines.delay(250)
         }
     }
@@ -192,7 +207,7 @@ fun VodPlayer(
         }
     }
     // Whenever the picture is cut (a frame-rate switch, the TV re-syncing): the sound restarted on the new link.
-    val guard = remember(player) { io.github.petebutty.viewarr.playback.HdmiSoundGuard(context) }
+    val guard = remember(player) { HdmiSoundGuard(context) }
     DisposableEffect(guard) {
         guard.start()
         onDispose { guard.stop() }
@@ -264,7 +279,6 @@ fun VodPlayer(
 
             override fun onRenderedFirstFrame() {
                 // Settings → Playback → Match frame rate.
-                val fps = player.videoFormat?.frameRate ?: return
                 // (Match frame rate is done before it starts, only when the server gave the rate: FilmRateStart. Not mid-film.)
             }
 
@@ -329,7 +343,8 @@ fun VodPlayer(
         }
         player.addListener(listener)
         onDispose {
-            restoreMode?.let { m -> activity?.let { io.github.petebutty.viewarr.playback.FrameRateMatcher.restore(it, m) } }
+            // The TV switches as soon as FilmRateStart is made, so closing during that wait still has a mode to go back to.
+            (restoreMode ?: rateStart.restoreMode)?.let { m -> activity?.let { FrameRateMatcher.restore(it, m) } }
             if (player.playbackState != Player.STATE_ENDED && player.currentPosition > 0) {
                 onProgress("stopped", player.currentPosition, player.duration.coerceAtLeast(0))
             }
@@ -342,12 +357,12 @@ fun VodPlayer(
     BackHandler(enabled = !mini) { backStep() }
     // A file that doesn't say its frame rate: counted (FpsCounter); then Match frame rate can switch for it too.
     LaunchedEffect(player) {
-        val counter = io.github.petebutty.viewarr.ui.player.FpsCounter()
+        val counter = FpsCounter()
         repeat(120) {
             kotlinx.coroutines.delay(500)
             if ((player.videoFormat?.frameRate ?: 0f) > 0f) return@LaunchedEffect
             if (!player.isPlaying) { counter.reset(); return@repeat }
-            val frames = io.github.petebutty.viewarr.ui.player.FpsCounter.frames(player) ?: return@repeat
+            val frames = FpsCounter.frames(player) ?: return@repeat
             counter.feed(frames, android.os.SystemClock.elapsedRealtime())?.let { fps ->
                 countedFps = fps
 
@@ -378,7 +393,7 @@ fun VodPlayer(
     val switchPlayer = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f(player.currentPosition, a, t) } } }
     // The info bar, the remote, the timers and focus: shared with the mpv player (FilmShared.kt).
     val wiring = rememberFilmWiring(remote, panels, menu, scrub, skip, seekMs, switchPlayer, onClose, showOsd = ::showOsd,
-        osdShowing = { System.currentTimeMillis() < osdUntil }, backStep = ::backStep)
+        backStep = ::backStep)
     val buttons = wiring.buttons
     var hasFocus by remember { mutableStateOf(false) }
     FilmEffects(panels, menu, scrub, paused, mini, hasFocus, focus, hideOsd = { osdUntil = 0L })
@@ -389,17 +404,16 @@ fun VodPlayer(
             factory = { ctx ->
                 (android.view.LayoutInflater.from(ctx).inflate(
                     // Settings → Playback → Video view: Standard (SurfaceView) or Compatible (TextureView).
-                    if (pb.videoView == io.github.petebutty.viewarr.data.settings.VideoView.Standard) io.github.petebutty.viewarr.R.layout.vod_player_view_surface
+                    if (pb.videoView == VideoView.Standard) io.github.petebutty.viewarr.R.layout.vod_player_view_surface
                     else io.github.petebutty.viewarr.R.layout.vod_player_view, null) as PlayerView).apply {
                     this.player = player
-                    view = this
                     // Picture and subtitles only: the controls are the app's own (PlayerOsd), keys come from the box above.
                     useController = false
                     descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
                     isFocusable = false
                     keepScreenOn = true
                     subtitleView?.setFractionalTextSize(androidx.media3.ui.SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * pb.subtitleSize.scale)
-                    val box = pb.subtitleBackground == io.github.petebutty.viewarr.data.settings.SubtitleBackground.Box
+                    val box = pb.subtitleBackground == SubtitleBackground.Box
                     subtitleView?.setStyle(
                         androidx.media3.ui.CaptionStyleCompat(
                             pb.subtitleColour.argb.toInt(),
@@ -411,9 +425,9 @@ fun VodPlayer(
                         ),
                     )
                     resizeMode = when (pb.pictureSize) {
-                        io.github.petebutty.viewarr.data.settings.PictureSize.Fit -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-                        io.github.petebutty.viewarr.data.settings.PictureSize.Zoom -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        io.github.petebutty.viewarr.data.settings.PictureSize.Stretch -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
+                        PictureSize.Fit -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        PictureSize.Zoom -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                        PictureSize.Stretch -> androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FILL
                     }
                 }
             },
@@ -421,14 +435,16 @@ fun VodPlayer(
         )
         var started by remember(stream) { mutableStateOf(false) }
         if (!buffering && durationMs > 0) started = true
-        val state = FilmState(positionMs, durationMs, bufferedMs, paused, buffering, started,
-            osdVisible = paused || buffering || now < osdUntil || scrub.active || menu.open,
-            quality = player.videoFormat?.let { v -> io.github.petebutty.viewarr.ui.player.StreamQuality(v.height, v.frameRate.takeIf { it > 0 } ?: countedFps ?: 0f, player.audioFormat?.channelCount ?: 0) })
+        val state = FilmState({ positionMs }, durationMs, { bufferedMs }, paused, buffering, started,
+            osdVisible = osdVisible,
+            quality = player.videoFormat?.let { v -> StreamQuality(v.height, v.frameRate.takeIf { it > 0 } ?: countedFps ?: 0f, player.audioFormat?.channelCount ?: 0) })
         FilmOverlays(stream, art, state, mini, panels, menu, scrub, skip, buttons, thumbs, "mpv", error, focus,
             holdOsd = { show -> osdUntil = if (show) Long.MAX_VALUE else 0L }) {
             TrackPicker(player, subtitlesFirst = tracksSubs, onSwitchPlayer = switchPlayer, onClose = { tracksOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
         }
-        if (!mini && (pb.stats == io.github.petebutty.viewarr.data.settings.StatsOverlay.On || menu.infoOn)) {
+        // Hold OK on a bar button: the Info bar buttons list (FilmControls.kt).
+        FilmBarEditor(panels, menu, canSwitch = switchPlayer != null, mini = mini, focus = focus)
+        if (!mini && (pb.stats == StatsOverlay.On || menu.infoOn)) {
             var info by remember { mutableStateOf("") }
             LaunchedEffect(player) {
                 while (true) {
@@ -521,10 +537,10 @@ private fun TrackPicker(player: ExoPlayer, subtitlesFirst: Boolean = false, onSw
         choices.forEachIndexed { idx, c ->
             val header = c.label == "Audio" || c.label == "Subtitles" || c.label == "Player"
             item(key = idx) {
-                if (header) Text(c.label, fontSize = 13.sp, color = io.github.petebutty.viewarr.ui.theme.AppColors.Accent, modifier = Modifier.padding(top = 10.dp, start = 12.dp))
+                if (header) Text(c.label, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 10.dp, start = 12.dp))
                 else {
                     val m = if (idx == firstIdx) Modifier.focusRequester(first) else Modifier
-                    io.github.petebutty.viewarr.ui.common.MenuItem(text = c.label, selected = false, modifier = m, onClick = { c.apply(); onClose() })
+                    MenuItem(text = c.label, selected = false, modifier = m, onClick = { c.apply(); onClose() })
                 }
             }
         }

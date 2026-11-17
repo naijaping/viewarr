@@ -54,32 +54,57 @@ import io.github.petebutty.viewarr.ui.common.trapFocus
 import io.github.petebutty.viewarr.ui.media.MediaViewModel
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
+import io.github.petebutty.viewarr.ui.common.PendingOrder
+import io.github.petebutty.viewarr.ui.setup.WizardField
+import io.github.petebutty.viewarr.ui.common.Carry
+import io.github.petebutty.viewarr.ui.common.OptionsPopup
+import io.github.petebutty.viewarr.ui.common.PopupOption
+import io.github.petebutty.viewarr.ui.common.PopupPanel
+import io.github.petebutty.viewarr.ui.common.PopupTitle
+import io.github.petebutty.viewarr.ui.common.moveOption
+import io.github.petebutty.viewarr.ui.common.movingHint
+import io.github.petebutty.viewarr.ui.common.rememberCarry
+import io.github.petebutty.viewarr.ui.common.reorderable
+import io.github.petebutty.viewarr.ui.theme.NoScale
+import io.github.petebutty.viewarr.ui.theme.Tokens
 
 /**
  * Settings → Home page & menu: one list each for Movies and Shows: the libraries the menu lists (on / off, order, names), then the rows on the
  * page, which are also what "Jump to a row" lists (on / off and order).
- * OK turns an entry on or off; Right picks it up so Up / Down move it, and OK, Right or Left puts it down.
+ * OK turns an entry on or off; hold OK: options (Move, Rename… for a library, Hide / Show). Move (or Right, the
+ * Settings shortcut) picks it up so Up / Down move it, and OK, Back, Left or Right puts it down.
  */
 @Composable
 fun HomeRowsSettingsScreen(onBack: () -> Unit) {
     var type by remember { mutableStateOf(MediaType.Movie) }
-    val tabFocus = remember { List(2) { FocusRequester() } }
-    var moving by remember { mutableStateOf<String?>(null) }
-    BackHandler { if (moving != null) moving = null else onBack() }
+    // The third list: My Library's page (your servers' rows from both). (Peter, 2026-11-17.)
+    var mine by remember { mutableStateOf(false) }
+    val tabFocus = remember { List(3) { FocusRequester() } }
+    // The entry being moved (shared ui/common/Reorder.kt; was hold OK = rename, Right only to move. Peter, 2026-11-17).
+    val carry = rememberCarry()
+    // (Back while carrying puts it down: Modifier.reorderable takes that press, so this never leaves the page then.)
+    BackHandler { if (carry.active) carry.drop() else onBack() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { tabFocus[0].requestFocus() } }
     Box(Modifier.fillMaxSize().appBackground(readable = true).trapFocus()) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 40.dp)) {
-            Column(Modifier.width(300.dp).fillMaxHeight()) {
+        Row(Modifier.fillMaxSize().padding(horizontal = Tokens.Gutter, vertical = 40.dp)) {
+            // (Below the live TV window when one is up, as SettingsPage.)
+            Column(Modifier.width(300.dp).fillMaxHeight().padding(top = if (SettingsLayout.belowPreview) 170.dp else 0.dp)) {
                 Text("Settings", fontSize = 14.sp, color = AppColors.Accent)
                 Text("Home page & menu", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 20.dp))
                 listOf(MediaType.Movie to "Movies", MediaType.Show to "Shows").forEachIndexed { i, (t, label) ->
                     MenuItem(
                         text = label,
-                        selected = t == type,
-                        onClick = { type = t },
-                        modifier = Modifier.focusRequester(tabFocus[i]).onFocusChanged { if (it.isFocused) { type = t; moving = null } },
+                        selected = t == type && !mine,
+                        onClick = { type = t; mine = false },
+                        modifier = Modifier.focusRequester(tabFocus[i]).onFocusChanged { if (it.isFocused) { type = t; mine = false; carry.drop() } },
                     )
                 }
+                MenuItem(
+                    text = "My Library",
+                    selected = mine,
+                    onClick = { mine = true },
+                    modifier = Modifier.focusRequester(tabFocus[2]).onFocusChanged { if (it.isFocused) { mine = true; carry.drop() } },
+                )
                 // Both pages: rows that repeat across servers shown once.
                 val mediaVm: MediaViewModel = hiltViewModel(key = "media-${MediaType.Movie.name}")
                 val merge by mediaVm.mergeRows.collectAsStateWithLifecycle()
@@ -89,7 +114,7 @@ fun HomeRowsSettingsScreen(onBack: () -> Unit) {
                     trailing = if (merge) "On" else "Off",
                     selected = false,
                     onClick = { mediaVm.setMergeRows(!merge) },
-                    modifier = Modifier.onFocusChanged { if (it.isFocused) moving = null },
+                    modifier = Modifier.onFocusChanged { if (it.isFocused) carry.drop() },
                 )
                 Text(
                     "One Continue watching, and one Recently added per library, instead of a row for each server.",
@@ -99,9 +124,10 @@ fun HomeRowsSettingsScreen(onBack: () -> Unit) {
             Spacer(Modifier.width(40.dp))
             // Same view model as the Films / Shows page, so the rows are shared and changes show there at once.
             // Left from the rows: back to the page selected on the left (not the nearest entry).
-            Box(Modifier.weight(1f).fillMaxHeight().leftReturnsTo { tabFocus[if (type == MediaType.Show) 1 else 0] }) {
-                androidx.compose.runtime.key(type) {
-                    RowsEditor(type, moving, onMoving = { moving = it })
+            Box(Modifier.weight(1f).fillMaxHeight().leftReturnsTo { tabFocus[if (mine) 2 else if (type == MediaType.Show) 1 else 0] }) {
+                if (mine) MyLibraryEditor(carry)
+                else androidx.compose.runtime.key(type) {
+                    RowsEditor(type, carry)
                 }
             }
         }
@@ -109,7 +135,8 @@ fun HomeRowsSettingsScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun RowsEditor(type: MediaType, moving: String?, onMoving: (String?) -> Unit) {
+private fun RowsEditor(type: MediaType, carry: Carry) {
+    val moving = carry.id
     val media: MediaViewModel = hiltViewModel(key = "media-${type.name}")
     LaunchedEffect(type) { media.load(type); media.loadLibraries(type) }
     // Turned-on entries are listed first (in their order), then the ones turned off: switching one on moves it to the
@@ -166,11 +193,14 @@ private fun RowsEditor(type: MediaType, moving: String?, onMoving: (String?) -> 
         media.setLibraryHidden(lib.key, !hidden)
         refocus = "lib:" + lib.key
     }
+    // Hold OK on an entry: its options (by id).
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    var renaming by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxHeight()) {
         Text(
-            if (moving != null) "Moving: Up / Down to place it, then OK to put it down."
+            if (moving != null) movingHint()
             else "Your $what libraries in the menu, then the rows on the $what page (and under \"Jump to a row\"), top to bottom. " +
-                "OK turns one on or off, Right picks one up to move it, and holding OK on a library renames it.",
+                "OK: on / off  ·  Hold OK: move, rename or hide.",
             fontSize = 14.sp, color = if (moving != null) AppColors.Accent else AppColors.TextSecondary,
             modifier = Modifier.padding(top = 26.dp, bottom = 14.dp, start = 4.dp),
         )
@@ -178,23 +208,21 @@ private fun RowsEditor(type: MediaType, moving: String?, onMoving: (String?) -> 
             // The menu's library list (Movies / Shows → Right): on / off, order and names.
             if (libs.isNotEmpty()) item(key = "libs-head") { SectionHead("Libraries", first = true) }
             itemsIndexed(libs, key = { _, it -> "lib:" + it.first.key }) { i, (lib, hidden) ->
-                var renaming by remember { mutableStateOf(false) }
-                if (renaming) RenameLibraryDialog(lib.title, onDone = { name -> media.setLibraryName(lib.key, name); renaming = false }, onCancel = { renaming = false })
                 val id = "lib:" + lib.key
                 val fr = focus.getOrPut(id) { FocusRequester() }
                 val carried = id == moving
                 fun move(by: Int) {
                     // By its key in the latest order (a held key comes faster than the list redraws).
-                    val keys = io.github.petebutty.viewarr.ui.common.PendingOrder.move("libs:$type", libs.map { it.first.key }, lib.key, by, libsOn) ?: return
+                    val keys = PendingOrder.move("libs:$type", libs.map { it.first.key }, lib.key, by, libsOn) ?: return
                     media.setLibraryOrder(keys)
                 }
                 OrderedToggle(
                     marker = if (carried) "↕" else "▤",
                     title = lib.title, subtitle = lib.source + "  ·  " + if (hidden) "Not in the menu" else "In the menu",
-                    on = !hidden, carried = carried, moving = moving != null, focusRequester = fr,
-                    onPickUp = { if (!hidden) onMoving(id) }, onPutDown = { onMoving(null) }, onMove = ::move,
-                    onClick = { if (moving != null) onMoving(null) else toggleLib(i) },
-                    onLongClick = { if (moving == null) renaming = true },
+                    on = !hidden, carried = carried, focusRequester = fr,
+                    onPickUp = { if (!hidden) carry.pickUp(id) }, onPutDown = carry::drop, onMove = ::move,
+                    onClick = { if (moving != null) carry.drop() else toggleLib(i) },
+                    onLongClick = { if (moving == null) menuFor = id },
                 )
             }
             item(key = "rows-head") { SectionHead("Rows", first = libs.isEmpty()) }
@@ -202,7 +230,7 @@ private fun RowsEditor(type: MediaType, moving: String?, onMoving: (String?) -> 
                 val fr = focus.getOrPut(row.id) { FocusRequester() }
                 val carried = row.id == moving
                 fun move(by: Int) {
-                    val ids = io.github.petebutty.viewarr.ui.common.PendingOrder.move("rows:$type", rows.map { it.first.id }, row.id, by, rowsOn) ?: return
+                    val ids = PendingOrder.move("rows:$type", rows.map { it.first.id }, row.id, by, rowsOn) ?: return
                     media.setRowOrder(ids)
                 }
                 OrderedToggle(
@@ -210,9 +238,10 @@ private fun RowsEditor(type: MediaType, moving: String?, onMoving: (String?) -> 
                     title = row.title,
                     // Where the row comes from (Plex, Jellyfin, an add-on…) instead of where it shows.
                     subtitle = media.rowOrigin(row) + "  ·  " + if (hidden) "Off" else "${row.items.size} titles",
-                    on = !hidden, carried = carried, moving = moving != null, focusRequester = fr,
-                    onPickUp = { if (!hidden) onMoving(row.id) }, onPutDown = { onMoving(null) }, onMove = ::move,
-                    onClick = { if (moving != null) onMoving(null) else toggleRow(i) },
+                    on = !hidden, carried = carried, focusRequester = fr,
+                    onPickUp = { if (!hidden) carry.pickUp(row.id) }, onPutDown = carry::drop, onMove = ::move,
+                    onClick = { if (moving != null) carry.drop() else toggleRow(i) },
+                    onLongClick = { if (moving == null) menuFor = row.id },
                 )
             }
             if (!done) item(key = "loading") {
@@ -229,6 +258,131 @@ private fun RowsEditor(type: MediaType, moving: String?, onMoving: (String?) -> 
             }
         }
     }
+    menuFor?.let { id -> EntryOptions(id, libs, rows, carry, onRename = { renaming = it }, onToggle = { lib, i -> if (lib) toggleLib(i) else toggleRow(i) }, onClose = { menuFor = null }) }
+    renaming?.let { key -> libs.firstOrNull { it.first.key == key }?.first }?.let { lib ->
+        RenameLibraryDialog(lib.title, onDone = { name -> media.setLibraryName(lib.key, name); renaming = null; refocus = "lib:" + lib.key }, onCancel = { renaming = null })
+    }
+}
+
+/**
+ * Settings → Home page & menu → My Library: the rows on My Library's page (the menu's My Library), your own servers'
+ * rows from Movies and Shows in one list. OK: on / off; hold OK: move or hide (as the other two lists).
+ */
+@Composable
+private fun MyLibraryEditor(carry: Carry) {
+    val moving = carry.id
+    val movies: MediaViewModel = hiltViewModel(key = "media-${MediaType.Movie.name}")
+    val shows: MediaViewModel = hiltViewModel(key = "media-${MediaType.Show.name}")
+    LaunchedEffect(Unit) { movies.load(MediaType.Movie); shows.load(MediaType.Show) }
+    val state by io.github.petebutty.viewarr.ui.media.MyLibrary.state.collectAsStateWithLifecycle()
+    val rows = state.entries.let { e -> e.filter { !it.off } + e.filter { it.off } }
+    val rowsOn = rows.count { !it.off }
+    var refocus by remember { mutableStateOf<String?>(null) }
+    val focus = remember { HashMap<String, FocusRequester>() }
+    val listState = rememberLazyListState()
+    LaunchedEffect(moving, rows.map { it.key }) {
+        val k = moving ?: return@LaunchedEffect
+        val idx = rows.indexOfFirst { it.key == k }
+        if (idx >= 0) { listState.animateScrollToItem(maxOf(0, idx - 3)); awaitFrame(); runCatching { focus[k]?.requestFocus() } }
+    }
+    LaunchedEffect(refocus, rows.map { it.key to it.off }) {
+        val k = refocus ?: return@LaunchedEffect
+        val idx = rows.indexOfFirst { it.key == k }
+        if (idx < 0) return@LaunchedEffect
+        if (listState.layoutInfo.visibleItemsInfo.none { it.index == idx }) listState.scrollToItem(maxOf(0, idx - 3))
+        awaitFrame(); runCatching { focus[k]?.requestFocus() }
+        refocus = null
+    }
+    fun toggle(i: Int) {
+        val e = rows[i]
+        val on = rows.filter { !it.off }.map { it.key }
+        val off = rows.filter { it.off }.map { it.key }
+        movies.setMyLibraryOrder(if (e.off) on + e.key + (off - e.key) else (on - e.key) + e.key + off)
+        movies.setMyLibraryHidden(e.key, !e.off)
+        refocus = e.key
+    }
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    Column(Modifier.fillMaxHeight()) {
+        Text(
+            if (moving != null) movingHint()
+            else "The rows on the My Library page (the menu's My Library): your own servers' films and shows, top to bottom. " +
+                "OK: on / off  ·  Hold OK: move or hide.",
+            fontSize = 14.sp, color = if (moving != null) AppColors.Accent else AppColors.TextSecondary,
+            modifier = Modifier.padding(top = 26.dp, bottom = 14.dp, start = 4.dp),
+        )
+        LazyColumn(state = listState, verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+            itemsIndexed(rows, key = { _, it -> it.key }) { i, e ->
+                val fr = focus.getOrPut(e.key) { FocusRequester() }
+                val carried = e.key == moving
+                fun move(by: Int) {
+                    val keys = PendingOrder.move("rows:mine", rows.map { it.key }, e.key, by, rowsOn) ?: return
+                    movies.setMyLibraryOrder(keys)
+                }
+                OrderedToggle(
+                    marker = if (carried) "↕" else if (e.off) "" else "${i + 1}",
+                    title = e.row.title,
+                    subtitle = (if (e.type == MediaType.Show) "Shows" else "Films") + "  ·  " + movies.rowOrigin(e.row) + "  ·  " +
+                        if (e.off) "Off" else "${e.row.items.size} titles",
+                    on = !e.off, carried = carried, focusRequester = fr,
+                    onPickUp = { if (!e.off) carry.pickUp(e.key) }, onPutDown = carry::drop, onMove = ::move,
+                    onClick = { if (moving != null) carry.drop() else toggle(i) },
+                    onLongClick = { if (moving == null) menuFor = e.key },
+                )
+            }
+            if (rows.isEmpty()) item(key = "loading") {
+                Text("Loading your servers' rows…", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(12.dp))
+            }
+            if (rows.isNotEmpty()) item(key = "reset") {
+                var confirm by remember { mutableStateOf(false) }
+                MenuItem(
+                    text = if (confirm) "Press OK again to reset" else "Reset to the original order",
+                    selected = false,
+                    modifier = Modifier.padding(top = 10.dp).onFocusChanged { if (!it.isFocused) confirm = false },
+                    onClick = { if (confirm) { movies.resetMyLibrary(); confirm = false } else confirm = true },
+                )
+            }
+        }
+    }
+    menuFor?.let { k ->
+        val i = rows.indexOfFirst { it.key == k }
+        if (i < 0) { LaunchedEffect(k) { menuFor = null }; return@let }
+        val e = rows[i]
+        OptionsPopup(
+            title = e.row.title,
+            options = buildList {
+                if (!e.off) add(carry.moveOption(k))
+                add(PopupOption(if (e.off) "Show" else "Hide") { toggle(i) })
+            },
+            onClose = { menuFor = null },
+        )
+    }
+}
+
+/**
+ * Hold OK on a library or row: Move (only while it's on: the ones off sit below, unordered), Rename… (libraries),
+ * then Hide / Show, and Cancel (the standard options pop-up).
+ */
+@Composable
+private fun EntryOptions(
+    id: String,
+    libs: List<Pair<io.github.petebutty.viewarr.data.media.MediaLibrary, Boolean>>,
+    rows: List<Pair<io.github.petebutty.viewarr.data.media.MediaRow, Boolean>>,
+    carry: Carry,
+    onRename: (String) -> Unit,
+    onToggle: (lib: Boolean, index: Int) -> Unit,
+    onClose: () -> Unit,
+) {
+    val isLib = id.startsWith("lib:")
+    val i = if (isLib) libs.indexOfFirst { "lib:" + it.first.key == id } else rows.indexOfFirst { it.first.id == id }
+    if (i < 0) { LaunchedEffect(id) { onClose() }; return }
+    val title = if (isLib) libs[i].first.title else rows[i].first.title
+    val hidden = if (isLib) libs[i].second else rows[i].second
+    val options = buildList {
+        if (!hidden) add(carry.moveOption(id))
+        if (isLib) add(PopupOption("Rename…") { onRename(id.removePrefix("lib:")) })
+        add(PopupOption(if (hidden) (if (isLib) "Show in the menu" else "Show") else (if (isLib) "Hide from the menu" else "Hide")) { onToggle(isLib, i) })
+    }
+    OptionsPopup(title = title, options = options, onClose = onClose)
 }
 
 @Composable
@@ -242,14 +396,11 @@ private fun RenameLibraryDialog(current: String, onDone: (String?) -> Unit, onCa
     var name by remember { mutableStateOf(current) }
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-    androidx.compose.ui.window.Dialog(onDismissRequest = onCancel) {
-        Column(
-            Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("Rename library", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-            Text("Leave it empty to use the server's own name.", fontSize = 13.sp, color = AppColors.TextSecondary)
-            io.github.petebutty.viewarr.ui.setup.WizardField(
+    // (The shared pop-up: was a raw Dialog. Peter, 2026-11-17.)
+    PopupPanel(onClose = onCancel, width = Tokens.PopupWide) {
+        PopupTitle("Rename library", "Leave it empty to use the server's own name.")
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            WizardField(
                 name, { name = it }, "Name", first,
                 androidx.compose.ui.text.input.KeyboardType.Text, androidx.compose.ui.text.input.ImeAction.Done,
                 onIme = { onDone(name.ifBlank { null }) },
@@ -261,30 +412,22 @@ private fun RenameLibraryDialog(current: String, onDone: (String?) -> Unit, onCa
 }
 
 /**
- * A row or library in these lists: its place (or ↕ while carried), name and what it is, and an on / off switch. OK turns
- * it on / off; Right picks it up, Up / Down move it, Right / Left (or OK) put it down.
+ * A row or library in these lists, looking like a settings row (SettingsPage's SettingRow: row shape, no growing, its
+ * switch): its place (or ↕ while carried), name and what it is, and an on / off switch. OK turns it on / off; hold OK:
+ * options; moving is the shared Modifier.reorderable (Right picks up as the Settings shortcut).
  */
 @Composable
 private fun OrderedToggle(
-    marker: String, title: String, subtitle: String, on: Boolean, carried: Boolean, moving: Boolean,
+    marker: String, title: String, subtitle: String, on: Boolean, carried: Boolean,
     focusRequester: FocusRequester, onPickUp: () -> Unit, onPutDown: () -> Unit, onMove: (Int) -> Unit,
     onClick: () -> Unit, onLongClick: (() -> Unit)? = null,
 ) {
     Surface(
         onClick = onClick, onLongClick = onLongClick,
-        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester).onPreviewKeyEvent { e ->
-            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-            when {
-                !moving && e.key == Key.DirectionRight -> { onPickUp(); true }
-                carried && (e.key == Key.DirectionRight || e.key == Key.DirectionLeft) -> { onPutDown(); true }
-                carried && e.key == Key.DirectionUp -> { onMove(-1); true }
-                carried && e.key == Key.DirectionDown -> { onMove(1); true }
-                moving && !carried -> true
-                else -> false
-            }
-        },
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+        modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+            .reorderable(carried = carried, onMove = onMove, onDrop = onPutDown, rightToggles = true, onPickUp = onPickUp),
+        scale = NoScale,
+        shape = ClickableSurfaceDefaults.shape(Tokens.RowShape),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = AppColors.Panel,
             contentColor = if (on) AppColors.TextPrimary else AppColors.TextSecondary,
@@ -298,18 +441,7 @@ private fun OrderedToggle(
                 Text(title, fontSize = 16.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(subtitle, fontSize = 12.sp)
             }
-            OnOffSwitch(on)
+            SettingSwitch(on)
         }
     }
-}
-
-/** The green / grey switch at the end of a row. */
-@Composable
-private fun OnOffSwitch(on: Boolean) {
-    Box(
-        Modifier.size(width = 48.dp, height = 26.dp)
-            .background(if (on) Color(0xFF2EBD5A) else Color(0xFF6B6F7A), RoundedCornerShape(13.dp))
-            .padding(3.dp),
-        contentAlignment = if (on) Alignment.CenterEnd else Alignment.CenterStart,
-    ) { Box(Modifier.size(20.dp).background(Color.White, CircleShape)) }
 }

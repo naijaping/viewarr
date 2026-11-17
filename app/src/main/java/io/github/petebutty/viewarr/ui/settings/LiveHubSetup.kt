@@ -28,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
@@ -53,14 +54,17 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.remote.services.HttpJson
+import io.github.petebutty.viewarr.data.remote.services.StremioService
+import io.github.petebutty.viewarr.data.session.SessionStore
 
 @HiltViewModel
 class LiveHubSetupViewModel @Inject constructor(
     val setup: NetworkSetup,
     private val store: AccountStore,
-    private val sessions: io.github.petebutty.viewarr.data.session.SessionStore,
-    private val http: io.github.petebutty.viewarr.data.remote.services.HttpJson,
-    private val stremio: io.github.petebutty.viewarr.data.remote.services.StremioService,
+    private val sessions: SessionStore,
+    private val http: HttpJson,
+    private val stremio: StremioService,
 ) : ViewModel() {
     val accounts = store.accounts.stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val session = sessions.session.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -126,11 +130,15 @@ fun NetworkSetupScreen(onDone: (List<String>) -> Unit, onClose: () -> Unit, vm: 
         val key = vm.tmdbKey() ?: return@LaunchedEffect
         names.forEach { n -> if (n !in logos) setup.known(n)?.let { net -> setup.logo(net, key)?.let { logos[n] = it } } }
     }
-    androidx.compose.ui.window.Dialog(onDismissRequest = { if (!busy) onClose() }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+    // (ViewarrPopup, the shared pop-up window: was a raw Dialog. Its own panel, not PopupPanel: the grid of networks
+    // fills the height and scrolls itself. 92% of the screen high: it was 640 dp on a 540 dp screen, cut off top and
+    // bottom. Peter, 2026-11-17.)
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = { if (!busy) onClose() }) {
         val first = remember { FocusRequester() }
         LaunchedEffect(Unit) { kotlinx.coroutines.android.awaitFrame(); runCatching { first.requestFocus() } }
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)))
         Column(
-            Modifier.fillMaxWidth(0.9f).height(640.dp).background(AppColors.Panel, RoundedCornerShape(16.dp)).padding(28.dp),
+            Modifier.align(Alignment.Center).fillMaxWidth(0.9f).fillMaxHeight(0.92f).background(AppColors.Panel, RoundedCornerShape(io.github.petebutty.viewarr.ui.theme.Tokens.PopupRadius)).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text("Network shortcuts", fontSize = 24.sp, color = AppColors.TextPrimary)

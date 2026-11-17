@@ -8,6 +8,7 @@ import io.github.petebutty.viewarr.data.repository.AuthRepository
 import io.github.petebutty.viewarr.data.session.Session
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
@@ -30,11 +31,11 @@ import javax.inject.Singleton
 @Serializable
 data class InvitePayload(
     // Short names: the invite goes in a QR code, and every character makes it denser.
-    @kotlinx.serialization.SerialName("h") val home: String,
-    @kotlinx.serialization.SerialName("u") val user: String,
-    @kotlinx.serialization.SerialName("k") val key: String,
+    @SerialName("h") val home: String,
+    @SerialName("u") val user: String,
+    @SerialName("k") val key: String,
     /** Away addresses (home base → away base), for Dispatcharr and the other servers in the setup. */
-    @kotlinx.serialization.SerialName("a") val away: Map<String, String> = emptyMap(),
+    @SerialName("a") val away: Map<String, String> = emptyMap(),
     val v: Int = 1,
 )
 
@@ -162,7 +163,7 @@ class Invites @Inject constructor(
             val snap = copy?.let { sync.snapshotOf(it, session) }
             // Only when its sign-ins could be read: otherwise this TV would save an empty setup over the one
             // their admin prepared (restore switches saving on).
-            val readable = snap != null && ((snap["accounts"] as? kotlinx.serialization.json.JsonPrimitive)?.content ?: "{}") != "{}"
+            val readable = snap != null && ((snap["accounts"] as? JsonPrimitive)?.content ?: "{}") != "{}"
             if (snap != null && (readable || copy["signIns"] == null)) sync.restore(snap)
         }
         accounts.setSetupComplete(true)

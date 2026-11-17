@@ -145,6 +145,13 @@ object Wallpaper {
     /** Movies and Shows pages open: their artwork is loaded. */
     var titlePages by mutableStateOf(0)
 
+    /**
+     * Movies or Shows is the page on screen: the app's own background (behind the menu's glass) shows its artwork too,
+     * not the guide's programme picture (it kept that behind the menu while the page beside it showed the film's.
+     * Peter, 2026-11-17). Set by the home screen.
+     */
+    var titleBehind by mutableStateOf(false)
+
     /** The wallpaper (setting) and the Movies / Shows artwork are separate pictures: a page over Movies (e.g. Settings)
      *  shows the wallpaper, not the film. */
     internal val wall = PictureLayer()

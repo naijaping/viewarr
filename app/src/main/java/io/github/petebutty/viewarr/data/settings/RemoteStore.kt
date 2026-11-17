@@ -38,7 +38,7 @@ enum class GuideLeft(override val label: String) : RemoteChoice {
  */
 enum class ControlPreset(override val label: String) : RemoteChoice {
     Viewarr("Viewarr"),
-    TiviMate("TiviMate-style"),
+    Classic("Classic"),
     Custom("Custom (your own changes)"),
 }
 
@@ -50,7 +50,7 @@ enum class GuideBack(override val label: String) : RemoteChoice {
     Menu("Open the menu"),
 }
 
-/** Back in the guide away from what's on now: jumps to now first (as TiviMate's "Use Back to return to current programs"), or acts at once. */
+/** Back in the guide away from what's on now: jumps to now first (as classic IPTV apps' "Use Back to return to current programs"), or acts at once. */
 enum class GuideBackNow(override val label: String) : RemoteChoice {
     On("On"),
     Off("Off"),
@@ -123,18 +123,6 @@ enum class MenuOpensOn(override val label: String) : RemoteChoice {
 enum class MenuBack(override val label: String) : RemoteChoice {
     TwiceToExit("Press twice to exit"),
     Close("Close the menu"),
-}
-
-/** The menu's Movies / Shows list: what Right on a library does (OK always opens it). */
-enum class MenuLibraryRight(override val label: String, val groups: List<String>) : RemoteChoice {
-    // Each: the library filters to list, first one the library has (Plex · Jellyfin/Emby · IPTV names), genres after.
-    Categories("Categories / genres", listOf("category", "genre", "Genres")),
-    Collections("Collections", listOf("collection", "Tags")),
-    Decades("Decades", listOf("decade", "Years")),
-    Years("Years", listOf("year", "Years")),
-    Studios("Studios / networks", listOf("studio", "network", "Studios")),
-    AgeRatings("Age ratings", listOf("contentRating", "OfficialRatings")),
-    Open("Just open the library", emptyList()),
 }
 
 /** The button that pops search up from any screen. */
@@ -216,29 +204,35 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
             shortcutRows = p[stringPreferencesKey(SHORTCUT_ROWS)].orEmpty().split('\u001D').mapNotNull { r ->
                 val parts = r.split('\u001E'); if (parts.size != 2 || parts[0].isBlank()) null else parts[0] to parts[1].split('\u001F').filter { it.isNotBlank() }
             }.toMap(),
-            presetBase = p[stringPreferencesKey(PRESET_BASE)]?.let { n -> ControlPreset.entries.firstOrNull { it.name == n } },
+            presetBase = p[stringPreferencesKey(PRESET_BASE)]?.let { n -> ControlPreset.entries.firstOrNull { it.name == n || (n == LEGACY_CLASSIC && it == ControlPreset.Classic) } },
             startPage = p.read(START_PAGE),
             searchButton = p.read(SEARCH_BUTTON),
             navStyle = p.read(NAV_STYLE),
             searchKeyCode = p[intPreferencesKey(SEARCH_KEYCODE)],
             lastChannelId = p[intPreferencesKey(LAST_CHANNEL)],
-            buttons = p[stringPreferencesKey(BUTTONS)].orEmpty().split(',').mapNotNull { part ->
-                val (name, code) = part.split('=').takeIf { it.size == 2 } ?: return@mapNotNull null
-                code.toIntOrNull()?.let { name to it }
-            }.toMap(),
-            buttonMap = p[stringPreferencesKey(BUTTON_MAP)].orEmpty().split(',').mapNotNull { part ->
-                val (k, v) = part.split('=').takeIf { it.size == 2 } ?: return@mapNotNull null
-                k to v
-            }.toMap().let { m ->
-                // (Since 0.28.5 the TiviMate preset's hold OK in the guide is the record options, as Viewarr's: its old
+            buttons = buttonsOf(p[stringPreferencesKey(BUTTONS)]),
+            buttonMap = buttonMapOf(p[stringPreferencesKey(BUTTON_MAP)]).let { m ->
+                // (Since 0.28.5 the classic IPTV apps preset's hold OK in the guide is the record options, as Viewarr's: its old
                 // "main menu" isn't kept, so those buttons still read as the preset and hold OK records.)
-                if (p[stringPreferencesKey(PRESET_BASE)] == ControlPreset.TiviMate.name && m["Guide.OkHold"] == BtnAction.MainMenu.name) m - "Guide.OkHold" else m
+                if (p[stringPreferencesKey(PRESET_BASE)] in setOf(ControlPreset.Classic.name, LEGACY_CLASSIC) && m["Guide.OkHold"] == BtnAction.MainMenu.name) m - "Guide.OkHold" else m
             },
             liveShortcuts = p[stringPreferencesKey(LIVE_SHORTCUTS)]?.split('|')?.filter { it.isNotBlank() },
             recentChannels = p[stringPreferencesKey(RECENT_CHANNELS)].orEmpty().split(',').mapNotNull { it.toIntOrNull() },
             loaded = true,
         )
     }
+
+    /** Stored extra buttons: "action=code,…". */
+    private fun buttonsOf(raw: String?): Map<String, Int> = raw.orEmpty().split(',').mapNotNull { part ->
+        val (name, code) = part.split('=').takeIf { it.size == 2 } ?: return@mapNotNull null
+        code.toIntOrNull()?.let { name to it }
+    }.toMap()
+
+    /** The stored button table: "Screen.Press=action,…". */
+    private fun buttonMapOf(raw: String?): Map<String, String> = raw.orEmpty().split(',').mapNotNull { part ->
+        val (k, v) = part.split('=').takeIf { it.size == 2 } ?: return@mapNotNull null
+        k to v
+    }.toMap()
 
     suspend fun setSearchKeyCode(code: Int) {
         context.remoteStore.edit { it[intPreferencesKey(SEARCH_KEYCODE)] = code; it[stringPreferencesKey(SEARCH_BUTTON)] = SearchButton.Chosen.name }
@@ -247,10 +241,7 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
     /** Gives [action] the extra button [code] (taken from any other action that had it), or none (null). */
     suspend fun setButton(action: String, code: Int?) {
         context.remoteStore.edit { prefs ->
-            val now = prefs[stringPreferencesKey(BUTTONS)].orEmpty().split(',').mapNotNull { part ->
-                val (name, c) = part.split('=').takeIf { it.size == 2 } ?: return@mapNotNull null
-                c.toIntOrNull()?.let { name to it }
-            }.toMap().filter { (name, c) -> name != action && c != code }
+            val now = buttonsOf(prefs[stringPreferencesKey(BUTTONS)]).filter { (name, c) -> name != action && c != code }
             val next = if (code == null) now else now + (action to code)
             prefs[stringPreferencesKey(BUTTONS)] = next.entries.joinToString(",") { "${it.key}=${it.value}" }
         }
@@ -272,10 +263,7 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
     /** Rows of the button table at once ("Screen.Press" → action name; null: back to the default). */
     suspend fun setMappings(rows: Map<String, String?>) {
         context.remoteStore.edit { prefs ->
-            val now = prefs[stringPreferencesKey(BUTTON_MAP)].orEmpty().split(',').mapNotNull { part ->
-                val (k, v) = part.split('=').takeIf { it.size == 2 } ?: return@mapNotNull null
-                k to v
-            }.toMap().toMutableMap()
+            val now = buttonMapOf(prefs[stringPreferencesKey(BUTTON_MAP)]).toMutableMap()
             rows.forEach { (k, v) -> if (v == null) now.remove(k) else now[k] = v }
             prefs[stringPreferencesKey(BUTTON_MAP)] = now.entries.joinToString(",") { "${it.key}=${it.value}" }
         }
@@ -289,7 +277,7 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
      * A preset (see [ControlPreset]): every button on every screen set its way, the choices ([Presets.values]) and the
      * button table ([Presets.button]) alike, so nothing is left over from before: the Search button goes back to
      * Automatic and extra buttons taught for actions are removed too (either could take a key the preset uses, say
-     * TiviMate's Yellow for the controls).
+     * classic IPTV apps' Yellow for the controls).
      */
     suspend fun applyPreset(p: ControlPreset) {
         if (p == ControlPreset.Custom) return
@@ -335,10 +323,6 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
         }
     }
 
-    suspend fun clearLastChannel() {
-        context.remoteStore.edit { it.remove(intPreferencesKey(LAST_CHANNEL)) }
-    }
-
     suspend fun setLastChannel(id: Int) {
         context.remoteStore.edit {
             it[intPreferencesKey(LAST_CHANNEL)] = id
@@ -350,8 +334,7 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
     private inline fun <reified E : Enum<E>> Preferences.readOr(key: String, default: E): E =
         this[stringPreferencesKey(key)]?.let { name -> enumValues<E>().firstOrNull { it.name == name } } ?: default
 
-    private inline fun <reified E : Enum<E>> Preferences.read(key: String): E =
-        this[stringPreferencesKey(key)]?.let { name -> enumValues<E>().firstOrNull { it.name == name } } ?: enumValues<E>().first()
+    private inline fun <reified E : Enum<E>> Preferences.read(key: String): E = readOr(key, enumValues<E>().first())
 
     companion object {
         const val GUIDE_LEFT = "guide_left_v2" // v2: "at now opens the menu" became the default (2026-11-05)
@@ -368,6 +351,8 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
         const val MENU_OPENS_ON = "menu_opens_on"
         const val MENU_BACK = "menu_back"
         const val PRESET_BASE = "preset_base"
+        /** The Classic preset's name as saved before it was renamed (2026-11-17): still read as Classic. */
+        const val LEGACY_CLASSIC = "TiviMate"
         const val LIVE_SIDES = "live_sides"
         const val SHORTCUT_ROWS = "shortcut_rows"
         const val START_PAGE = "start_page"
@@ -383,23 +368,23 @@ class RemoteStore @Inject constructor(@ApplicationContext private val context: C
 }
 
 /**
- * The presets in full: what every button does on every screen. Viewarr is how Viewarr comes; TiviMate-style is as
- * TiviMate comes (watching: Up / Down change channel, the next number Up; OK the player menu; Left the channel list,
+ * The presets in full: what every button does on every screen. Viewarr is how Viewarr comes; classic-style is as
+ * classic IPTV apps comes (watching: Up / Down change channel, the next number Up; OK the player menu; Left the channel list,
  * Right the channel before; the guide's Left back to now, then the groups; Back jumps to now, then the groups; hold Back
- * straight back to full screen). Buttons TiviMate has nothing for keep Viewarr's.
+ * straight back to full screen). Buttons classic IPTV apps has nothing for keep Viewarr's.
  */
 object Presets {
     /** The choice settings a preset sets, by their key. */
     fun values(p: ControlPreset): Map<String, Enum<*>> = when (p) {
-        ControlPreset.TiviMate -> mapOf(
-            // (Back in TiviMate's guide goes back to the player.)
+        ControlPreset.Classic -> mapOf(
+            // (Back in classic IPTV apps' guide goes back to the player.)
             RemoteStore.GUIDE_LEFT to GuideLeft.NowMenu, RemoteStore.GUIDE_BACK to GuideBack.NowThenExit, RemoteStore.GUIDE_BACK_NOW to GuideBackNow.On, RemoteStore.CHANNEL_KEYS to ChannelKeys.Normal,
             RemoteStore.ZAP to ZapDirection.UpNext, RemoteStore.PLAYER_OK to PlayerOk.Controls, RemoteStore.LIVE_SIDES to LiveSides.ListAndLast,
             RemoteStore.SEEK to SeekStep.S30, RemoteStore.ROW_LEFT to RowLeft.Menu, RemoteStore.MEDIA_BACK to MediaBack.Exit,
             RemoteStore.MENU_OPENS_ON to MenuOpensOn.PageList, RemoteStore.MENU_BACK to MenuBack.TwiceToExit,
         )
         else -> mapOf(
-            // TiviMate's, but Left carries on back into catch-up (no hold), so Back's second press opens the menu.
+            // classic IPTV apps', but Left carries on back into catch-up (no hold), so Back's second press opens the menu.
             RemoteStore.GUIDE_LEFT to GuideLeft.AlwaysPast, RemoteStore.GUIDE_BACK to GuideBack.Menu, RemoteStore.GUIDE_BACK_NOW to GuideBackNow.On, RemoteStore.CHANNEL_KEYS to ChannelKeys.Normal,
             RemoteStore.ZAP to ZapDirection.UpNext, RemoteStore.PLAYER_OK to PlayerOk.Controls, RemoteStore.LIVE_SIDES to LiveSides.Seek,
             RemoteStore.SEEK to SeekStep.S30, RemoteStore.ROW_LEFT to RowLeft.Menu, RemoteStore.MEDIA_BACK to MediaBack.Exit,
@@ -419,11 +404,11 @@ object Presets {
     }
 
     /**
-     * TiviMate's own button settings (Settings → Remote control → TV guide / Player, as it comes), in Viewarr's
-     * actions. Where TiviMate does something Viewarr hasn't got (favourites, history, channel options…), Viewarr's
+     * classic IPTV apps' own button settings (Settings → Remote control → TV guide / Player, as it comes), in Viewarr's
+     * actions. Where classic IPTV apps does something Viewarr hasn't got (favourites, history, channel options…), Viewarr's
      * button stays.
      */
-    private val tiviMate: Map<Pair<BtnScreen, BtnPress>, BtnAction> = mapOf(
+    private val classic: Map<Pair<BtnScreen, BtnPress>, BtnAction> = mapOf(
         (BtnScreen.Guide to BtnPress.OkHold) to BtnAction.RecordOptions, // (Peter, 2026-11-15: record options, as Viewarr)
         (BtnScreen.Guide to BtnPress.BackHold) to BtnAction.FullScreen,
         (BtnScreen.Guide to BtnPress.Menu) to BtnAction.MainMenu,
@@ -452,7 +437,7 @@ object Presets {
 
     /** What a press does on a screen in a preset. */
     fun button(p: ControlPreset, screen: BtnScreen, press: BtnPress, base: RemoteSettings = settings(p)): BtnAction =
-        (if (p == ControlPreset.TiviMate) tiviMate[screen to press] else null)?.takeIf { !(screen == BtnScreen.Guide && press == BtnPress.MenuHold && it == BtnAction.Search && base.searchButton != SearchButton.Auto) }
+        (if (p == ControlPreset.Classic) classic[screen to press] else null)?.takeIf { !(screen == BtnScreen.Guide && press == BtnPress.MenuHold && it == BtnAction.Search && base.searchButton != SearchButton.Auto) }
             ?: ButtonMap.default(base, screen, press)
 
     /** The preset the settings match exactly, else Custom. */
@@ -462,7 +447,7 @@ object Presets {
             RemoteStore.ZAP to s.zap, RemoteStore.PLAYER_OK to s.playerOk, RemoteStore.LIVE_SIDES to s.liveSides, RemoteStore.SEEK to s.seek,
             RemoteStore.ROW_LEFT to s.rowLeft, RemoteStore.MEDIA_BACK to s.mediaBack, RemoteStore.MENU_OPENS_ON to s.menuOpensOn, RemoteStore.MENU_BACK to s.menuBack,
         )
-        return listOf(ControlPreset.Viewarr, ControlPreset.TiviMate).firstOrNull { p ->
+        return listOf(ControlPreset.Viewarr, ControlPreset.Classic).firstOrNull { p ->
             values(p) == now && ButtonMap.presses.all { (screen, presses) -> presses.all { ButtonMap.action(s, screen, it) == button(p, screen, it, settings(p, RemoteSettings(searchButton = s.searchButton))) } }
         } ?: ControlPreset.Custom
     }

@@ -117,13 +117,11 @@ fun ChangelogHost() {
 
     // Its own window (a dialog): Android gives it the remote outright. Drawn in the main window, it lost the remote to
     // the page it opened over (Settings fences focus in, so the changelog could never take it).
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = { Changelog.open = false },
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-    ) {
+    // (Through ViewarrPopup, the shared pop-up window: was a raw Dialog. Peter, 2026-11-17.)
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = { Changelog.open = false }) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.72f))) {
             Row(
-                Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 36.dp).glass(radius = 18.dp).padding(24.dp)
+                Modifier.fillMaxSize().padding(horizontal = io.github.petebutty.viewarr.ui.theme.Tokens.Gutter, vertical = 36.dp).glass(radius = io.github.petebutty.viewarr.ui.theme.Tokens.PopupRadius).padding(24.dp)
                     // The remote stays in here until it's closed (the page underneath can't take it).
                     .onFocusChanged { inside = it.hasFocus }
                     .focusProperties { exit = { FocusRequester.Cancel } }

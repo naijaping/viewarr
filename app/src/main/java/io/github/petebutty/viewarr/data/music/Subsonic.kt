@@ -1,14 +1,23 @@
 package io.github.petebutty.viewarr.data.music
 
+import io.github.petebutty.viewarr.data.media.FilterGroup
+import io.github.petebutty.viewarr.data.media.FilterValue
+import io.github.petebutty.viewarr.data.media.LibraryQuery
+import io.github.petebutty.viewarr.data.media.SortOption
 import io.github.petebutty.viewarr.data.remote.services.HttpJson
 import io.github.petebutty.viewarr.data.remote.services.array
 import io.github.petebutty.viewarr.data.remote.services.child
 import io.github.petebutty.viewarr.data.remote.services.int
+import io.github.petebutty.viewarr.data.remote.services.lanScan
 import io.github.petebutty.viewarr.data.remote.services.str
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.time.Instant
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -25,26 +34,26 @@ private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
 @Singleton
 class SubsonicClient @Inject constructor(val http: HttpJson) {
 
-    /** Checks the address and login; returns what to keep (no password). */
     /**
      * A new Navidrome user (not an admin), made with an admin's login through Navidrome's own API. The admin's
      * password is used for this alone and not kept.
      */
     suspend fun createUser(server: String, adminUser: String, adminPassword: String, userName: String, password: String): Result<Unit> = runCatching {
         val base = server.trimEnd('/')
-        val login = http.post("$base/auth/login", kotlinx.serialization.json.buildJsonObject {
-            put("username", kotlinx.serialization.json.JsonPrimitive(adminUser)); put("password", kotlinx.serialization.json.JsonPrimitive(adminPassword))
+        val login = http.post("$base/auth/login", buildJsonObject {
+            put("username", JsonPrimitive(adminUser)); put("password", JsonPrimitive(adminPassword))
         })
         check(login.ok) { "Navidrome didn't accept your password." }
-        check((login.body.child("isAdmin") as? kotlinx.serialization.json.JsonPrimitive)?.content == "true") { "Your Navidrome user isn't an admin, so it can't make users." }
+        check((login.body.child("isAdmin") as? JsonPrimitive)?.content == "true") { "Your Navidrome user isn't an admin, so it can't make users." }
         val token = login.body.str("token") ?: error("Navidrome didn't sign you in.")
-        val made = http.post("$base/api/user", kotlinx.serialization.json.buildJsonObject {
-            put("userName", kotlinx.serialization.json.JsonPrimitive(userName)); put("name", kotlinx.serialization.json.JsonPrimitive(userName))
-            put("password", kotlinx.serialization.json.JsonPrimitive(password)); put("isAdmin", kotlinx.serialization.json.JsonPrimitive(false))
+        val made = http.post("$base/api/user", buildJsonObject {
+            put("userName", JsonPrimitive(userName)); put("name", JsonPrimitive(userName))
+            put("password", JsonPrimitive(password)); put("isAdmin", JsonPrimitive(false))
         }, mapOf("x-nd-authorization" to "Bearer $token"))
         check(made.ok) { if (made.code == 400 || made.code == 409) "Navidrome already has a user called $userName: use Their existing login instead." else "Navidrome wouldn't make the user (error ${made.code})." }
     }
 
+    /** Checks the address and login; returns what to keep (no password). */
     suspend fun connect(address: String, user: String, password: String): Result<NavidromeAuth> {
         val a = address.trim().trimEnd('/')
         if (a.isEmpty()) return Result.failure(Exception("Enter your Navidrome address."))
@@ -79,8 +88,8 @@ class SubsonicClient @Inject constructor(val http: HttpJson) {
     }
 
     /** Navidrome / Subsonic servers on the home network (Navidrome's port, 4533). */
-    suspend fun discover(): List<String> = io.github.petebutty.viewarr.data.remote.services.lanScan(4533) { url ->
-        val r = kotlinx.coroutines.withTimeoutOrNull(3_000) { runCatching { http.get("$url/rest/ping.view?f=json") }.getOrNull() }
+    suspend fun discover(): List<String> = lanScan(4533) { url ->
+        val r = withTimeoutOrNull(3_000) { runCatching { http.get("$url/rest/ping.view?f=json") }.getOrNull() }
         // Without a login it answers with an error, but a Subsonic one.
         url.takeIf { r?.body.child("subsonic-response") != null }
     }
@@ -102,7 +111,7 @@ class NavidromeSource(private val c: SubsonicClient, private val a: NavidromeAut
     override val name = a.serverName
 
     private fun art(cover: String?) = cover?.let { Art(c.api(a, "getCoverArt", "&id=${enc(it)}&size=300"), c.api(a, "getCoverArt", "&id=${enc(it)}&size=800")) }
-    private fun time(s: String?) = s?.let { runCatching { java.time.Instant.parse(it).toEpochMilli() }.getOrNull() }
+    private fun time(s: String?) = s?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
 
     private fun album(j: JsonElement) = Album(
         id = "nd:" + j.str("id").orEmpty(), name = j.str("name") ?: j.str("title") ?: "Unknown album",
@@ -173,23 +182,23 @@ class NavidromeSource(private val c: SubsonicClient, private val a: NavidromeAut
 
     // Navidrome's album lists: one sort or one filter at a time (favourites, else genre, else decade).
     override suspend fun albumOptions() = listOf(
-        io.github.petebutty.viewarr.data.media.SortOption("title", "Title", false), io.github.petebutty.viewarr.data.media.SortOption("artist", "Artist", false),
-        io.github.petebutty.viewarr.data.media.SortOption("added", "Date added"), io.github.petebutty.viewarr.data.media.SortOption("played", "Recently played"),
-        io.github.petebutty.viewarr.data.media.SortOption("plays", "Most played"), io.github.petebutty.viewarr.data.media.SortOption("year", "Year"),
-        io.github.petebutty.viewarr.data.media.SortOption("random", "Random"),
+        SortOption("title", "Title", false), SortOption("artist", "Artist", false),
+        SortOption("added", "Date added"), SortOption("played", "Recently played"),
+        SortOption("plays", "Most played"), SortOption("year", "Year"),
+        SortOption("random", "Random"),
     ) to listOf(
-        io.github.petebutty.viewarr.data.media.FilterGroup("favourites", "Favourites", toggle = true),
-        io.github.petebutty.viewarr.data.media.FilterGroup("genre", "Genre", multi = false),
-        io.github.petebutty.viewarr.data.media.FilterGroup("decade", "Decade", multi = false),
+        FilterGroup("favourites", "Favourites", toggle = true),
+        FilterGroup("genre", "Genre", multi = false),
+        FilterGroup("decade", "Decade", multi = false),
     )
 
     override suspend fun albumFilterValues(group: String) = when (group) {
-        "genre" -> genres().map { (g, _) -> io.github.petebutty.viewarr.data.media.FilterValue(g, g) }
+        "genre" -> genres().map { (g, _) -> FilterValue(g, g) }
         "decade" -> decades()
         else -> emptyList()
     }
 
-    override suspend fun browseAlbums(q: io.github.petebutty.viewarr.data.media.LibraryQuery, size: Int, offset: Int): List<Album> {
+    override suspend fun browseAlbums(q: LibraryQuery, size: Int, offset: Int): List<Album> {
         val genre = q.filters["genre"]?.firstOrNull()?.id
         val decade = q.filters["decade"]?.firstOrNull()?.id?.toIntOrNull()
         val extra = when {
@@ -208,7 +217,7 @@ class NavidromeSource(private val c: SubsonicClient, private val a: NavidromeAut
 }
 
 /** The decades a music library can be filtered by ("2020" → "2020s"), newest first. */
-internal fun decades(): List<io.github.petebutty.viewarr.data.media.FilterValue> {
+internal fun decades(): List<FilterValue> {
     val now = java.time.Year.now().value / 10 * 10
-    return (now downTo 1950 step 10).map { io.github.petebutty.viewarr.data.media.FilterValue(it.toString(), "${it}s") }
+    return (now downTo 1950 step 10).map { FilterValue(it.toString(), "${it}s") }
 }

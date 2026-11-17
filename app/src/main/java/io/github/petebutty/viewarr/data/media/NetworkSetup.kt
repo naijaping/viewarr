@@ -2,13 +2,18 @@ package io.github.petebutty.viewarr.data.media
 
 import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.petebutty.viewarr.R
 import io.github.petebutty.viewarr.data.accounts.AccountStore
+import io.github.petebutty.viewarr.data.accounts.AddonInfo
 import io.github.petebutty.viewarr.data.remote.services.HttpJson
+import io.github.petebutty.viewarr.data.remote.services.StremioService
 import io.github.petebutty.viewarr.data.remote.services.array
 import io.github.petebutty.viewarr.data.remote.services.str
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -23,7 +28,7 @@ class NetworkSetup @Inject constructor(
     @ApplicationContext private val context: Context,
     private val http: HttpJson,
     private val accounts: AccountStore,
-    private val stremio: io.github.petebutty.viewarr.data.remote.services.StremioService,
+    private val stremio: StremioService,
 ) {
     enum class Region(val label: String, val code: String) { UK("UK", "GB"), US("US", "US") }
 
@@ -93,9 +98,6 @@ class NetworkSetup @Inject constructor(
         )
     }
 
-    /** How many are ticked to start with. */
-    val suggested = 12
-
     private val prefs get() = context.getSharedPreferences("network_setup", Context.MODE_PRIVATE)
 
     /** The networks picked last time (in order), or null. */
@@ -154,12 +156,12 @@ class NetworkSetup @Inject constructor(
     /** The networks whose rows Viewarr made last time (kept when it's run again). */
     fun lastMade(): List<String> = prefs.getString("made", null)?.split('|')?.filter { it.isNotBlank() }.orEmpty()
 
-    private fun template(): kotlinx.serialization.json.JsonObject =
-        http.json.parseToJsonElement(context.resources.openRawResource(io.github.petebutty.viewarr.R.raw.aiometadata_template).bufferedReader().readText()).jsonObject
+    private fun template(): JsonObject =
+        http.json.parseToJsonElement(context.resources.openRawResource(R.raw.aiometadata_template).bufferedReader().readText()).jsonObject
 
     private fun slug(s: String) = s.lowercase().map { if (it.isLetterOrDigit()) it else '-' }.joinToString("").trim('-')
 
-    private fun row(tpl: kotlinx.serialization.json.JsonObject, type: String, net: Net, kind: String, region: Region, byNetwork: Boolean): kotlinx.serialization.json.JsonObject {
+    private fun row(tpl: JsonObject, type: String, net: Net, kind: String, region: Region, byNetwork: Boolean): JsonObject {
         val base = tpl[type]!!.jsonObject
         val discover = base["metadata"]!!.jsonObject["discover"]!!.jsonObject
         val ukChannel = net.channel && region == Region.UK && net.network !in setOf(49, 88, 174, 19)
@@ -184,11 +186,11 @@ class NetworkSetup @Inject constructor(
             discover["formState"]!!.jsonObject.forEach { (k, v) -> if (k !in setOf("catalogName", "sortBy", "voteCountMin")) put(k, v) }
             put("catalogName", JsonPrimitive(name)); put("sortBy", JsonPrimitive(sort)); put("voteCountMin", JsonPrimitive(votes))
             if (byNetwork) {
-                put("withNetworks", kotlinx.serialization.json.JsonArray(listOf(kotlinx.serialization.json.buildJsonObject { put("id", JsonPrimitive(net.network)); put("label", JsonPrimitive(net.name)) })))
+                put("withNetworks", JsonArray(listOf(kotlinx.serialization.json.buildJsonObject { put("id", JsonPrimitive(net.network)); put("label", JsonPrimitive(net.name)) })))
                 put("networkJoinMode", JsonPrimitive("or"))
             } else {
                 put("watchRegion", JsonPrimitive(net.providerRegion))
-                put("watchProviders", kotlinx.serialization.json.JsonArray(net.providers.map { id -> kotlinx.serialization.json.buildJsonObject { put("id", JsonPrimitive(id)); put("label", JsonPrimitive(net.name)) } }))
+                put("watchProviders", JsonArray(net.providers.map { id -> kotlinx.serialization.json.buildJsonObject { put("id", JsonPrimitive(id)); put("label", JsonPrimitive(net.name)) } }))
                 put("providerJoinMode", JsonPrimitive("or"))
             }
         }
@@ -205,13 +207,13 @@ class NetworkSetup @Inject constructor(
         }
     }
 
-    private fun catalogs(tpl: kotlinx.serialization.json.JsonObject, region: Region, picked: List<Net>) = picked.flatMap { net ->
+    private fun catalogs(tpl: JsonObject, region: Region, picked: List<Net>) = picked.flatMap { net ->
         buildList {
             val service = net.providers.isNotEmpty()
             listOf("Popular", "New", "Top rated").forEach { add(row(tpl, "series", net, it, region, byNetwork = !service)) }
             if (service && net.network != null) {
                 val r = row(tpl, "series", net, "Popular", region, byNetwork = true)
-                add(kotlinx.serialization.json.JsonObject(r + mapOf(
+                add(JsonObject(r + mapOf(
                     "id" to JsonPrimitive("tmdb.discover.series.viewarr.${slug(net.name)}.originals"),
                     "name" to JsonPrimitive("${net.name} · Originals"),
                 )))
@@ -221,7 +223,7 @@ class NetworkSetup @Inject constructor(
     }
 
     sealed interface Result {
-        data class Done(val addon: io.github.petebutty.viewarr.data.accounts.AddonInfo) : Result
+        data class Done(val addon: AddonInfo) : Result
         data class Failed(val why: String) : Result
     }
 
@@ -237,13 +239,13 @@ class NetworkSetup @Inject constructor(
         val config = kotlinx.serialization.json.buildJsonObject {
             tpl["base"]!!.jsonObject.forEach { (k, v) -> if (k != "apiKeys") put(k, v) }
             put("language", JsonPrimitive(if (region == Region.UK) "en-GB" else "en-US"))
-            put("apiKeys", kotlinx.serialization.json.JsonObject(tpl["base"]!!.jsonObject["apiKeys"]!!.jsonObject + ("tmdb" to JsonPrimitive(tmdbKey))))
-            put("catalogs", kotlinx.serialization.json.JsonArray(catalogs(tpl, region, picked)))
+            put("apiKeys", JsonObject(tpl["base"]!!.jsonObject["apiKeys"]!!.jsonObject + ("tmdb" to JsonPrimitive(tmdbKey))))
+            put("catalogs", JsonArray(catalogs(tpl, region, picked)))
         }
         fun body(password: String) = kotlinx.serialization.json.buildJsonObject { put("config", config); put("password", JsonPrimitive(password)) }
         val same = prefs.getString("base", null) == base
         val uuid = prefs.getString("uuid", null).takeIf { same }
-        val password = prefs.getString("password", null).takeIf { same } ?: java.util.UUID.randomUUID().toString()
+        val password = prefs.getString("password", null).takeIf { same } ?: UUID.randomUUID().toString()
         val installUrl = (if (uuid != null) runCatching { http.put("$base/api/config/update/$uuid", body(password)) }.getOrNull()
             ?.takeIf { it.ok }?.let { it.body.str("installUrl") ?: "$base/stremio/$uuid/manifest.json" } else null)
             ?: run {

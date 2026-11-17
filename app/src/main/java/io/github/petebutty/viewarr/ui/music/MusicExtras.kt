@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -44,9 +43,19 @@ import io.github.petebutty.viewarr.data.music.Song
 import io.github.petebutty.viewarr.playback.MusicPlayer
 import io.github.petebutty.viewarr.ui.common.MenuItem
 import io.github.petebutty.viewarr.ui.common.glass
-import io.github.petebutty.viewarr.ui.common.ignoreHeldOk
+import io.github.petebutty.viewarr.ui.common.OptionsPopup
+import io.github.petebutty.viewarr.ui.common.PopupOption
+import io.github.petebutty.viewarr.ui.common.moveOption
+import io.github.petebutty.viewarr.ui.common.movingHint
+import io.github.petebutty.viewarr.ui.common.rememberCarry
+import io.github.petebutty.viewarr.ui.common.reorderable
+import io.github.petebutty.viewarr.ui.theme.Tokens
+import kotlinx.coroutines.launch
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
+import io.github.petebutty.viewarr.ui.common.BackLayer
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+import io.github.petebutty.viewarr.ui.common.ViewarrPopup
 
 /** What hold OK was pressed on (a song, or an album / playlist / artist card): its options pop up. */
 object MusicOptions {
@@ -60,7 +69,10 @@ object UserActivity {
     fun touch() { lastKeyAt = android.os.SystemClock.elapsedRealtime() }
 }
 
-/** The hold-OK options for a song or a card: play next, add to the queue, radio, favourite. */
+/**
+ * The hold-OK options for a song or a card: play next, add to the queue, radio, favourite. The shared options pop-up
+ * (Cancel last, the held OK ignored). (Peter, 2026-11-17: was its own raw Dialog.)
+ */
 @Composable
 fun MusicOptionsHost(vm: MusicViewModel) {
     val song = MusicOptions.song
@@ -68,30 +80,28 @@ fun MusicOptionsHost(vm: MusicViewModel) {
     if (song == null && card == null) return
     val starred by vm.starred.collectAsStateWithLifecycle()
     val close = { MusicOptions.song = null; MusicOptions.card = null }
-    androidx.compose.ui.window.Dialog(onDismissRequest = close) {
-        val first = remember { FocusRequester() }
-        LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-        // (Opened by holding OK: letting go of it mustn't also press the first option.)
-        Column(Modifier.width(420.dp).glass(18.dp).padding(22.dp).ignoreHeldOk(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(song?.title ?: card!!.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(song?.artist ?: card!!.sub, fontSize = 13.sp, color = AppColors.TextSecondary, maxLines = 1, modifier = Modifier.padding(bottom = 6.dp))
-            if (song != null) {
-                MenuItem(text = "Play next", selected = false, modifier = Modifier.focusRequester(first), onClick = { vm.playNext(listOf(song)); close() })
-                MenuItem(text = "Add to queue", selected = false, onClick = { vm.addToQueue(listOf(song)); close() })
-                MenuItem(text = "Song radio", selected = false, onClick = { vm.radio(song); close() })
-                MenuItem(text = if (song.id in starred) "★ Remove from favourites" else "☆ Add to favourites", selected = false, onClick = { vm.toggleStar(song.id, "song"); close() })
-            } else if (card != null) {
-                val kind = when (card.kind) { MusicKind.Album -> "album"; MusicKind.Artist -> "artist"; else -> null }
-                if (card.kind == MusicKind.Album || card.kind == MusicKind.Playlist) {
-                    MenuItem(text = "Play next", selected = false, modifier = Modifier.focusRequester(first), onClick = { vm.songsOf(card) { vm.playNext(it) }; close() })
-                    MenuItem(text = "Add to queue", selected = false, onClick = { vm.songsOf(card) { vm.addToQueue(it) }; close() })
-                }
-                if (kind != null) MenuItem(text = if (card.id in starred) "★ Remove from favourites" else "☆ Add to favourites", selected = false,
-                    modifier = if (card.kind == MusicKind.Artist) Modifier.focusRequester(first) else Modifier, onClick = { vm.toggleStar(card.id, kind); close() })
+    val options = buildList {
+        if (song != null) {
+            add(PopupOption("Play next") { vm.playNext(listOf(song)) })
+            add(PopupOption("Add to queue") { vm.addToQueue(listOf(song)) })
+            add(PopupOption("Song radio") { vm.radio(song) })
+            add(PopupOption(if (song.id in starred) "★ Remove from favourites" else "☆ Add to favourites") { vm.toggleStar(song.id, "song") })
+        } else if (card != null) {
+            val kind = when (card.kind) { MusicKind.Album -> "album"; MusicKind.Artist -> "artist"; else -> null }
+            if (card.kind == MusicKind.Album || card.kind == MusicKind.Playlist) {
+                add(PopupOption("Play next") { vm.songsOf(card) { vm.playNext(it) } })
+                add(PopupOption("Add to queue") { vm.songsOf(card) { vm.addToQueue(it) } })
             }
-            MenuItem(text = "Cancel", selected = false, onClick = close)
+            if (kind != null) add(PopupOption(if (card.id in starred) "★ Remove from favourites" else "☆ Add to favourites") { vm.toggleStar(card.id, kind) })
         }
     }
+    OptionsPopup(
+        title = song?.title ?: card!!.title,
+        subtitle = song?.artist ?: card!!.sub,
+        options = options,
+        onClose = close,
+        width = Tokens.PopupNarrow + 60.dp,
+    )
 }
 
 
@@ -124,34 +134,58 @@ fun LyricsPanel(lyrics: Lyrics, position: Long, duration: Long, modifier: Modifi
 }
 
 /**
- * The queue (Now Playing → Queue): every song in order, the one playing marked. OK plays from there; hold OK to
- * move it up or down, or take it out.
+ * The queue (Now Playing → Queue): every song in order, the one playing marked. OK plays from there; hold OK for its
+ * options: Move (▲ ▼ to place it, OK to put it down, as every list), Play next, Remove from queue.
+ * (Peter, 2026-11-17: "Move up" / "Move down" one step at a time gave way to the shared Move.)
  */
 @Composable
 fun QueuePanel(onClose: () -> Unit) {
-    BackHandler { onClose() }
-    io.github.petebutty.viewarr.ui.common.BackLayer()
+    val carry = rememberCarry()
+    // (Back while a song is carried puts it down: Modifier.reorderable takes that press itself.)
+    BackHandler { if (!carry.active) onClose() }
+    BackLayer()
     var picked by remember { mutableStateOf<Int?>(null) }
     val list = rememberLazyListState(initialFirstVisibleItemIndex = (MusicPlayer.index - 2).coerceAtLeast(0))
     val nowFocus = remember { FocusRequester() }
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     LaunchedEffect(Unit) { awaitFrame(); runCatching { nowFocus.requestFocus() } }
+    // Keys that follow a song as it moves (the same song twice: its 1st, 2nd… copy), so the highlight moves with it.
+    val keys = queueKeys(MusicPlayer.queue)
+    val keysNow by androidx.compose.runtime.rememberUpdatedState(keys)
     // Its own window (ViewarrPopup), on the right of Now Playing: the remote can't be left behind it.
-    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
+    ViewarrPopup(onClose = { if (!carry.active) onClose() }) {
         Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.CenterEnd) {
             Box(Modifier.fillMaxHeight().width(460.dp).glass(0.dp).padding(horizontal = 18.dp, vertical = 28.dp)) {
                 Column {
                     Text("QUEUE", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AppColors.Accent, letterSpacing = 2.sp)
-                    Text("${MusicPlayer.queue.size} songs  ·  OK: play from here  ·  Hold OK: move or remove", fontSize = 11.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp))
+                    Text(
+                        if (carry.active) movingHint() else "${MusicPlayer.queue.size} songs  ·  OK: play from here  ·  Hold OK: options",
+                        fontSize = 11.sp, color = if (carry.active) AppColors.Accent else AppColors.TextSecondary, modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+                    )
                     LazyColumn(state = list, verticalArrangement = Arrangement.spacedBy(2.dp), contentPadding = PaddingValues(bottom = 24.dp)) {
-                        itemsIndexed(MusicPlayer.queue, key = { i, s -> "$i:${s.id}" }) { i, s ->
+                        itemsIndexed(MusicPlayer.queue, key = { i, _ -> keys[i] }) { i, s ->
                             val now = i == MusicPlayer.index
+                            val key = keys[i]
+                            val carried = carry.isCarried(key)
                             MenuItem(
                                 text = (if (now) "♪  " else "${i + 1}.  ") + s.title,
                                 trailing = s.artist.take(18),
-                                selected = now,
+                                selected = now || carried,
                                 onClick = { MusicPlayer.jumpTo(i) },
                                 onLongClick = { picked = i },
-                                modifier = if (now) Modifier.focusRequester(nowFocus) else Modifier,
+                                modifier = (if (now) Modifier.focusRequester(nowFocus) else Modifier).reorderable(
+                                    carried = carried,
+                                    onMove = { dir ->
+                                        val from = keysNow.indexOf(key)
+                                        val to = from + dir
+                                        if (from >= 0 && to in MusicPlayer.queue.indices) {
+                                            MusicPlayer.move(from, to)
+                                            val info = list.layoutInfo.visibleItemsInfo
+                                            if (info.isNotEmpty() && (to <= info.first().index || to >= info.last().index)) scope.launch { list.scrollToItem((to - 3).coerceAtLeast(0)) }
+                                        }
+                                    },
+                                    onDrop = carry::drop,
+                                ),
                             )
                         }
                     }
@@ -161,41 +195,43 @@ fun QueuePanel(onClose: () -> Unit) {
     }
     picked?.let { i ->
         val s = MusicPlayer.queue.getOrNull(i) ?: run { picked = null; return }
-        val close = { picked = null }
-        androidx.compose.ui.window.Dialog(onDismissRequest = close) {
-            val first = remember { FocusRequester() }
-            LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-            Column(Modifier.width(380.dp).glass(18.dp).padding(22.dp).ignoreHeldOk(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text(s.title, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                MenuItem(text = "Play next", selected = false, modifier = Modifier.focusRequester(first), onClick = { MusicPlayer.move(i, (MusicPlayer.index + if (i > MusicPlayer.index) 1 else 0).coerceIn(0, MusicPlayer.queue.lastIndex)); close() })
-                if (i > 0) MenuItem(text = "Move up", selected = false, onClick = { MusicPlayer.move(i, i - 1); close() })
-                if (i < MusicPlayer.queue.lastIndex) MenuItem(text = "Move down", selected = false, onClick = { MusicPlayer.move(i, i + 1); close() })
-                if (i != MusicPlayer.index) MenuItem(text = "Remove from queue", selected = false, onClick = { MusicPlayer.removeAt(i); close() })
-                MenuItem(text = "Cancel", selected = false, onClick = close)
-            }
-        }
+        val key = keys.getOrNull(i) ?: return@let
+        OptionsPopup(
+            title = s.title,
+            subtitle = s.artist,
+            options = buildList {
+                if (MusicPlayer.queue.size > 1) add(carry.moveOption(key))
+                add(PopupOption("Play next") { MusicPlayer.move(i, (MusicPlayer.index + if (i > MusicPlayer.index) 1 else 0).coerceIn(0, MusicPlayer.queue.lastIndex)) })
+                if (i != MusicPlayer.index) add(PopupOption("Remove from queue") { MusicPlayer.removeAt(i) })
+            },
+            onClose = { picked = null },
+            width = Tokens.PopupNarrow + 40.dp,
+        )
     }
 }
 
-/** Sleep timer choices: off, a number of minutes, or the end of this song / album. */
+/** A key per queue entry that stays with the song as it moves: its id, and which copy of it this is. */
+private fun queueKeys(queue: List<Song>): List<String> {
+    val seen = HashMap<String, Int>()
+    return queue.map { s -> val n = (seen[s.id] ?: 0) + 1; seen[s.id] = n; "${s.id}#$n" }
+}
+
+/** Sleep timer choices: off, a number of minutes, or the end of this song / album. (Peter, 2026-11-17: shared pop-up.) */
 @Composable
 fun SleepDialog(onClose: () -> Unit) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
-        val first = remember { FocusRequester() }
-        LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-        Column(Modifier.width(360.dp).glass(18.dp).padding(22.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Sleep timer", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-            val left = MusicPlayer.sleepMinutesLeft()
-            Text(
-                when { left != null -> "Stops in about $left min"; MusicPlayer.sleepAfter == "song" -> "Stops after this song"; MusicPlayer.sleepAfter == "album" -> "Stops after this album"; else -> "Off" },
-                fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 6.dp),
-            )
-            MenuItem(text = "Off", selected = false, modifier = Modifier.focusRequester(first), onClick = { MusicPlayer.cancelSleep(); onClose() })
-            listOf(15, 30, 45, 60, 90).forEach { m -> MenuItem(text = "$m minutes", selected = false, onClick = { MusicPlayer.setSleep(m); onClose() }) }
-            MenuItem(text = "End of this song", selected = false, onClick = { MusicPlayer.sleepAfterThis(album = false); onClose() })
-            MenuItem(text = "End of this album", selected = false, onClick = { MusicPlayer.sleepAfterThis(album = true); onClose() })
-        }
-    }
+    val left = MusicPlayer.sleepMinutesLeft()
+    OptionsPopup(
+        title = "Sleep timer",
+        subtitle = when { left != null -> "Stops in about $left min"; MusicPlayer.sleepAfter == "song" -> "Stops after this song"; MusicPlayer.sleepAfter == "album" -> "Stops after this album"; else -> "Off" },
+        options = buildList {
+            add(PopupOption("Off") { MusicPlayer.cancelSleep() })
+            listOf(15, 30, 45, 60, 90).forEach { m -> add(PopupOption("$m minutes") { MusicPlayer.setSleep(m) }) }
+            add(PopupOption("End of this song") { MusicPlayer.sleepAfterThis(album = false) })
+            add(PopupOption("End of this album") { MusicPlayer.sleepAfterThis(album = true) })
+        },
+        onClose = onClose,
+        width = Tokens.PopupNarrow,
+    )
 }
 
 /** A small cover with a song's name and artist (the screensaver's "Up next"). */
@@ -217,7 +253,7 @@ internal fun MiniSong(s: Song) {
  */
 @Composable
 fun NowPlayingArt(url: String?, size: androidx.compose.ui.unit.Dp, modifier: Modifier = Modifier) {
-    val style = io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MUSIC_ART)
+    val style = AppColors.palette.opt(UiOpts.MUSIC_ART)
     // The turn: degrees, moved on each frame only while playing (so a pause stops it where it is).
     var angle by remember { mutableStateOf(0f) }
     val spins = style == 1 || style == 2 || style == 3

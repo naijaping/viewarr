@@ -20,7 +20,7 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import io.github.petebutty.viewarr.ui.theme.AppColors
 
-/** Flat TiviMate-style menu row: no focus scale/glow animation, which feels sluggish on weak TV boxes. */
+/** Flat classic-style menu row: no focus scale/glow animation, which feels sluggish on weak TV boxes. */
 @Composable
 fun MenuItem(
     text: String,

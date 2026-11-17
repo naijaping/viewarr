@@ -1,39 +1,42 @@
 package io.github.petebutty.viewarr.data.settings
 
 import android.view.KeyEvent
+import io.github.petebutty.viewarr.ui.common.RemoteAction
+import io.github.petebutty.viewarr.ui.common.RemoteKeys
 
 /**
- * Settings → Remote buttons, laid out as TiviMate does: each part of the app lists every button (and its long press)
+ * Settings → Remote buttons, laid out as classic IPTV apps does: each part of the app lists every button (and its long press)
  * with a drop-down of what it does. Only changes are saved (RemoteSettings.buttonMap, "Screen.Press" → action name);
  * everything else is [ButtonMap.default], the way the chosen preset works. A button does one thing per screen.
  */
 enum class BtnScreen(val label: String) {
     Guide("TV guide"),
-    Live("Live TV player"),
-    Film("Films & shows player"),
-    Pages("Movies, Shows & pages"),
+    // (Labels only, the names Settings → Remote buttons uses: the constants are stored. Peter, 2026-11-17.)
+    Live("On live TV"),
+    Film("In films & shows"),
+    Pages("In menus & pages"),
 }
 
-/** A press that can be given an action, in the order Settings lists them (as TiviMate's). */
+/** A press that can be given an action, in the order Settings lists them (as classic IPTV apps'). */
 enum class BtnPress(val label: String) {
     Ok("OK"),
-    OkHold("Long OK"),
+    OkHold("Hold OK"),
     Back("Back"),
-    BackHold("Long Back"),
+    BackHold("Hold Back"),
     Left("Left"),
-    LeftHold("Long Left"),
+    LeftHold("Hold Left"),
     Right("Right"),
-    RightHold("Long Right"),
+    RightHold("Hold Right"),
     Up("Up"),
-    UpHold("Long Up"),
+    UpHold("Hold Up"),
     Down("Down"),
-    DownHold("Long Down"),
+    DownHold("Hold Down"),
     ChannelUp("Ch +"),
     ChannelDown("Ch −"),
     Menu("Menu"),
-    MenuHold("Long Menu"),
-    PlayPause("Play / pause"),
-    PlayPauseHold("Long Play / pause"),
+    MenuHold("Hold Menu"),
+    PlayPause("Play / Pause"),
+    PlayPauseHold("Hold Play / Pause"),
     Stop("Stop"),
     Rewind("Rewind"),
     FastForward("Fast forward"),
@@ -50,7 +53,7 @@ enum class BtnAction(val label: String) {
     Watch("Watch, or details for later"),
     WatchInGuide("Watch in the preview (OK again: full screen)"),
     Controls("Open the controls"),
-    Banner("Info banner"),
+    Banner("Info bar"),
     ChannelList("Channel list"),
     GroupsMenu("Channel groups (menu)"),
     MainMenu("Main menu"),
@@ -60,7 +63,7 @@ enum class BtnAction(val label: String) {
     PrevChannel("Previous channel"),
     BrowseNext("Next channel in the info bar (changes when you stop)"),
     BrowsePrev("Previous channel in the info bar (changes when you stop)"),
-    LastChannel("The channel watched before"),
+    LastChannel("Last channel"),
     Now("Jump to now"),
     PageUp("Page up the channels"),
     PageDown("Page down the channels"),
@@ -73,13 +76,13 @@ enum class BtnAction(val label: String) {
     TimeTitle("Time and title"),
     SeekBar("The seek bar"),
     Episodes("Next episodes row (shows; films: the seek bar)"),
-    PlayPause("Play / pause"),
+    PlayPause("Play / Pause"),
     GoLive("Go live"),
     StartOver("Start over / watch from the start"),
     Description("Programme details"),
     Details("Details"),
     AudioSubs("Audio & subtitles"),
-    MediaInfo("Media info"),
+    MediaInfo("Stream info"),
     SwitchPlayer("Switch player"),
     RecordNow("Record (straight away)"),
     RecordOptions("Record options"),
@@ -197,7 +200,7 @@ object ButtonMap {
     private fun menuHold(s: RemoteSettings) = if (s.searchButton == SearchButton.Auto) BtnAction.Search else BtnAction.Nothing
 
     /** Out of the box, beyond each press's own handling: IPTV-box style colour buttons, Record and Info. */
-    // (The Viewarr preset, 2026-11-15: TiviMate's buttons, keeping Viewarr's Long OK record options in the guide,
+    // (The Viewarr preset, 2026-11-15: classic IPTV apps' buttons, keeping Viewarr's Long OK record options in the guide,
     // Left / Right rewind and skip on live TV, Record = record now and the guide's colour buttons.)
     private val defaults: Map<Pair<BtnScreen, BtnPress>, BtnAction> = mapOf(
         (BtnScreen.Guide to BtnPress.BackHold) to BtnAction.GroupsMenu,
@@ -350,7 +353,7 @@ object ButtonMap {
         val tap = tapOf[press] ?: press
         if (pressOfCode(searchCode(s)) == tap) return "Search"
         return s.buttons.entries.firstOrNull { (action, code) -> pressOfCode(code) == tap && pressOfAction(action) != tap }
-            ?.key?.let { n -> io.github.petebutty.viewarr.ui.common.RemoteKeys.teachable.firstOrNull { it.first.name == n }?.second }
+            ?.key?.let { n -> RemoteKeys.teachable.firstOrNull { it.first.name == n }?.second }
     }
 
     private val tapOf: Map<BtnPress, BtnPress> by lazy { longOf.entries.associate { (tap, long) -> long to tap } + (BtnPress.MenuHold to BtnPress.Menu) }
@@ -368,7 +371,7 @@ object ButtonMap {
      */
     fun pressOf(e: androidx.compose.ui.input.key.KeyEvent): BtnPress? {
         // A button taught as an extra button for something (a colour button for Record, say) is that, not its colour.
-        if (!io.github.petebutty.viewarr.ui.common.RemoteKeys.isTaught(e.nativeKeyEvent.keyCode)) when (e.nativeKeyEvent.keyCode) {
+        if (!RemoteKeys.isTaught(e.nativeKeyEvent.keyCode)) when (e.nativeKeyEvent.keyCode) {
             KeyEvent.KEYCODE_PROG_RED -> return BtnPress.Red
             KeyEvent.KEYCODE_PROG_GREEN -> return BtnPress.Green
             KeyEvent.KEYCODE_PROG_YELLOW -> return BtnPress.Yellow
@@ -376,22 +379,22 @@ object ButtonMap {
             KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP -> return BtnPress.ChannelUp
             KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN -> return BtnPress.ChannelDown
         }
-        return when (io.github.petebutty.viewarr.ui.common.RemoteKeys.action(e)) {
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Record -> BtnPress.Record
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Info -> BtnPress.Info
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Stop -> BtnPress.Stop
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Ok -> BtnPress.Ok
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Back -> BtnPress.Back
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Up -> BtnPress.Up
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Down -> BtnPress.Down
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Left -> BtnPress.Left
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Right -> BtnPress.Right
-            io.github.petebutty.viewarr.ui.common.RemoteAction.ChannelUp -> BtnPress.ChannelUp
-            io.github.petebutty.viewarr.ui.common.RemoteAction.ChannelDown -> BtnPress.ChannelDown
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Menu -> BtnPress.Menu
-            io.github.petebutty.viewarr.ui.common.RemoteAction.PlayPause -> BtnPress.PlayPause
-            io.github.petebutty.viewarr.ui.common.RemoteAction.Rewind -> BtnPress.Rewind
-            io.github.petebutty.viewarr.ui.common.RemoteAction.FastForward -> BtnPress.FastForward
+        return when (RemoteKeys.action(e)) {
+            RemoteAction.Record -> BtnPress.Record
+            RemoteAction.Info -> BtnPress.Info
+            RemoteAction.Stop -> BtnPress.Stop
+            RemoteAction.Ok -> BtnPress.Ok
+            RemoteAction.Back -> BtnPress.Back
+            RemoteAction.Up -> BtnPress.Up
+            RemoteAction.Down -> BtnPress.Down
+            RemoteAction.Left -> BtnPress.Left
+            RemoteAction.Right -> BtnPress.Right
+            RemoteAction.ChannelUp -> BtnPress.ChannelUp
+            RemoteAction.ChannelDown -> BtnPress.ChannelDown
+            RemoteAction.Menu -> BtnPress.Menu
+            RemoteAction.PlayPause -> BtnPress.PlayPause
+            RemoteAction.Rewind -> BtnPress.Rewind
+            RemoteAction.FastForward -> BtnPress.FastForward
             else -> null
         }
     }

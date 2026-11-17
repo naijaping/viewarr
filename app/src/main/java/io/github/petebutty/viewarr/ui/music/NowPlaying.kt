@@ -8,7 +8,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -75,6 +74,8 @@ import io.github.petebutty.viewarr.ui.theme.AppColors
 import io.github.petebutty.viewarr.ui.common.glass
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
+import io.github.petebutty.viewarr.ui.media.VodHost
+import io.github.petebutty.viewarr.ui.theme.UiOpts
 
 /** At the root, over every page: the Now Playing screen, or the small now-playing bar while you browse. */
 @Composable
@@ -111,8 +112,8 @@ fun MusicLayer() {
     LaunchedEffect(Unit) {
         while (true) {
             delay(5_000)
-            val wait = when (io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MUSIC_SAVER)) { 0 -> 120_000L; 1 -> 300_000L; 2 -> 600_000L; else -> null } ?: continue
-            if (MusicPlayer.isPlaying && !MusicSaver.on && !io.github.petebutty.viewarr.ui.media.VodHost.active &&
+            val wait = when (AppColors.palette.opt(UiOpts.MUSIC_SAVER)) { 0 -> 120_000L; 1 -> 300_000L; 2 -> 600_000L; else -> null } ?: continue
+            if (MusicPlayer.isPlaying && !MusicSaver.on && !VodHost.active &&
                 android.os.SystemClock.elapsedRealtime() - UserActivity.lastKeyAt > wait) {
                 MusicSaver.wasOpen = MusicPlayer.nowPlayingOpen
                 MusicSaver.on = true
@@ -121,7 +122,7 @@ fun MusicLayer() {
         }
     }
     Box(Modifier.fillMaxSize()) {
-        AnimatedVisibility(!MusicPlayer.nowPlayingOpen && !io.github.petebutty.viewarr.ui.media.VodHost.active, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomEnd)) {
+        AnimatedVisibility(!MusicPlayer.nowPlayingOpen && !VodHost.active, enter = fadeIn(), exit = fadeOut(), modifier = Modifier.align(Alignment.BottomEnd)) {
             MiniBar(position)
         }
         AnimatedVisibility(MusicPlayer.nowPlayingOpen, enter = fadeIn(), exit = fadeOut()) {
@@ -158,7 +159,7 @@ private fun NowPlaying(position: Long) {
     LaunchedEffect(s?.id) { vm.loadLyrics(s) }
     val lyrics by vm.lyrics.collectAsStateWithLifecycle()
     val starred by vm.starred.collectAsStateWithLifecycle()
-    val lyricsOn = io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MUSIC_LYRICS) == 0
+    val lyricsOn = AppColors.palette.opt(UiOpts.MUSIC_LYRICS) == 0
     val saver = MusicSaver.on
     val playFocus = remember { FocusRequester() }
     var immersive by remember { mutableStateOf(false) }
@@ -197,7 +198,7 @@ private fun NowPlaying(position: Long) {
         // The visualiser along the bottom (the whole screen in immersive mode).
         Visualiser(
             Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(if (immersive) 0.62f else 0.26f).padding(horizontal = 48.dp),
-            bands = io.github.petebutty.viewarr.playback.MusicPlayer.Analyser.BANDS, reflection = true,
+            bands = MusicPlayer.Analyser.BANDS, reflection = true,
         )
         // The screensaver: the cover big, the song, and its lyrics.
         if (s != null && saver) Row(Modifier.fillMaxSize().padding(horizontal = 80.dp, vertical = 60.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -246,7 +247,7 @@ private fun NowPlaying(position: Long) {
                     Control(AppIcons.Stats, if (immersive) "Less visualiser" else "Big visualiser", small = true, on = immersive) { immersive = !immersive }
                     Control(AppIcons.Layers, "Queue", small = true) { queueOpen = true }
                     Control(AppIcons.MusicNote, "Song radio", small = true) { vm.radio(s) }
-                    Control(if (s.id in starred) AppIcons.BookmarkFilled else AppIcons.Bookmark, if (s.id in starred) "Favourite (OK to remove)" else "Add to favourites", small = true, on = s.id in starred) { vm.toggleStar(s.id, "song") }
+                    Control(if (s.id in starred) AppIcons.BookmarkFilled else AppIcons.Bookmark, if (s.id in starred) "Favourite (OK: remove)" else "Add to favourites", small = true, on = s.id in starred) { vm.toggleStar(s.id, "song") }
                     Control(AppIcons.Clock, MusicPlayer.sleepMinutesLeft()?.let { "Sleep: $it min" } ?: MusicPlayer.sleepAfter?.let { "Sleep: end of $it" } ?: "Sleep timer",
                         small = true, on = MusicPlayer.sleepAt != null || MusicPlayer.sleepAfter != null) { sleepOpen = true }
                 }
@@ -333,7 +334,7 @@ fun Visualiser(modifier: Modifier, bands: Int, reflection: Boolean) {
     }
     val accent = AppColors.Accent
     // Settings → Playback → Music → Visualiser: bars, mirrored bars, a wave, dots, or none.
-    val style = io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MUSIC_VIS)
+    val style = AppColors.palette.opt(UiOpts.MUSIC_VIS)
     if (style == 4) return
     Canvas(modifier) {
         @Suppress("UNUSED_EXPRESSION") frame

@@ -10,9 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.verticalScroll
@@ -75,6 +73,22 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.accounts.AccountStore
+import io.github.petebutty.viewarr.data.accounts.Accounts
+import io.github.petebutty.viewarr.data.accounts.AddonInfo
+import io.github.petebutty.viewarr.data.accounts.PlexAuth
+import io.github.petebutty.viewarr.data.music.MusicLibrary
+import io.github.petebutty.viewarr.data.music.NavidromeAuth
+import io.github.petebutty.viewarr.data.music.SubsonicClient
+import io.github.petebutty.viewarr.data.net.Reach
+import io.github.petebutty.viewarr.data.profiles.House
+import io.github.petebutty.viewarr.data.profiles.Invites
+import io.github.petebutty.viewarr.data.profiles.Perms
+import io.github.petebutty.viewarr.data.profiles.ShareChoice
+import io.github.petebutty.viewarr.data.remote.services.PlexService
+import io.github.petebutty.viewarr.setup.InviteShareServer
+import io.github.petebutty.viewarr.ui.common.QrImage
+import io.github.petebutty.viewarr.ui.setup.WizardField
 
 /** Which profile screen is up (opened from Settings or on start). */
 object ProfileUi {
@@ -107,12 +121,12 @@ class ProfilesViewModel @Inject constructor(
     private val users: DispatcharrUsers,
     private val sync: SettingsSync,
     private val json: Json,
-    private val invites: io.github.petebutty.viewarr.data.profiles.Invites,
-    private val accountStore: io.github.petebutty.viewarr.data.accounts.AccountStore,
-    private val subsonic: io.github.petebutty.viewarr.data.music.SubsonicClient,
-    private val plexService: io.github.petebutty.viewarr.data.remote.services.PlexService,
-    private val house: io.github.petebutty.viewarr.data.profiles.House,
-    private val musicLib: io.github.petebutty.viewarr.data.music.MusicLibrary,
+    private val invites: Invites,
+    private val accountStore: AccountStore,
+    private val subsonic: SubsonicClient,
+    private val plexService: PlexService,
+    private val house: House,
+    private val musicLib: MusicLibrary,
 ) : ViewModel() {
     val profiles: StateFlow<List<Profile>> = manager.profiles.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
     val activeId: StateFlow<String?> = manager.activeId.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -143,7 +157,6 @@ class ProfilesViewModel @Inject constructor(
     private suspend fun me(): Session? = sessions.session.first()?.takeIf { !it.isDirect }
 
     fun checkAdmin() = viewModelScope.launch { _admin.value = me()?.let { users.myLevel(it) } == 10 }
-    fun chooseLater() { ProfileUi.chosen = true }
 
     fun switchTo(p: Profile, done: () -> Unit) = viewModelScope.launch {
         _busy.value = true
@@ -195,7 +208,7 @@ class ProfilesViewModel @Inject constructor(
         "${u.username} is on this TV now. Switch to them from Who's watching."
     }
     /** Someone's saved setup as Dispatcharr has it: their key's session, their settings, their sign-ins (null: none saved). */
-    private data class Their(val target: Session, val prefs: kotlinx.serialization.json.JsonObject, val accounts: io.github.petebutty.viewarr.data.accounts.Accounts?)
+    private data class Their(val target: Session, val prefs: kotlinx.serialization.json.JsonObject, val accounts: Accounts?)
 
     /**
      * [u]'s saved setup. Success null: they have none yet (no key, or Dispatcharr says nothing is saved), so starting
@@ -213,13 +226,13 @@ class ProfilesViewModel @Inject constructor(
     }
 
     /** What you gave [u]: remembered, or (set up before that was kept) worked out from what they have. */
-    private fun choiceFor(u: DUser, theirs: io.github.petebutty.viewarr.data.accounts.Accounts?, mine: io.github.petebutty.viewarr.data.accounts.Accounts) = u.share ?: io.github.petebutty.viewarr.data.profiles.ShareChoice(
+    private fun choiceFor(u: DUser, theirs: Accounts?, mine: Accounts) = u.share ?: ShareChoice(
         if (theirs == null) emptySet() else SharedService.entries.filter { it.has(theirs) }.toSet(),
         if (theirs == null) emptySet() else mine.addons.map { it.baseUrl }.toSet() - theirs.addons.map { it.baseUrl }.toSet(),
     )
 
     /** Your services and addons as [choice] gives them, with everything personal of [theirs] kept as it is. */
-    private fun merged(mine: io.github.petebutty.viewarr.data.accounts.Accounts, choice: io.github.petebutty.viewarr.data.profiles.ShareChoice, theirs: io.github.petebutty.viewarr.data.accounts.Accounts?) =
+    private fun merged(mine: Accounts, choice: ShareChoice, theirs: Accounts?) =
         mine.only(choice.keep - SharedService.Music, choice.addonsOff).let { a ->
             if (theirs == null) a else a.copy(
                 deviceId = theirs.deviceId, plex = theirs.plex, plexMore = theirs.plexMore, plexOff = theirs.plexOff,
@@ -229,8 +242,8 @@ class ProfilesViewModel @Inject constructor(
         }
 
     /** Writes [accounts] and [prefs] as [u]'s setup (on Dispatcharr, and their profile copy on this TV). */
-    private suspend fun writeSetup(s: Session, u: DUser, target: Session, prefs: kotlinx.serialization.json.JsonObject, accounts: io.github.petebutty.viewarr.data.accounts.Accounts): Boolean {
-        val signIns = json.encodeToString(io.github.petebutty.viewarr.data.accounts.Accounts.serializer(), accounts)
+    private suspend fun writeSetup(s: Session, u: DUser, target: Session, prefs: kotlinx.serialization.json.JsonObject, accounts: Accounts): Boolean {
+        val signIns = json.encodeToString(Accounts.serializer(), accounts)
         if (!sync.writeFor(s, u.id, target, prefs, signIns)) return false
         store.saveSnapshot(Profile(target.serverUrl, target.username, target.apiKey).id, kotlinx.serialization.json.buildJsonObject {
             put("prefs", prefs); put("accounts", kotlinx.serialization.json.JsonPrimitive(signIns)); put("setupComplete", kotlinx.serialization.json.JsonPrimitive(true))
@@ -256,8 +269,8 @@ class ProfilesViewModel @Inject constructor(
 
     /** Their setup (this TV's look and settings, and the services in [keep]) saved on Dispatcharr and on this TV. */
     private suspend fun saveSetupFor(
-        s: Session, u: DUser, key: String, keep: Set<SharedService>, music: io.github.petebutty.viewarr.data.music.NavidromeAuth? = null,
-        addonsOff: Set<String> = emptySet(), plex: io.github.petebutty.viewarr.data.accounts.PlexAuth? = null,
+        s: Session, u: DUser, key: String, keep: Set<SharedService>, music: NavidromeAuth? = null,
+        addonsOff: Set<String> = emptySet(), plex: PlexAuth? = null,
         musicFrom: Set<String>? = null,
     ): Boolean {
         val target = Session(s.serverUrl, u.username, key)
@@ -266,7 +279,7 @@ class ProfilesViewModel @Inject constructor(
             if (music != null) a.copy(navidrome = music, musicEnabled = true) else a
         }.let { a -> if (plex != null) a.copy(plex = plex) else a }
             .let { a -> if (musicFrom != null) withMusic(a, music, musicFrom) else a }
-        val signIns = json.encodeToString(io.github.petebutty.viewarr.data.accounts.Accounts.serializer(), accounts)
+        val signIns = json.encodeToString(Accounts.serializer(), accounts)
         // Their copy on this TV is replaced too, so switching to them here picks it up.
         store.saveSnapshot(target.let { Profile(it.serverUrl, it.username, it.apiKey).id }, kotlinx.serialization.json.buildJsonObject {
             put("prefs", sync.currentPrefs()); put("accounts", kotlinx.serialization.json.JsonPrimitive(signIns)); put("setupComplete", kotlinx.serialization.json.JsonPrimitive(true))
@@ -275,32 +288,19 @@ class ProfilesViewModel @Inject constructor(
     }
 
     /** What [u] may do (Viewarr's locks, and Dispatcharr's recording / catch-up / VOD switches). */
-    fun setPerms(u: DUser, p: io.github.petebutty.viewarr.data.profiles.Perms) = work { s ->
+    fun setPerms(u: DUser, p: Perms) = work { s ->
         users.update(s, u.id, props = p.toProps()).fold({ "Saved what ${u.username} can do." }, { it.message })
     }
 
     /** Dispatcharr's outside address, if set (needed to invite someone in another house). */
     suspend fun dispatcharrAway(): String? {
         val s = me() ?: return null
-        val home = io.github.petebutty.viewarr.data.net.Reach.normalise(s.serverUrl, away = false)
-        return accountStore.current().away.entries.firstOrNull { io.github.petebutty.viewarr.data.net.Reach.normalise(it.key, false) == home }?.value
+        val home = Reach.normalise(s.serverUrl, away = false)
+        return accountStore.current().away.entries.firstOrNull { Reach.normalise(it.key, false) == home }?.value
     }
-
-    /** Sign-in details to hand someone in another house: (who, address, API key). */
-    data class Share(val who: String, val address: String, val key: String)
-    private val _share = MutableStateFlow<Share?>(null)
-    val share: StateFlow<Share?> = _share
-    fun clearShare() { _share.value = null }
 
     /** The address a TV outside the home uses for Dispatcharr (its away address), else this TV's. */
     private suspend fun outsideAddress(s: Session) = (dispatcharrAway() ?: s.serverUrl).removePrefix("https://").removeSuffix(":443").trimEnd('/')
-
-    /** [u]'s sign-in for another house: [password] set as their new one, then the address, username and password to send. */
-    fun signInFor(u: DUser, password: String) = work { s ->
-        if (password.length < 6) return@work "For another house, use a password of at least 6 characters."
-        users.update(s, u.id, password = password).getOrElse { return@work it.message }
-        _details.value = Details(u.username, outsideAddress(s), password); null
-    }
 
     /** What to send someone in another house: the address, their username and password. */
     data class Details(val who: String, val address: String, val password: String)
@@ -317,7 +317,7 @@ class ProfilesViewModel @Inject constructor(
      * on this TV (a profile) or in another house (an invite, made with the password just set: no typing it again).
      */
     fun addSomeone(
-        name: String, password: String, away: Boolean, awayAddress: String, keep: Set<SharedService>, perms: io.github.petebutty.viewarr.data.profiles.Perms,
+        name: String, password: String, away: Boolean, awayAddress: String, keep: Set<SharedService>, perms: Perms,
         music: MusicChoice = MusicChoice.None, addonsOff: Set<String> = emptySet(), plex: PlexChoice = PlexChoice.None,
         musicFrom: Set<String> = emptySet(),
     ) = work { s ->
@@ -327,8 +327,8 @@ class ProfilesViewModel @Inject constructor(
         // Signing in from outside is open to the internet: a password long enough that guessing gets nowhere.
         if (away && password.length < 6) return@work "For another house, use a password of at least 6 characters."
         if (away && dispatcharrAway() == null) {
-            val a = io.github.petebutty.viewarr.data.net.Reach.normalise(awayAddress, away = true) ?: return@work "Enter your Dispatcharr's public address (e.g. tv.example.com)."
-            val home = io.github.petebutty.viewarr.data.net.Reach.normalise(s.serverUrl, away = false) ?: return@work "This TV's Dispatcharr address isn't usable."
+            val a = Reach.normalise(awayAddress, away = true) ?: return@work "Enter your Dispatcharr's public address (e.g. tv.example.com)."
+            val home = Reach.normalise(s.serverUrl, away = false) ?: return@work "This TV's Dispatcharr address isn't usable."
             accountStore.update { it.copy(away = it.away + (home to a)) }
         }
         // Their Dispatcharr user first (a taken name stops here, before anything is made on Navidrome or Plex);
@@ -337,7 +337,7 @@ class ProfilesViewModel @Inject constructor(
         suspend fun undo(why: String?): String { users.delete(s, u.id); return (why ?: "That didn't work.") + " Nothing was added." }
         val nd = navidromeFor(name.trim(), password, music).getOrElse { return@work undo(it.message) }
         val plexAuth = plexFor(plex).getOrElse { return@work undo(it.message) }
-        val props = kotlinx.serialization.json.JsonObject(perms.toProps() + io.github.petebutty.viewarr.data.profiles.ShareChoice(keep, addonsOff, plexAuth?.let { plexTitle(plex) }).toProps())
+        val props = kotlinx.serialization.json.JsonObject(perms.toProps() + ShareChoice(keep, addonsOff, plexAuth?.let { plexTitle(plex) }).toProps())
         users.update(s, u.id, props = props).getOrElse { return@work undo(it.message) }
         val key = users.apiKeyFor(s, u) ?: return@work undo("Dispatcharr wouldn't give a key for ${u.username}.")
         if (!saveSetupFor(s, u, key, keep, nd, addonsOff, plexAuth, musicFrom)) return@work undo("Dispatcharr wouldn't save ${u.username}'s setup.")
@@ -359,14 +359,11 @@ class ProfilesViewModel @Inject constructor(
 
     // ---- Backups of this TV's whole setup, in the Viewarr plugin (admins)
 
-    private val _backups = MutableStateFlow<List<io.github.petebutty.viewarr.data.profiles.House.Backup>?>(null)
+    private val _backups = MutableStateFlow<List<House.Backup>?>(null)
     /** null: loading, or no plugin. */
-    val backups: StateFlow<List<io.github.petebutty.viewarr.data.profiles.House.Backup>?> = _backups
+    val backups: StateFlow<List<House.Backup>?> = _backups
     private val _hasPlugin = MutableStateFlow<Boolean?>(null)
     val hasPlugin: StateFlow<Boolean?> = _hasPlugin
-
-    /** Whether the Viewarr plugin is installed and on (for the hints that suggest it). */
-    fun checkPlugin() = viewModelScope.launch { me()?.let { _hasPlugin.value = runCatching { house.installed(it) }.getOrDefault(false) } }
 
     fun loadBackups() = viewModelScope.launch {
         val s = me() ?: return@launch
@@ -382,12 +379,12 @@ class ProfilesViewModel @Inject constructor(
         if (ok) "Backup saved in the Viewarr plugin." else "The Viewarr plugin didn't save it (is it installed and on?)."
     }
 
-    fun restoreBackup(b: io.github.petebutty.viewarr.data.profiles.House.Backup) = work { s ->
+    fun restoreBackup(b: House.Backup) = work { s ->
         val data = house.backup(s, b.id) ?: return@work "That backup couldn't be read."
         if (sync.restoreBackup(data, s)) "Restored ${b.name}." else "Settings restored; its sign-ins couldn't be read (your Dispatcharr API key has changed since)."
     }
 
-    fun deleteBackup(b: io.github.petebutty.viewarr.data.profiles.House.Backup) = work { s ->
+    fun deleteBackup(b: House.Backup) = work { s ->
         val ok = house.deleteBackup(s, b.id); loadBackups()
         if (ok) "Deleted ${b.name}." else "It couldn't be deleted."
     }
@@ -416,14 +413,14 @@ class ProfilesViewModel @Inject constructor(
      * it is lost; their profile on this TV gets the new key too.
      */
     fun signOutEverywhere(u: DUser) = work { s ->
-        if (u.username == s.username) return@work "That's you: sign this TV out from Settings instead."
+        if (u.username == s.username) return@work "That's you: sign this TV out from Settings → Sign out of everything instead."
         // Their setup first: if it can't be read now, stop (a new key would leave it unreadable for good).
         val their = theirSetup(s, u).getOrElse { return@work it.message }
         val key = users.newKey(s, u.id) ?: return@work "Dispatcharr wouldn't make ${u.username} a new key. Nothing was changed."
         val fresh = Session(s.serverUrl, u.username, key)
         profileOf(u)?.let { manager.add(it.copy(apiKey = key)) }
         if (their != null) {
-            val saved = sync.writeFor(s, u.id, fresh, their.prefs, their.accounts?.let { json.encodeToString(io.github.petebutty.viewarr.data.accounts.Accounts.serializer(), it) })
+            val saved = sync.writeFor(s, u.id, fresh, their.prefs, their.accounts?.let { json.encodeToString(Accounts.serializer(), it) })
             if (!saved) return@work "${u.username} is signed out everywhere, but their setup couldn't be saved again: use Reset their setup… to put it back."
         }
         "${u.username} is signed out everywhere. They sign in again with their password; their setup is kept."
@@ -463,7 +460,7 @@ class ProfilesViewModel @Inject constructor(
     // ---- Plex: each person's own Plex Home user
 
     /** The managed users in this TV's Plex Home (null: no Plex here, so nothing to offer). */
-    suspend fun plexHomeUsers(): List<io.github.petebutty.viewarr.data.remote.services.PlexService.HomeUser>? {
+    suspend fun plexHomeUsers(): List<PlexService.HomeUser>? {
         val a = accountStore.current()
         val p = a.plex ?: return null
         return plexService.homeUsers(a.deviceId, p.token).filter { !it.admin }
@@ -490,7 +487,7 @@ class ProfilesViewModel @Inject constructor(
      * What would reach someone in another house only at home: the services and addons they'd get that this TV uses by
      * a home address (192.168…, .local). Shown as a warning in Add someone: add them with a public address to share.
      */
-    suspend fun homeOnly(keep: Set<SharedService>, addonsOff: Set<String>, music: Boolean, plex: Boolean): List<String> {
+    suspend fun homeOnly(keep: Set<SharedService>, addonsOff: Set<String>, music: Boolean): List<String> {
         val a = accountStore.current()
         fun home(url: String?) = url != null && io.github.petebutty.viewarr.data.media.isHomeAddress(url)
         fun host(url: String) = runCatching { java.net.URI(url).let { u -> u.host + (if (u.port > 0) ":" + u.port else "") } }.getOrDefault(url)
@@ -510,7 +507,7 @@ class ProfilesViewModel @Inject constructor(
      * Their Plex sign-in: none, an existing Plex Home user, or a new managed user (one already in the Home with
      * that name is used rather than making a second). Their libraries are shared, then their own token fetched.
      */
-    private suspend fun plexFor(choice: PlexChoice): Result<io.github.petebutty.viewarr.data.accounts.PlexAuth?> = runCatching {
+    private suspend fun plexFor(choice: PlexChoice): Result<PlexAuth?> = runCatching {
         if (choice == PlexChoice.None) return@runCatching null
         val a = accountStore.current()
         val main = a.plex ?: error("Sign this TV in to Plex first.")
@@ -558,7 +555,7 @@ class ProfilesViewModel @Inject constructor(
     }
 
     /** [a] with music from Navidrome ([nd]) and the kinds in [from]: on if any is, the rest switched off. */
-    private suspend fun withMusic(a: io.github.petebutty.viewarr.data.accounts.Accounts, nd: io.github.petebutty.viewarr.data.music.NavidromeAuth?, from: Set<String>): io.github.petebutty.viewarr.data.accounts.Accounts {
+    private suspend fun withMusic(a: Accounts, nd: NavidromeAuth?, from: Set<String>): Accounts {
         val fams = musicFamilies()
         val off = fams.filterKeys { it !in from }.values.flatten().toSet() + (if (nd == null && a.navidrome == null) setOf("nd") else emptySet())
         val any = (nd ?: a.navidrome) != null || fams.keys.any { it in from }
@@ -571,9 +568,9 @@ class ProfilesViewModel @Inject constructor(
     suspend fun hasNavidrome() = accountStore.current().navidrome != null
 
     /** Their Navidrome login: one they have already, or a new one (same name and password as their Viewarr). */
-    private suspend fun navidromeFor(name: String, password: String, m: MusicChoice): Result<io.github.petebutty.viewarr.data.music.NavidromeAuth?> {
+    private suspend fun navidromeFor(name: String, password: String, m: MusicChoice): Result<NavidromeAuth?> {
         val mine = accountStore.current().navidrome
-            ?: return if (m is MusicChoice.Existing || m is MusicChoice.Create) Result.failure(IllegalStateException("This TV has no Navidrome: add it in Settings first.")) else Result.success(null)
+            ?: return if (m is MusicChoice.Existing || m is MusicChoice.Create) Result.failure(IllegalStateException("This TV has no Navidrome: add it in Settings → Accounts & sources first.")) else Result.success(null)
         return when (m) {
             MusicChoice.None, MusicChoice.Keep -> Result.success(null)
             is MusicChoice.Existing -> subsonic.connect(mine.url, m.user, m.password).map { it }
@@ -665,15 +662,13 @@ fun WhoIsWatching(onDone: () -> Unit, vm: ProfilesViewModel = hiltViewModel()) {
                 profiles.forEachIndexed { i, p ->
                     val on = p.id == active
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Surface(
+                        // The one card highlight (FocusCard: the 3 dp accent ring, no growing; was a 4 dp white ring
+                        // that grew. Peter, 2026-11-17).
+                        io.github.petebutty.viewarr.ui.common.FocusCard(
                             onClick = { if (!busy) { if (p.pin != null && !on) askPin = p else vm.switchTo(p) { onDone() } } },
-                            modifier = (if (on || (active == null && i == 0)) Modifier.focusRequester(first) else Modifier).size(120.dp).instantFocusScale(1.1f),
-                            shape = ClickableSurfaceDefaults.shape(CircleShape),
-                            scale = io.github.petebutty.viewarr.ui.common.focusScale(1.1f),
-                            border = ClickableSurfaceDefaults.border(
-                                focusedBorder = androidx.tv.material3.Border(androidx.compose.foundation.BorderStroke(4.dp, Color.White), shape = CircleShape),
-                            ),
-                            colors = ClickableSurfaceDefaults.colors(containerColor = COLOURS[p.color % COLOURS.size], focusedContainerColor = COLOURS[p.color % COLOURS.size]),
+                            modifier = (if (on || (active == null && i == 0)) Modifier.focusRequester(first) else Modifier).size(120.dp),
+                            shape = io.github.petebutty.viewarr.ui.theme.Tokens.RoundShape,
+                            containerColor = COLOURS[p.color % COLOURS.size],
                         ) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Text(p.initial.toString(), fontSize = 52.sp, fontWeight = FontWeight.Bold, color = Color.White)
@@ -687,12 +682,12 @@ fun WhoIsWatching(onDone: () -> Unit, vm: ProfilesViewModel = hiltViewModel()) {
                 if (admin) Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Surface(
                         onClick = { adding = true },
-                        modifier = Modifier.size(120.dp).instantFocusScale(1.1f),
+                        modifier = Modifier.size(120.dp),
                         shape = ClickableSurfaceDefaults.shape(CircleShape),
-                        scale = io.github.petebutty.viewarr.ui.common.focusScale(1.1f),
+                        scale = io.github.petebutty.viewarr.ui.theme.NoScale,
                         border = ClickableSurfaceDefaults.border(
                             border = androidx.tv.material3.Border(androidx.compose.foundation.BorderStroke(2.dp, AppColors.TextSecondary), shape = CircleShape),
-                            focusedBorder = androidx.tv.material3.Border(androidx.compose.foundation.BorderStroke(4.dp, Color.White), shape = CircleShape),
+                            focusedBorder = io.github.petebutty.viewarr.ui.common.focusRing(CircleShape),
                         ),
                         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.White.copy(alpha = 0.12f)),
                     ) {
@@ -732,7 +727,7 @@ private fun QuickAddProfile(vm: ProfilesViewModel, onClose: () -> Unit) = Dialog
         families = vm.musicFamilies().keys
     }
     LaunchedEffect(sent, busy) { if (sent && !busy && message?.contains("ready") == true) onClose() }
-    io.github.petebutty.viewarr.ui.setup.WizardField(name, { name = it }, "Name", first, KeyboardType.Text, ImeAction.Done, {})
+    WizardField(name, { name = it }, "Name", first, KeyboardType.Text, ImeAction.Done, {})
     Text(
         "They get everything this TV has" + (if (hasPlex) ", their own Plex watch history" else "") + " and Live TV. More choices (limits, music, what they can do) in Settings → Users & profiles.",
         fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 10.dp, bottom = 10.dp, start = 4.dp),
@@ -741,7 +736,7 @@ private fun QuickAddProfile(vm: ProfilesViewModel, onClose: () -> Unit) = Dialog
         if (!busy && name.isNotBlank()) {
             sent = true
             val plex = if (hasPlex) PlexChoice.New(name.trim().replaceFirstChar { it.uppercase() }) else PlexChoice.None
-            vm.addSomeone(name, "", away = false, awayAddress = "", keep = options, perms = io.github.petebutty.viewarr.data.profiles.Perms(), addonsOff = addonsOff, plex = plex,
+            vm.addSomeone(name, "", away = false, awayAddress = "", keep = options, perms = Perms(), addonsOff = addonsOff, plex = plex,
                 musicFrom = families.filter { it != "Plex" || hasPlex }.toSet())
         }
     })
@@ -753,7 +748,7 @@ private fun QuickAddProfile(vm: ProfilesViewModel, onClose: () -> Unit) = Dialog
 private fun PinEntry(p: Profile, onCancel: () -> Unit, onOk: () -> Unit) = DialogBox("PIN for ${p.username}", onCancel) { first ->
     var pin by remember { mutableStateOf("") }
     var wrong by remember { mutableStateOf(false) }
-    io.github.petebutty.viewarr.ui.setup.WizardField(pin, { pin = it.filter(Char::isDigit).take(8); wrong = false }, "PIN", first, KeyboardType.NumberPassword, ImeAction.Done, { if (pin == p.pin) onOk() else wrong = true }, password = true)
+    WizardField(pin, { pin = it.filter(Char::isDigit).take(8); wrong = false }, "PIN", first, KeyboardType.NumberPassword, ImeAction.Done, { if (pin == p.pin) onOk() else wrong = true }, password = true)
     if (wrong) Text("That's not the PIN.", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp, start = 12.dp))
     Spacer(Modifier.height(10.dp))
     MenuItem(text = "OK", selected = false, onClick = { if (pin == p.pin) onOk() else wrong = true })
@@ -765,7 +760,7 @@ private fun PinEntry(p: Profile, onCancel: () -> Unit, onOk: () -> Unit) = Dialo
 private fun PinSetDialog(vm: ProfilesViewModel, onClose: () -> Unit) = DialogBox("Profile PIN", onClose) { first ->
     var pin by remember { mutableStateOf("") }
     Text("Optional: asked for when someone switches to your profile on this TV (4–8 digits). Handy on a TV shared with others in your house.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 10.dp))
-    io.github.petebutty.viewarr.ui.setup.WizardField(pin, { pin = it.filter(Char::isDigit).take(8) }, "New PIN", first, KeyboardType.NumberPassword, ImeAction.Done, {}, password = true)
+    WizardField(pin, { pin = it.filter(Char::isDigit).take(8) }, "New PIN", first, KeyboardType.NumberPassword, ImeAction.Done, {}, password = true)
     Spacer(Modifier.height(10.dp))
     MenuItem(text = "Save", selected = false, onClick = { if (pin.length >= 4) { vm.setPin(pin); onClose() } })
     MenuItem(text = "Remove PIN", selected = false, onClick = { vm.setPin(null); onClose() })
@@ -797,7 +792,7 @@ fun UsersPage(onClose: () -> Unit, vm: ProfilesViewModel = hiltViewModel()) {
     LaunchedEffect(dialog == null) { if (dialog == null) first.grab { inside } }
     BackHandler(enabled = dialog == null) { onClose() }
     Box(Modifier.fillMaxSize().background(AppColors.Background).onFocusChanged { inside = it.hasFocus }.focusProperties { exit = { FocusRequester.Cancel } }.focusGroup()) {
-        Row(Modifier.fillMaxSize().padding(start = 56.dp, top = 40.dp, end = 56.dp)) {
+        Row(Modifier.fillMaxSize().padding(start = io.github.petebutty.viewarr.ui.theme.Tokens.Gutter, top = 40.dp, end = io.github.petebutty.viewarr.ui.theme.Tokens.Gutter)) {
             // Down past the last profile stays put (it used to jump across to Add someone).
             Column(Modifier.width(380.dp).stopAt(androidx.compose.ui.focus.FocusDirection.Down)) {
                 Text("Profiles on this TV", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
@@ -920,21 +915,9 @@ private fun UserDialog(u: DUser, onClose: () -> Unit, onAction: (String) -> Unit
 }
 
 @Composable
-private fun NewUserDialog(onCancel: () -> Unit, onCreate: (String, String) -> Unit) = DialogBox("New user", onCancel) { first ->
-    var name by remember { mutableStateOf("") }
-    var pass by remember { mutableStateOf("") }
-    io.github.petebutty.viewarr.ui.setup.WizardField(name, { name = it }, "Username", first, KeyboardType.Text, ImeAction.Next, {})
-    Spacer(Modifier.height(8.dp))
-    io.github.petebutty.viewarr.ui.setup.WizardField(pass, { pass = it }, "Password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
-    Text("Letters, numbers, . _ @ - only. They'll sign in with these on any TV.", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp, bottom = 10.dp))
-    MenuItem(text = "Create", selected = false, onClick = { if (name.isNotBlank() && pass.length >= 4) onCreate(name.trim(), pass) })
-    MenuItem(text = "Cancel", selected = false, onClick = onCancel)
-}
-
-@Composable
 private fun PasswordDialog(u: DUser, onCancel: () -> Unit, onSave: (String) -> Unit) = DialogBox("New password for ${u.username}", onCancel) { first ->
     var pass by remember { mutableStateOf("") }
-    io.github.petebutty.viewarr.ui.setup.WizardField(pass, { pass = it }, "New password", first, KeyboardType.Password, ImeAction.Done, {}, password = true)
+    WizardField(pass, { pass = it }, "New password", first, KeyboardType.Password, ImeAction.Done, {}, password = true)
     Spacer(Modifier.height(10.dp))
     MenuItem(text = "Save", selected = false, onClick = { onSave(pass) })
     MenuItem(text = "Cancel", selected = false, onClick = onCancel)
@@ -1055,7 +1038,7 @@ private fun InviteDialog(u: DUser, vm: ProfilesViewModel, onClose: () -> Unit) {
         val message by vm.message.collectAsStateWithLifecycle()
         var pass by remember { mutableStateOf("") }
         Text("For a TV in another house. Type ${u.username}'s password (it's checked, and locks the invite: they'll type it once on their TV).", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 10.dp))
-        io.github.petebutty.viewarr.ui.setup.WizardField(pass, { pass = it }, "Their password", first, KeyboardType.Password, ImeAction.Done, {}, password = true)
+        WizardField(pass, { pass = it }, "Their password", first, KeyboardType.Password, ImeAction.Done, {}, password = true)
         Spacer(Modifier.height(10.dp))
         MenuItem(text = if (busy) "Making the invite…" else "Make invite", selected = false, onClick = { if (!busy && pass.isNotEmpty()) vm.makeInvite(u, pass) })
         message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp, start = 12.dp)) }
@@ -1064,7 +1047,7 @@ private fun InviteDialog(u: DUser, vm: ProfilesViewModel, onClose: () -> Unit) {
 
 /** What a person may do: Viewarr's locks, and Dispatcharr's own switches for recording, catch-up and IPTV films & series. */
 @Composable
-private fun PermsDialog(u: DUser, onCancel: () -> Unit, onSave: (io.github.petebutty.viewarr.data.profiles.Perms) -> Unit) = DialogBox("What ${u.username} can do", onCancel) { first ->
+private fun PermsDialog(u: DUser, onCancel: () -> Unit, onSave: (Perms) -> Unit) = DialogBox("What ${u.username} can do", onCancel) { first ->
     var p by remember { mutableStateOf(u.perms) }
     PermsList(p, first) { p = it }
     Spacer(Modifier.height(10.dp))
@@ -1073,8 +1056,8 @@ private fun PermsDialog(u: DUser, onCancel: () -> Unit, onSave: (io.github.peteb
 
 /** The switches, shared by Add someone and What they can do. */
 @Composable
-private fun PermsList(p: io.github.petebutty.viewarr.data.profiles.Perms, first: FocusRequester?, onChange: (io.github.petebutty.viewarr.data.profiles.Perms) -> Unit) {
-    val rows = listOf<Triple<String, Boolean, (Boolean) -> io.github.petebutty.viewarr.data.profiles.Perms>>(
+private fun PermsList(p: Perms, first: FocusRequester?, onChange: (Perms) -> Unit) {
+    val rows = listOf<Triple<String, Boolean, (Boolean) -> Perms>>(
         Triple("Live TV", p.livetv) { v -> p.copy(livetv = v) },
         Triple("Request on Seerr", p.seerr) { v -> p.copy(seerr = v) },
         Triple("Record programmes", p.record) { v -> p.copy(record = v) },
@@ -1112,7 +1095,7 @@ private fun AddSomeoneDialog(vm: ProfilesViewModel, onClose: () -> Unit) {
         var needAway by remember { mutableStateOf(false) }
         var options by remember { mutableStateOf<List<SharedService>>(emptyList()) }
         var keep by remember { mutableStateOf<Set<SharedService>>(emptySet()) }
-        var perms by remember { mutableStateOf(io.github.petebutty.viewarr.data.profiles.Perms()) }
+        var perms by remember { mutableStateOf(Perms()) }
         var sent by remember { mutableStateOf(false) }
         // Seerr isn't ticked here: "Request on Seerr" below is its one switch (on: their Seerr connection comes too).
         var hasNd by remember { mutableStateOf(false) }
@@ -1121,10 +1104,10 @@ private fun AddSomeoneDialog(vm: ProfilesViewModel, onClose: () -> Unit) {
         var ndPass by remember { mutableStateOf("") }
         var ndAdmin by remember { mutableStateOf("") }
         // Music isn't ticked here either: it has its own choice below (their own Navidrome login).
-        var addons by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.accounts.AddonInfo>>(emptyList()) }
+        var addons by remember { mutableStateOf<List<AddonInfo>>(emptyList()) }
         var addonsOff by remember { mutableStateOf<Set<String>>(emptySet()) }
         // Plex: null = no Plex on this TV. 0 none, 1 a new managed user, 2+ an existing Home user.
-        var plexUsers by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.remote.services.PlexService.HomeUser>?>(null) }
+        var plexUsers by remember { mutableStateOf<List<PlexService.HomeUser>?>(null) }
         var plexMode by remember { mutableIntStateOf(1) }
         var families by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
         var musicFrom by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -1141,14 +1124,14 @@ private fun AddSomeoneDialog(vm: ProfilesViewModel, onClose: () -> Unit) {
         // another house adds the password they'll type and the outside address.
         MenuItem(text = "Where", trailing = if (away) "In another house" else "On this TV", selected = false, onClick = { away = !away }, modifier = Modifier.focusRequester(first))
         Spacer(Modifier.height(8.dp))
-        io.github.petebutty.viewarr.ui.setup.WizardField(name, { name = it }, "Name", null, KeyboardType.Text, if (away) ImeAction.Next else ImeAction.Done, {})
+        WizardField(name, { name = it }, "Name", null, KeyboardType.Text, if (away) ImeAction.Next else ImeAction.Done, {})
         if (away) {
             Spacer(Modifier.height(8.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(pass, { pass = it }, "Password (6+ characters, they type it once)", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
+            WizardField(pass, { pass = it }, "Password (6+ characters, they type it once)", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
         }
         if (away && needAway) {
             Text("Your Dispatcharr's public address, the one they'll type (asked once):", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp, bottom = 4.dp, start = 12.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(awayAddress, { awayAddress = it }, "e.g. tv.example.com", null, KeyboardType.Uri, ImeAction.Done, {})
+            WizardField(awayAddress, { awayAddress = it }, "e.g. tv.example.com", null, KeyboardType.Uri, ImeAction.Done, {})
         }
         var pickServices by remember { mutableStateOf(false) }
         if (options.isNotEmpty() && !away && !pickServices) {
@@ -1185,7 +1168,7 @@ private fun AddSomeoneDialog(vm: ProfilesViewModel, onClose: () -> Unit) {
         PermsList(perms, null) { perms = it }
         // Another house: anything they'd get on a home-only address won't reach them. Said plainly, before adding.
         var homeOnly by remember { mutableStateOf<List<String>>(emptyList()) }
-        LaunchedEffect(away, keep, addonsOff, musicMode, perms.seerr) { homeOnly = if (away) vm.homeOnly(if (perms.seerr) keep + SharedService.Seerr else keep, addonsOff, musicMode != 0, false) else emptyList() }
+        LaunchedEffect(away, keep, addonsOff, musicMode, perms.seerr) { homeOnly = if (away) vm.homeOnly(if (perms.seerr) keep + SharedService.Seerr else keep, addonsOff, musicMode != 0) else emptyList() }
         if (homeOnly.isNotEmpty()) {
             Text("⚠ These are on a home address, so they won't work in another house. Add them in Viewarr with their public address to share them:", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 12.dp, start = 12.dp, end = 12.dp))
             homeOnly.forEach { Text("• $it", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 24.dp, top = 2.dp)) }
@@ -1209,7 +1192,7 @@ private fun AddSomeoneDialog(vm: ProfilesViewModel, onClose: () -> Unit) {
 /** [u]'s Plex: a new Plex Home user, one already in your Home, or none. */
 @Composable
 private fun PlexDialog(u: DUser, vm: ProfilesViewModel, onCancel: () -> Unit, onSave: (PlexChoice) -> Unit) = DialogBox("Plex for ${u.username}", onCancel) { first ->
-    var users by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.remote.services.PlexService.HomeUser>?>(null) }
+    var users by remember { mutableStateOf<List<PlexService.HomeUser>?>(null) }
     var loaded by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { users = vm.plexHomeUsers(); loaded = true }
     val busy by vm.busy.collectAsStateWithLifecycle()
@@ -1241,7 +1224,7 @@ private fun BackupsDialog(vm: ProfilesViewModel, onClose: () -> Unit) = DialogBo
     val hasPlugin by vm.hasPlugin.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
-    var restore by remember { mutableStateOf<io.github.petebutty.viewarr.data.profiles.House.Backup?>(null) }
+    var restore by remember { mutableStateOf<House.Backup?>(null) }
     LaunchedEffect(Unit) { vm.loadBackups() }
     // Restore question ↔ the list: focus onto the new view's first item (the one focused has gone).
     LaunchedEffect(restore) { kotlinx.coroutines.delay(60); runCatching { first.requestFocus() } }
@@ -1262,7 +1245,7 @@ private fun BackupsDialog(vm: ProfilesViewModel, onClose: () -> Unit) = DialogBo
             MenuItem(text = b.name, trailing = b.device, selected = false, onClick = { restore = b }, onLongClick = { vm.deleteBackup(b) })
         }
     }
-    if (!list.isNullOrEmpty()) Text("OK on one to restore it, hold OK to delete it.", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 6.dp, start = 12.dp))
+    if (!list.isNullOrEmpty()) Text("OK: restore  ·  Hold OK: delete", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 6.dp, start = 12.dp))
     message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp, start = 12.dp)) }
 }
 
@@ -1307,7 +1290,7 @@ private fun InviteShown(who: String, c: String, onClose: () -> Unit) {
     // for phones to read off a TV). No network address: the invite's own QR instead.
     var shareUrl by remember { mutableStateOf<String?>(null) }
     androidx.compose.runtime.DisposableEffect(c) {
-        val server = io.github.petebutty.viewarr.setup.InviteShareServer(who, listOf("Invite" to c))
+        val server = InviteShareServer(who, listOf("Invite" to c))
         shareUrl = server.start()
         onDispose { server.stop() }
     }
@@ -1319,7 +1302,7 @@ private fun InviteShown(who: String, c: String, onClose: () -> Unit) {
         Row(Modifier.padding(32.dp), verticalAlignment = Alignment.CenterVertically) {
             val side = (androidx.compose.ui.platform.LocalConfiguration.current.screenHeightDp * 0.82f).dp
             Box(Modifier.size(side).background(Color.White, RoundedCornerShape(10.dp)).padding(12.dp)) {
-                io.github.petebutty.viewarr.ui.common.QrImage(shareUrl ?: c, Modifier.fillMaxSize(), dense = shareUrl == null)
+                QrImage(shareUrl ?: c, Modifier.fillMaxSize(), dense = shareUrl == null)
             }
             Spacer(Modifier.width(36.dp))
             Column(Modifier.width(380.dp)) {
@@ -1358,13 +1341,13 @@ private fun MusicPicker(mode: Int, onMode: (Int) -> Unit, user: String, onUser: 
     when (mode) {
         1 -> {
             Text("Their Navidrome username and password (checked with Navidrome).", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(user, onUser, "Navidrome username", null, KeyboardType.Text, ImeAction.Next, {})
+            WizardField(user, onUser, "Navidrome username", null, KeyboardType.Text, ImeAction.Next, {})
             Spacer(Modifier.height(6.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(pass, onPass, "Navidrome password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
+            WizardField(pass, onPass, "Navidrome password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
         }
         2 -> {
             Text("Same name and password as their Viewarr login. Your Navidrome password is used once to make it, not kept.", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, top = 4.dp, bottom = 4.dp))
-            io.github.petebutty.viewarr.ui.setup.WizardField(admin, onAdmin, "Your Navidrome password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
+            WizardField(admin, onAdmin, "Your Navidrome password", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
         }
     }
 }
@@ -1399,7 +1382,7 @@ private fun MusicDialog(u: DUser, vm: ProfilesViewModel, onCancel: () -> Unit, o
     MusicPicker(mode, { mode = it }, user, { user = it }, pass, { pass = it }, admin, { admin = it }, canCreate = true, firstLabel = "Keep as it is")
     if (mode == 2) {
         Spacer(Modifier.height(6.dp))
-        io.github.petebutty.viewarr.ui.setup.WizardField(viewarrPass, { viewarrPass = it }, "Their password for the new Navidrome user", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
+        WizardField(viewarrPass, { viewarrPass = it }, "Their password for the new Navidrome user", null, KeyboardType.Password, ImeAction.Done, {}, password = true)
     }
     Spacer(Modifier.height(10.dp))
     MusicFrom(families, from) { from = it }

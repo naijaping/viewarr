@@ -1,12 +1,14 @@
 package io.github.petebutty.viewarr.data.accounts
 
 import android.content.Context
+import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import io.github.petebutty.viewarr.data.session.KeystoreCipher
 import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.petebutty.viewarr.data.music.NavidromeAuth
+import io.github.petebutty.viewarr.data.session.KeystoreCipher
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -63,7 +65,7 @@ data class Accounts(
     /** Mark on Plex what Trakt says you've watched (Settings → Trakt). Off unless switched on: it changes Plex. */
     val traktToPlex: Boolean = false,
     /** Navidrome (Subsonic) for Music: address, user and a salted token (never the password). */
-    val navidrome: io.github.petebutty.viewarr.data.music.NavidromeAuth? = null,
+    val navidrome: NavidromeAuth? = null,
     /** Music sources switched off (MusicSource ids, e.g. "nd", "px…"): left out of the Music pages and search. */
     val musicOff: Set<String> = emptySet(),
     /** Music turned on in setup (Settings → Accounts & sources → Music). Off: no Music in the menu or search. */
@@ -97,6 +99,16 @@ class AccountStore @Inject constructor(
     // that was never used again).
     val accounts: Flow<Accounts> = context.accountsStore.data.map { prefs -> decode(prefs[BLOB]) ?: Accounts(deviceId = firstRunDeviceId) }
 
+    /**
+     * The sign-ins, or null while they're saved but can't be read (the box's key store failing for a moment). [accounts]
+     * shows a blank copy then, which looks just like signed out: anything that would send or replace the sign-ins
+     * (settings sync) reads this instead, so a passing key store blip never spreads a blank copy.
+     */
+    suspend fun currentReadable(): Accounts? {
+        val blob = context.accountsStore.data.first()[BLOB]
+        return if (blob == null) Accounts(deviceId = firstRunDeviceId) else decode(blob)
+    }
+
     /** null = never recorded (installs from before the wizard had optional steps). */
     val setupComplete: Flow<Boolean?> = context.accountsStore.data.map { it[SETUP_COMPLETE] }
 
@@ -111,7 +123,7 @@ class AccountStore @Inject constructor(
         context.accountsStore.edit { prefs ->
             val blob = prefs[BLOB]
             val now = decode(blob)
-            if (blob != null && now == null) { android.util.Log.w("AccountStore", "saved accounts unreadable; change skipped"); return@edit }
+            if (blob != null && now == null) { Log.w("AccountStore", "saved accounts unreadable; change skipped"); return@edit }
             prefs[BLOB] = KeystoreCipher.encrypt(json.encodeToString(Accounts.serializer(), transform(now ?: Accounts(deviceId = firstRunDeviceId))))
         }
     }

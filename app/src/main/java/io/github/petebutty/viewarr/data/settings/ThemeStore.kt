@@ -3,13 +3,19 @@ package io.github.petebutty.viewarr.data.settings
 import android.content.Context
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import dagger.hilt.android.qualifiers.ApplicationContext
+import io.github.petebutty.viewarr.ui.theme.OldHighlights
 import io.github.petebutty.viewarr.ui.theme.Palette
 import io.github.petebutty.viewarr.ui.theme.ThemePresets
-import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -24,8 +30,7 @@ class ThemeStore @Inject constructor(@ApplicationContext private val context: Co
     init {
         // Once, on updating to the glass design (0.26): everyone moves to the Viewarr theme, whatever colours they
         // had picked before (the highlight can be changed again afterwards).
-        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-            // (Written to the log as it stands before any change: how the Viewarr theme's values were taken.)
+        CoroutineScope(Dispatchers.IO).launch {
             context.appearanceStore.edit { p ->
                 if ((p[THEME_VERSION] ?: 0) >= 26) return@edit
                 p[MAIN] = ThemePresets[0].main.toArgb()
@@ -47,7 +52,7 @@ class ThemeStore @Inject constructor(@ApplicationContext private val context: Co
     val palette: Flow<Palette> = context.appearanceStore.data.map { prefs ->
         Palette(
             main = prefs[MAIN]?.let { Color(it) } ?: ThemePresets[0].main,
-            highlight = prefs[HIGHLIGHT]?.let { io.github.petebutty.viewarr.ui.theme.OldHighlights[it] ?: Color(it) } ?: ThemePresets[0].highlight,
+            highlight = prefs[HIGHLIGHT]?.let { OldHighlights[it] ?: Color(it) } ?: ThemePresets[0].highlight,
             transparency = prefs[TRANSPARENCY] ?: 0f,
             guideTransparency = prefs[GUIDE_TRANSPARENCY] ?: 0f,
             showNumbers = prefs[NUMBERS] ?: true,
@@ -89,7 +94,7 @@ class ThemeStore @Inject constructor(@ApplicationContext private val context: Co
 
     /** An info bar's button order ("live", "film"; hold OK on a button → move). */
     suspend fun saveBarOrder(bar: String, ids: List<String>) {
-        context.appearanceStore.edit { it[androidx.datastore.preferences.core.stringPreferencesKey("bar_$bar")] = ids.joinToString("\u001F") }
+        context.appearanceStore.edit { it[stringPreferencesKey("bar_$bar")] = ids.joinToString("\u001F") }
     }
 
     /** The main menu's order (hold OK in the menu → move). */
@@ -127,8 +132,14 @@ class ThemeStore @Inject constructor(@ApplicationContext private val context: Co
         context.appearanceStore.edit { it[intPreferencesKey("opt_$name")] = value }
     }
 
+    /** Back to how a fresh install has them: the Viewarr look's value where it sets one, otherwise the default. */
     suspend fun resetOpts(names: Collection<String>) {
-        context.appearanceStore.edit { p -> names.forEach { p.remove(intPreferencesKey("opt_$it")) } }
+        context.appearanceStore.edit { p ->
+            names.forEach { n ->
+                val key = intPreferencesKey("opt_$n")
+                VIEWARR_LOOK[n]?.let { p[key] = it } ?: p.remove(key)
+            }
+        }
     }
 
     suspend fun resetTitleParts() {
@@ -141,9 +152,9 @@ class ThemeStore @Inject constructor(@ApplicationContext private val context: Co
     }
 
     private companion object {
-        val NUMBERS = androidx.datastore.preferences.core.booleanPreferencesKey("show_numbers")
-        val SQUARE = androidx.datastore.preferences.core.booleanPreferencesKey("square_corners")
-        val HIDE_MEDIA = androidx.datastore.preferences.core.booleanPreferencesKey("hide_media")
+        val NUMBERS = booleanPreferencesKey("show_numbers")
+        val SQUARE = booleanPreferencesKey("square_corners")
+        val HIDE_MEDIA = booleanPreferencesKey("hide_media")
         val MAIN = intPreferencesKey("main")
         /** The Viewarr look's display options (UiOpts): its info bar, lettering and guide details. */
         private val VIEWARR_LOOK = mapOf(
@@ -159,8 +170,8 @@ class ThemeStore @Inject constructor(@ApplicationContext private val context: Co
         val WALLPAPER = intPreferencesKey("wallpaper")
         val WALLPAPER_STYLE = intPreferencesKey("wallpaper_style")
         val WALLPAPER_DIM = floatPreferencesKey("wallpaper_dim")
-        val TITLE_HIDDEN = androidx.datastore.preferences.core.stringSetPreferencesKey("title_hidden")
-        val MENU_ORDER = androidx.datastore.preferences.core.stringPreferencesKey("menu_order")
-        val RATINGS_ORDER = androidx.datastore.preferences.core.stringPreferencesKey("ratings_order")
+        val TITLE_HIDDEN = stringSetPreferencesKey("title_hidden")
+        val MENU_ORDER = stringPreferencesKey("menu_order")
+        val RATINGS_ORDER = stringPreferencesKey("ratings_order")
     }
 }

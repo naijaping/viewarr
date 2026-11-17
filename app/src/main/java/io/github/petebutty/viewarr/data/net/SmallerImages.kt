@@ -16,6 +16,13 @@ object SmallerImages : Interceptor {
     private val tmdb = Regex("""(image\.tmdb\.org/t/p/)(w\d+|original)(/)""")
     private val tmdbSteps = listOf(92, 154, 185, 342, 500, 780, 1280)
     private val metahub = Regex("""(images\.metahub\.space/(?:poster|background)/)(large|medium)(/)""")
+    // Plex's and Jellyfin / Emby's size parameters (made once: this runs for every picture).
+    private val plexW = Regex("""[?&]width=(\d+)""")
+    private val plexH = Regex("""[?&]height=(\d+)""")
+    private val plexWSet = Regex("""([?&])width=\d+""")
+    private val plexHSet = Regex("""([?&])height=\d+""")
+    private val maxW = Regex("""([?&])maxWidth=(\d+)""")
+    private val maxH = Regex("""([?&])maxHeight=(\d+)""")
 
     override suspend fun intercept(chain: Interceptor.Chain): ImageResult {
         val req = chain.request
@@ -44,17 +51,17 @@ object SmallerImages : Interceptor {
         }
         // Plex's picture transcoder: width / height kept in proportion.
         if ("/photo/:/transcode" in url) {
-            val pw = Regex("""[?&]width=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: return null
-            val ph = Regex("""[?&]height=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+            val pw = plexW.find(url)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+            val ph = plexH.find(url)?.groupValues?.get(1)?.toIntOrNull() ?: return null
             if (w >= pw) return null
             val nh = (ph.toLong() * w / pw).toInt().coerceAtLeast(1)
-            return url.replace(Regex("""([?&])width=\d+"""), "$1width=$w").replace(Regex("""([?&])height=\d+"""), "$1height=$nh")
+            return url.replace(plexWSet, "$1width=$w").replace(plexHSet, "$1height=$nh")
         }
         // Jellyfin / Emby: maxWidth or maxHeight.
         if ("/Images/" in url) {
             var out = url
-            Regex("""([?&])maxWidth=(\d+)""").find(out)?.let { m -> if (w < m.groupValues[2].toInt()) out = out.replaceRange(m.range, "${m.groupValues[1]}maxWidth=$w") }
-            if (h != null) Regex("""([?&])maxHeight=(\d+)""").find(out)?.let { m -> if (h < m.groupValues[2].toInt()) out = out.replaceRange(m.range, "${m.groupValues[1]}maxHeight=$h") }
+            maxW.find(out)?.let { m -> if (w < m.groupValues[2].toInt()) out = out.replaceRange(m.range, "${m.groupValues[1]}maxWidth=$w") }
+            if (h != null) maxH.find(out)?.let { m -> if (h < m.groupValues[2].toInt()) out = out.replaceRange(m.range, "${m.groupValues[1]}maxHeight=$h") }
             return out.takeIf { it != url }
         }
         return null

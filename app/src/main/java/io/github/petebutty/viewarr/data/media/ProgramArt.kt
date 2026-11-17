@@ -9,6 +9,9 @@ import io.github.petebutty.viewarr.data.remote.services.child
 import io.github.petebutty.viewarr.data.remote.services.int
 import io.github.petebutty.viewarr.data.remote.services.str
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -42,10 +45,10 @@ class ProgramArt @Inject constructor(
                 val same = r.body.array("results")
                     .filter { it.str("media_type") == "tv" || it.str("media_type") == "movie" }
                     .filter { j -> norm(j.str("name") ?: j.str("title") ?: "") == want }
-                fun m(j: kotlinx.serialization.json.JsonElement) = j.int("id")?.let { Match(j.str("media_type")!!, it, j.str("backdrop_path")) }
+                fun m(j: JsonElement) = j.int("id")?.let { Match(j.str("media_type")!!, it, j.str("backdrop_path")) }
                 // For the title logo, stricter (a wrong logo is worse than the name): a UK / Irish / US show, or the
                 // only film with that name. ("Breakfast": five films and a Philippine show, so no logo.)
-                val tvOk = same.firstOrNull { j -> j.str("media_type") == "tv" && (j.child("origin_country") as? kotlinx.serialization.json.JsonArray).orEmpty().any { (it as? kotlinx.serialization.json.JsonPrimitive)?.content in setOf("GB", "IE", "US") } }
+                val tvOk = same.firstOrNull { j -> j.str("media_type") == "tv" && (j.child("origin_country") as? JsonArray).orEmpty().any { (it as? JsonPrimitive)?.content in setOf("GB", "IE", "US") } }
                 val films = same.filter { it.str("media_type") == "movie" }
                 val logoPick = tvOk ?: films.singleOrNull()
                 // The picture: one with a picture first, else any (as before).
@@ -73,10 +76,10 @@ class ProgramArt @Inject constructor(
                 val r = http.get(tmdb.url("/${m.type}/${m.id}/images", key, mapOf("include_image_language" to "en,null")), tmdb.headers(key))
                 if (!r.ok) return@runCatching null
                 r.body.array("logos").sortedWith(
-                    compareBy<kotlinx.serialization.json.JsonElement>(
+                    compareBy<JsonElement>(
                         { when (it.str("iso_639_1")) { "en" -> 0; null -> 1; else -> 2 } },
                         { if (it.str("file_path")?.endsWith(".png") == true) 0 else 1 },
-                        { -(((it.child("vote_average") as? kotlinx.serialization.json.JsonPrimitive)?.content?.toDoubleOrNull()) ?: 0.0) },
+                        { -(((it.child("vote_average") as? JsonPrimitive)?.content?.toDoubleOrNull()) ?: 0.0) },
                     ),
                 ).firstOrNull()?.str("file_path")?.let { "https://image.tmdb.org/t/p/w500$it" }
             }.getOrNull()

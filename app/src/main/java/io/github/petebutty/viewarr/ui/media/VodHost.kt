@@ -25,6 +25,14 @@ import io.github.petebutty.viewarr.data.media.PlayerArt
 import io.github.petebutty.viewarr.data.media.VodStream
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.flow.StateFlow
+import io.github.petebutty.viewarr.data.media.MediaItem
+import io.github.petebutty.viewarr.data.settings.LocalPlayback
+import io.github.petebutty.viewarr.data.settings.LocalRemote
+import io.github.petebutty.viewarr.data.settings.VideoView
+import io.github.petebutty.viewarr.playback.MusicPlayer
+import io.github.petebutty.viewarr.ui.common.SearchKey
+import io.github.petebutty.viewarr.ui.theme.CornerPicture
+import io.github.petebutty.viewarr.ui.theme.UiOpts
 
 /** Where a film, episode or recording comes from: its page's state (what's playing, its artwork) and callbacks. */
 class VodSource(
@@ -35,7 +43,7 @@ class VodSource(
      *  one has started, and was being counted against the new one). */
     val onProgress: (stream: VodStream, state: String, positionMs: Long, durationMs: Long) -> Unit = { _, _, _, _ -> },
     /** The title playing (for reopening its page if Android clears Viewarr in the background: ResumeSpot). */
-    val item: () -> io.github.petebutty.viewarr.data.media.MediaItem? = { null },
+    val item: () -> MediaItem? = { null },
 )
 
 /**
@@ -74,7 +82,7 @@ object VodHost {
         if (samePage && now != null && now === shown) return
         if (!samePage) old?.onClose()
         // A film or episode ends the music.
-        io.github.petebutty.viewarr.playback.MusicPlayer.stop()
+        MusicPlayer.stop()
         shown = now
         mini = false
     }
@@ -138,8 +146,8 @@ fun VodHostLayer() {
     val mini = VodHost.mini
     // Settings → Playback → Picture-in-picture: size and corner.
     val p = AppColors.palette
-    val (w, h) = io.github.petebutty.viewarr.ui.theme.CornerPicture.size()
-    val corner = when (p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MINI_CORNER)) { 1 -> Alignment.BottomStart; 2 -> Alignment.TopEnd; 3 -> Alignment.TopStart; else -> Alignment.BottomEnd }
+    val (w, h) = CornerPicture.size()
+    val corner = when (p.opt(UiOpts.MINI_CORNER)) { 1 -> Alignment.BottomStart; 2 -> Alignment.TopEnd; 3 -> Alignment.TopStart; else -> Alignment.BottomEnd }
     val top = corner == Alignment.TopEnd || corner == Alignment.TopStart
     val left = corner == Alignment.BottomStart || corner == Alignment.TopStart
     // Into the corner and back as a short glide, not a jump. Standard video view (SurfaceView): the window's real
@@ -150,7 +158,7 @@ fun VodHostLayer() {
     // Growing back starts a moment late: the player takes the remote back and rebuilds its screen first, which
     // stuttered the first frames when it happened during the glide. (Shrinking starts at once: it looked fine.)
     // Settings → Playback → Picture-in-picture → Film animation (Off: straight there).
-    val animate = p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.ANIM_FILM) == 0
+    val animate = p.opt(UiOpts.ANIM_FILM) == 0
     var target by androidx.compose.runtime.remember { mutableStateOf(if (mini) 1f else 0f) }
     val shrinkAnim = androidx.compose.animation.core.animateFloatAsState(
         target,
@@ -172,13 +180,12 @@ fun VodHostLayer() {
     }
     // Standard video view (a SurfaceView): the display hardware scales the picture, so the window's real place and
     // size are moved (only re-laid out each frame). A scaled graphics layer doesn't apply to a SurfaceView.
-    val surfaceView = io.github.petebutty.viewarr.data.settings.LocalPlayback.current.videoView == io.github.petebutty.viewarr.data.settings.VideoView.Standard
+    val surfaceView = LocalPlayback.current.videoView == VideoView.Standard
     androidx.compose.foundation.layout.BoxWithConstraints(Modifier.fillMaxSize()) {
         val fullW = maxWidth
-        val fullH = maxHeight
         // The top-left window (the guide's preview place), moving with the menu's glass.
-        val tx = io.github.petebutty.viewarr.ui.theme.CornerPicture.inset.first
-        val ty = io.github.petebutty.viewarr.ui.theme.CornerPicture.inset.second
+        val tx = CornerPicture.inset.first
+        val ty = CornerPicture.inset.second
         // The same player either way, so it carries on without a pause. Compatible: the frame is only ever scaled,
         // in the corner too (resizing a TextureView made the players resize their video surface, which jolted).
         // No border: one less thing to draw while it moves.
@@ -198,7 +205,7 @@ fun VodHostLayer() {
                     val cw = (fw + (wPx - fw) * p).toInt().coerceAtLeast(1)
                     val ch = (fh + (hPx - fh) * p).toInt().coerceAtLeast(1)
                     val placeable = measurable.measure(androidx.compose.ui.unit.Constraints.fixed(cw, ch))
-                    layout(fw, fh) { placeable.place(((txPx + io.github.petebutty.viewarr.ui.theme.CornerPicture.pushPx()) * p).toInt(), (tyPx * p).toInt()) }
+                    layout(fw, fh) { placeable.place(((txPx + CornerPicture.pushPx()) * p).toInt(), (tyPx * p).toInt()) }
                 }
                 .background(Color.Black)
             else Modifier
@@ -209,7 +216,7 @@ fun VodHostLayer() {
                     val k = 1f + (scale - 1f) * shrink
                     scaleX = k
                     scaleY = k
-                    translationX = (with(density) { tx.toPx() } + io.github.petebutty.viewarr.ui.theme.CornerPicture.pushPx()) * shrink
+                    translationX = (with(density) { tx.toPx() } + CornerPicture.pushPx()) * shrink
                     translationY = with(density) { ty.toPx() } * shrink
                 }
                 .background(Color.Black),
@@ -218,12 +225,20 @@ fun VodHostLayer() {
           // went in there, out of sight); the corner picture's own highlight (Full screen / Close) is drawn by the page.
           // The search button while the film's full screen: it goes to the corner and search opens (search first,
           // whatever's playing). The rest of that press is swallowed (a tap of Menu would also open audio & subtitles).
-          val remote = io.github.petebutty.viewarr.data.settings.LocalRemote.current
-          val searchHeld = androidx.compose.runtime.remember { booleanArrayOf(false) }
+          val remote = LocalRemote.current
+          // The held search key's code (0: none). Its release usually goes to the search page instead, so it's also
+          // cleared when the film goes to the corner or comes back, and only that key's events are swallowed:
+          // otherwise the first press after returning full screen was eaten.
+          val searchHeld = androidx.compose.runtime.remember { longArrayOf(0L) }
+          LaunchedEffect(mini) { searchHeld[0] = 0L }
           val searchKeys = Modifier.onPreviewKeyEvent { e ->
-              if (searchHeld[0]) { if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyUp) searchHeld[0] = false; return@onPreviewKeyEvent true }
-              if (mini || e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || !io.github.petebutty.viewarr.ui.common.SearchKey.hit(e, remote)) return@onPreviewKeyEvent false
-              searchHeld[0] = true
+              if (searchHeld[0] != 0L && e.key.keyCode == searchHeld[0]) {
+                  if (e.type == androidx.compose.ui.input.key.KeyEventType.KeyUp) searchHeld[0] = 0L
+                  return@onPreviewKeyEvent true
+              }
+              searchHeld[0] = 0L
+              if (mini || e.type != androidx.compose.ui.input.key.KeyEventType.KeyDown || !SearchKey.hit(e, remote)) return@onPreviewKeyEvent false
+              searchHeld[0] = e.key.keyCode
               VodHost.minimise()
               VodHost.openSearch()
               true

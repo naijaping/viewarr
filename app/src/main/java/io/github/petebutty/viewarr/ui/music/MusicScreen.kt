@@ -93,6 +93,27 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.media.FilterValue
+import io.github.petebutty.viewarr.data.media.LibraryOptions
+import io.github.petebutty.viewarr.data.media.LibraryQuery
+import io.github.petebutty.viewarr.data.media.LibraryViews
+import io.github.petebutty.viewarr.data.music.Lyrics
+import io.github.petebutty.viewarr.ui.common.LiveBehind
+import io.github.petebutty.viewarr.ui.library.AlphabetRail
+import io.github.petebutty.viewarr.ui.library.FilterChip
+import io.github.petebutty.viewarr.ui.library.FilterPanel
+import io.github.petebutty.viewarr.ui.library.SortPanel
+import io.github.petebutty.viewarr.ui.library.ToolButton
+import io.github.petebutty.viewarr.ui.media.LibrarySearchBox
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+import io.github.petebutty.viewarr.ui.common.AppPill
+import io.github.petebutty.viewarr.ui.common.CardAspect
+import io.github.petebutty.viewarr.ui.common.FocusCard
+import io.github.petebutty.viewarr.ui.common.leftOpens
+import io.github.petebutty.viewarr.ui.media.RowGap
+import io.github.petebutty.viewarr.ui.media.RowTitle
+import io.github.petebutty.viewarr.ui.theme.NoScale
+import io.github.petebutty.viewarr.ui.theme.Tokens
 
 enum class MusicKind { Album, Playlist, Artist, Genre }
 
@@ -119,10 +140,10 @@ data class MusicBrowse(
     /** Albums in this genre (opened from Genres). */
     val genre: String? = null,
     /** Album grids: their sort and filters (null for artists, playlists and the genre list). */
-    val query: io.github.petebutty.viewarr.data.media.LibraryQuery? = null,
-    val options: io.github.petebutty.viewarr.data.media.LibraryOptions? = null,
+    val query: LibraryQuery? = null,
+    val options: LibraryOptions? = null,
     /** Each filter's choices once looked up (null while loading). */
-    val values: Map<String, List<io.github.petebutty.viewarr.data.media.FilterValue>?> = emptyMap(),
+    val values: Map<String, List<FilterValue>?> = emptyMap(),
     /** Changes with the sort and filters: the grid starts again from the top. */
     val version: Int = 0,
     /** A–Z: the position to go to. */
@@ -183,7 +204,7 @@ class MusicViewModel @Inject constructor(
     private val library: MusicLibrary,
     store: AccountStore,
     /** The Albums grid's sort and filters, remembered (per profile). */
-    private val libraryViews: io.github.petebutty.viewarr.data.media.LibraryViews,
+    private val libraryViews: LibraryViews,
     @ApplicationContext private val context: Context,
 ) : ViewModel() {
     /** Something to play from: any music source connected (Navidrome, or Plex / Jellyfin / Emby with a music library). */
@@ -207,8 +228,8 @@ class MusicViewModel @Inject constructor(
     private val _starred = MutableStateFlow<Set<String>>(emptySet())
     val starred: StateFlow<Set<String>> = _starred
     /** The playing song's lyrics (null: none found / not looked yet). */
-    private val _lyrics = MutableStateFlow<io.github.petebutty.viewarr.data.music.Lyrics?>(null)
-    val lyrics: StateFlow<io.github.petebutty.viewarr.data.music.Lyrics?> = _lyrics
+    private val _lyrics = MutableStateFlow<Lyrics?>(null)
+    val lyrics: StateFlow<Lyrics?> = _lyrics
     private var lyricsFor: String? = null
 
     /** Looks up [song]'s lyrics once (Now Playing asks as the song changes). */
@@ -216,7 +237,7 @@ class MusicViewModel @Inject constructor(
         if (song == null || song.id == lyricsFor) return
         lyricsFor = song.id
         _lyrics.value = null
-        val lrclib = io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.MUSIC_LRCLIB) == 1
+        val lrclib = AppColors.palette.opt(UiOpts.MUSIC_LRCLIB) == 1
         viewModelScope.launch {
             val l = runCatching { library.lyrics(song, lrclib) }.getOrNull()
             if (lyricsFor == song.id) _lyrics.value = l
@@ -308,9 +329,9 @@ class MusicViewModel @Inject constructor(
         if (cur?.kind == kind && cur.genre == null && !cur.loading) return
         // Album grids: sorted and filtered (Albums as you left it; Recently added and Favourites preset).
         val q = when (kind) {
-            MusicBrowseKind.Albums -> libraryViews.load(ALBUMS_VIEW) ?: io.github.petebutty.viewarr.data.media.LibraryQuery("title", false)
-            MusicBrowseKind.Newest -> io.github.petebutty.viewarr.data.media.LibraryQuery("added", true)
-            MusicBrowseKind.Favourites -> io.github.petebutty.viewarr.data.media.LibraryQuery("title", false, toggles = setOf("favourites"))
+            MusicBrowseKind.Albums -> libraryViews.load(ALBUMS_VIEW) ?: LibraryQuery("title", false)
+            MusicBrowseKind.Newest -> LibraryQuery("added", true)
+            MusicBrowseKind.Favourites -> LibraryQuery("title", false, toggles = setOf("favourites"))
             else -> null
         }
         if (q != null) { runAlbums(MusicBrowse(kind, query = q)); return }
@@ -330,11 +351,11 @@ class MusicViewModel @Inject constructor(
     }
 
     private fun openGenre(name: String) {
-        val q = io.github.petebutty.viewarr.data.media.LibraryQuery("title", false, filters = mapOf("genre" to listOf(io.github.petebutty.viewarr.data.media.FilterValue(name, name))))
+        val q = LibraryQuery("title", false, filters = mapOf("genre" to listOf(FilterValue(name, name))))
         runAlbums(MusicBrowse(MusicBrowseKind.Genres, title = name, genre = name, query = q))
     }
 
-    private var albumOptions: io.github.petebutty.viewarr.data.media.LibraryOptions? = null
+    private var albumOptions: LibraryOptions? = null
     private var versions = 0
 
     /** An album grid with its sort and filters: from the top. */
@@ -368,7 +389,7 @@ class MusicViewModel @Inject constructor(
             _browse.update { it?.copy(values = it.values + (group to got)) }
         }
     }
-    fun toggleAlbumValue(group: String, value: io.github.petebutty.viewarr.data.media.FilterValue) {
+    fun toggleAlbumValue(group: String, value: FilterValue) {
         val b = _browse.value ?: return
         val q = b.query ?: return
         val multi = b.options?.filters?.firstOrNull { it.id == group }?.multi != false
@@ -564,17 +585,21 @@ fun MusicScreen(
 
     // Live TV in the guide's preview place (top left): the highlighted album, artist or playlist beside it, the
     // music below.
-    val besidePreview = io.github.petebutty.viewarr.ui.common.LiveBehind.preview
-    Column(Modifier.fillMaxSize().background(AppColors.Background)) {
+    val besidePreview = LiveBehind.preview
+    // (The app's wallpaper shows through, as under the menu beside it: one background across both. Peter, 2026-11-17.)
+    Column(Modifier.fillMaxSize()) {
     if (besidePreview) Row(Modifier.fillMaxWidth().height(200.dp)) {
-        Spacer(Modifier.width(356.dp))
-        Column(Modifier.padding(top = 26.dp, end = 48.dp)) {
+        Spacer(Modifier.width(Tokens.BesideWindowStart))
+        Column(Modifier.padding(top = 26.dp, end = Tokens.Gutter)) {
+            // An album / artist / playlist open: its name and details here (the page below then leaves them out, so
+            // they aren't shown twice); otherwise the highlighted card's. (Peter, 2026-11-17.)
+            val d = detail
             val c = MusicHover.card
             Text("Music", fontSize = 14.sp, color = AppColors.Accent)
             Spacer(Modifier.height(8.dp))
-            Text(c?.title ?: "Your music", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            c?.sub?.takeIf { it.isNotBlank() }?.let { Spacer(Modifier.height(6.dp)); Text(it, fontSize = 15.sp, color = AppColors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis) }
-            c?.let { Spacer(Modifier.height(4.dp)); Text(it.kind.name, fontSize = 13.sp, color = AppColors.TextSecondary) }
+            Text(d?.title ?: c?.title ?: "Your music", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            (if (d != null) d.sub else c?.sub)?.takeIf { it.isNotBlank() }?.let { Spacer(Modifier.height(6.dp)); Text(it, fontSize = 15.sp, color = AppColors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis) }
+            if (d == null) c?.let { Spacer(Modifier.height(4.dp)); Text(it.kind.name, fontSize = 13.sp, color = AppColors.TextSecondary) }
         }
     }
     Box(Modifier.fillMaxWidth().weight(1f)) {
@@ -602,7 +627,7 @@ private fun NotConnected(focusRequester: FocusRequester, onSetUp: () -> Unit, on
             "Connect Navidrome, or a Plex, Jellyfin or Emby server with a music library, to play your music here.",
             fontSize = 16.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 10.dp, bottom = 24.dp),
         )
-        Pill("Accounts & sources", Modifier.focusRequester(focusRequester).leftOpens(onOpenMenu), onSetUp)
+        Pill("Accounts & sources", Modifier.focusRequester(focusRequester).leftOpens(onMenu = onOpenMenu), onSetUp)
     }
 }
 
@@ -618,20 +643,23 @@ private fun MusicHomePage(
     LazyColumn(
         Modifier.fillMaxSize(), state = list,
         contentPadding = PaddingValues(top = 28.dp, bottom = 110.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(RowGap),
     ) {
         item(key = "header") {
-            Row(Modifier.padding(horizontal = 48.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Music", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-                Spacer(Modifier.width(28.dp))
+            Row(Modifier.padding(horizontal = Tokens.Gutter), verticalAlignment = Alignment.CenterVertically) {
+                // (Beside the corner window the header above already says "Music": not twice.)
+                if (!LiveBehind.preview) {
+                    Text("Music", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+                    Spacer(Modifier.width(28.dp))
+                }
                 // (Coming in from the menu lands on the first row's first card once there are rows; it landed here.)
-                Pill("Shuffle my library", (if (home.rows.isEmpty()) Modifier.focusRequester(focusRequester) else Modifier).leftOpens(onOpenMenu)) { vm.shuffleLibrary() }
+                Pill("Shuffle my library", (if (home.rows.isEmpty()) Modifier.focusRequester(focusRequester) else Modifier).leftOpens(onMenu = onOpenMenu)) { vm.shuffleLibrary() }
                 if (MusicPlayer.active) {
                     Spacer(Modifier.width(12.dp))
                     Pill("♪  Now playing") { MusicPlayer.nowPlayingOpen = true }
                 }
                 Spacer(Modifier.weight(1f))
-                Text("Albums, artists and genres: in the menu", fontSize = 12.sp, color = AppColors.TextSecondary)
+                Text("Hold OK: options  ·  Albums, artists and genres: in the menu", fontSize = 12.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
         }
         if (home.loading && home.rows.isEmpty()) item {
@@ -641,13 +669,14 @@ private fun MusicHomePage(
         home.rows.forEachIndexed { ri, row ->
             item(key = row.title) {
                 Column {
-                    Text(row.title, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary, modifier = Modifier.padding(start = 48.dp, bottom = 8.dp))
+                    // (The one row title, as the Movies and Shows rows.)
+                    RowTitle(row.title, Modifier.padding(start = Tokens.Gutter, end = Tokens.Gutter))
                     LazyRow(state = rowState(row.title), contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         itemsIndexed(row.cards, key = { _, c -> c.key }) { i, c ->
                             MusicCardView(
                                 c, 118.dp,
                                 Modifier.then(if (ri == 0 && i == 0) Modifier.focusRequester(focusRequester) else Modifier)
-                                    .remembered(mem, page, "home|${row.title}|${c.key}").then(if (i == 0) Modifier.leftOpens(onOpenMenu) else Modifier),
+                                    .remembered(mem, page, "home|${row.title}|${c.key}").then(if (i == 0) Modifier.leftOpens(onMenu = onOpenMenu) else Modifier),
                             ) { vm.open(c) }
                         }
                     }
@@ -658,6 +687,16 @@ private fun MusicHomePage(
 }
 
 private const val COLUMNS = 7
+
+/** A Music grid with nothing in it: say what's missing. */
+private fun emptyText(b: MusicBrowse): String = when {
+    b.genre != null -> "No albums in this genre yet."
+    b.kind == MusicBrowseKind.Artists -> "No artists here yet."
+    b.kind == MusicBrowseKind.Playlists -> "No playlists yet."
+    b.kind == MusicBrowseKind.Genres -> "No genres here yet."
+    b.kind == MusicBrowseKind.Favourites -> "No favourites yet. Hold OK on an album or a song to add one."
+    else -> "No albums here yet."
+}
 
 @Composable
 private fun MusicBrowsePage(b: MusicBrowse, vm: MusicViewModel, page: String, mem: FocusMemory, grid: LazyGridState, focusRequester: FocusRequester, onOpenMenu: () -> Unit) {
@@ -696,15 +735,15 @@ private fun MusicBrowsePage(b: MusicBrowse, vm: MusicViewModel, page: String, me
                 )
                 Spacer(Modifier.weight(1f))
                 // As on the Movies and Shows libraries: the mic, then a box to search this page.
-                io.github.petebutty.viewarr.ui.media.LibrarySearchBox(b.text, vm::setBrowseText, onFocus = {}, onDone = {
+                LibrarySearchBox(b.text, vm::setBrowseText, onFocus = {}, onDone = {
                     b.shown.firstOrNull()?.let { c -> runCatching { mem.of("$page|${c.key}").requestFocus() } }
                 })
                 if (albums) {
-                    io.github.petebutty.viewarr.ui.library.ToolButton(
+                    ToolButton(
                         "Sort" + (b.query?.let { q -> b.options?.sorts?.firstOrNull { it.id == q.sort }?.let { ": ${it.label}" } } ?: ""),
                         active = false, modifier = Modifier.focusRequester(toolbar),
                     ) { if (b.options != null) panel = "sort" }
-                    if (b.options?.filters?.isNotEmpty() == true) io.github.petebutty.viewarr.ui.library.ToolButton(
+                    if (b.options?.filters?.isNotEmpty() == true) ToolButton(
                         b.query?.active?.takeIf { it > 0 }?.let { "Filter · $it" } ?: "Filter", active = (b.query?.active ?: 0) > 0, modifier = Modifier.padding(start = 8.dp),
                     ) { panel = "filter" }
                 }
@@ -715,12 +754,12 @@ private fun MusicBrowsePage(b: MusicBrowse, vm: MusicViewModel, page: String, me
                 contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp),
             ) {
                 val groups = b.options?.filters.orEmpty()
-                items(q.toggles.toList().size) { k -> val t = q.toggles.toList()[k]; io.github.petebutty.viewarr.ui.library.FilterChip(groups.firstOrNull { it.id == t }?.label ?: t) { vm.toggleAlbumFlag(t) } }
-                q.filters.forEach { (g, vs) -> items(vs.size) { k -> io.github.petebutty.viewarr.ui.library.FilterChip(vs[k].label) { vm.toggleAlbumValue(g, vs[k]) } } }
-                item { io.github.petebutty.viewarr.ui.library.FilterChip("Clear all", clear = true) { vm.clearAlbumFilters() } }
+                items(q.toggles.toList().size) { k -> val t = q.toggles.toList()[k]; FilterChip(groups.firstOrNull { it.id == t }?.label ?: t) { vm.toggleAlbumFlag(t) } }
+                q.filters.forEach { (g, vs) -> items(vs.size) { k -> FilterChip(vs[k].label) { vm.toggleAlbumValue(g, vs[k]) } } }
+                item { FilterChip("Clear all", clear = true) { vm.clearAlbumFilters() } }
             }
             if (!b.loading && b.shown.isEmpty()) Text(
-                if (b.found != null) "Nothing matches \"${b.text.trim()}\"." else if (q?.active ?: 0 > 0) "No albums match these filters." else "Nothing here yet.", fontSize = 15.sp, color = AppColors.TextSecondary,
+                if (b.found != null) "Nothing matches \"${b.text.trim()}\"." else if (q?.active ?: 0 > 0) "No albums match these filters." else emptyText(b), fontSize = 15.sp, color = AppColors.TextSecondary,
                 modifier = Modifier.padding(horizontal = 48.dp, vertical = 16.dp).focusRequester(focusRequester),
             )
             Row(Modifier.fillMaxWidth().weight(1f)) {
@@ -736,11 +775,12 @@ private fun MusicBrowsePage(b: MusicBrowse, vm: MusicViewModel, page: String, me
                         if (b.found == null && i >= cards.size - cols * 3) LaunchedEffect(cards.size) { vm.loadMore() }
                         val m = Modifier.remembered(mem, page, "$page|${c.key}")
                             .then(if (i == 0) Modifier.focusRequester(focusRequester) else Modifier)
+                            // Left on the first column: the menu, once per press (the shared leftOpens).
+                            .then(if (i % cols == 0) Modifier.leftOpens(onMenu = onOpenMenu) else Modifier)
                             .onPreviewKeyEvent { e ->
                                 // (Back leaves the album grid in one press: it went up to Sort / Filter first.)
                                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 when {
-                                    e.key == Key.DirectionLeft && i % cols == 0 -> { onOpenMenu(); true }
                                     e.key == Key.DirectionRight && b.canLetters && b.found == null && (i % cols == cols - 1 || i == cards.lastIndex) -> { runCatching { railFocus.requestFocus() }; true }
                                     else -> false
                                 }
@@ -748,7 +788,7 @@ private fun MusicBrowsePage(b: MusicBrowse, vm: MusicViewModel, page: String, me
                         if (genres) GenreTile(c, m) { vm.open(c) } else MusicCardView(c, null, m) { vm.open(c) }
                     }
                 }
-                if (b.canLetters && b.found == null) io.github.petebutty.viewarr.ui.library.AlphabetRail(
+                if (b.canLetters && b.found == null) AlphabetRail(
                     letters = null, shown = shownLetter, focusRequester = railFocus,
                     onFocus = { railOn = it },
                     onMove = { railLetter = it },
@@ -768,10 +808,10 @@ private fun MusicBrowsePage(b: MusicBrowse, vm: MusicViewModel, page: String, me
         ) { Text(railLetter.toString(), fontSize = 72.sp, fontWeight = FontWeight.Bold, color = AppColors.Accent) }
         val o = b.options
         val q = b.query
-        if (panel == "sort" && o != null && q != null) io.github.petebutty.viewarr.ui.library.SortPanel(
+        if (panel == "sort" && o != null && q != null) SortPanel(
             o, q, onPick = { id -> val same = id == q.sort; vm.setAlbumSort(id); if (!same) panel = null }, onDesc = vm::setAlbumDesc, onClose = { panel = null },
         )
-        if (panel == "filter" && o != null && q != null) io.github.petebutty.viewarr.ui.library.FilterPanel(
+        if (panel == "filter" && o != null && q != null) FilterPanel(
             o, q, b.values, onOpenGroup = vm::loadAlbumFilter, onToggle = vm::toggleAlbumFlag, onValue = vm::toggleAlbumValue, onClear = vm::clearAlbumFilters, onClose = { panel = null },
         )
     }
@@ -782,14 +822,8 @@ private fun GenreTile(c: MusicCard, modifier: Modifier, onClick: () -> Unit) {
     // A colour per genre (always the same one), so the grid isn't a wall of grey.
     val hue = (c.title.lowercase().hashCode().toUInt() % 360u).toFloat()
     val tint = Color.hsv(hue, 0.55f, 0.55f)
-    Surface(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth().height(76.dp),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(3.dp, AppColors.Accent), shape = RoundedCornerShape(10.dp))),
-        colors = ClickableSurfaceDefaults.colors(containerColor = tint, focusedContainerColor = tint),
-    ) {
+    // The shared card (3 dp ring, no growing, no press shrink).
+    FocusCard(onClick = onClick, modifier = modifier.fillMaxWidth().height(76.dp), containerColor = tint) {
         Column(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalArrangement = Arrangement.Center) {
             Text(c.title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (c.sub.isNotBlank()) Text(c.sub, fontSize = 12.sp, color = Color.White.copy(alpha = 0.8f))
@@ -805,23 +839,28 @@ private fun MusicDetailPage(d: MusicDetail, vm: MusicViewModel, page: String, me
     val playKey = "$page|play"
     val shuffleKey = "$page|shuffle"
     fun trackKey(i: Int) = "$page|t$i"
+    // Beside the corner window (only 340 dp of height left under the header): a smaller cover, and the name and
+    // details left to the header above (they were shown twice and pushed Play / Shuffle off the bottom).
+    val beside = LiveBehind.preview
     Box(Modifier.fillMaxSize()) {
         d.card.art?.let { AsyncImage(it.small, null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), alpha = 0.18f) }
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to AppColors.Background.copy(alpha = 0.6f), 1f to AppColors.Background)))
-        Row(Modifier.fillMaxSize().padding(start = 56.dp, top = 40.dp, end = 48.dp)) {
+        Row(Modifier.fillMaxSize().padding(start = Tokens.Gutter, top = if (beside) 8.dp else 40.dp, end = Tokens.Gutter)) {
             Column(Modifier.width(260.dp)) {
                 val round = d.card.kind == MusicKind.Artist
-                Box(Modifier.size(240.dp).clip(if (round) CircleShape else RoundedCornerShape(12.dp)).background(AppColors.Panel)) {
+                Box(Modifier.size(if (beside) 112.dp else 240.dp).clip(if (round) Tokens.RoundShape else Tokens.CardShape).background(AppColors.Panel)) {
                     d.card.art?.let { AsyncImage(it.large, d.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
                 }
-                Text(d.title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 16.dp))
-                Text(d.sub, fontSize = 13.sp, color = AppColors.TextSecondary, maxLines = 2, modifier = Modifier.padding(top = 6.dp))
+                if (!beside) {
+                    Text(d.title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 16.dp))
+                    Text(d.sub, fontSize = 13.sp, color = AppColors.TextSecondary, maxLines = 2, modifier = Modifier.padding(top = 6.dp))
+                }
                 val ready = !d.loading && (d.songs.isNotEmpty() || d.albums.isNotEmpty())
                 val toTracks = d.card.kind != MusicKind.Artist && d.songs.isNotEmpty()
-                Row(Modifier.padding(top = 18.dp)) {
+                Row(Modifier.padding(top = if (beside) 14.dp else 18.dp)) {
                     Pill(
                         if (d.loading) "Loading…" else "▶  Play",
-                        Modifier.focusRequester(focusRequester).remembered(mem, page, playKey).leftOpens(onOpenMenu),
+                        Modifier.focusRequester(focusRequester).remembered(mem, page, playKey).leftOpens(onMenu = onOpenMenu),
                     ) {
                         if (!ready) return@Pill
                         if (d.card.kind == MusicKind.Artist) vm.playArtist(d, false) else vm.play(d.songs)
@@ -854,17 +893,18 @@ private fun MusicDetailPage(d: MusicDetail, vm: MusicViewModel, page: String, me
             if (d.card.kind == MusicKind.Artist) {
                 // An artist: their story, most-played songs, albums, and artists like them (Navidrome, where it knows).
                 LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(bottom = 110.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    item(key = "hint") { HoldHint() }
                     d.bio?.let { bio -> item(key = "bio") {
                         Text(bio, fontSize = 13.sp, lineHeight = 19.sp, color = AppColors.TextSecondary, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 10.dp))
                     } }
                     if (d.topSongs.isNotEmpty()) {
-                        item(key = "h-top") { Text("Top songs", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 4.dp)) }
+                        item(key = "h-top") { RowTitle("Top songs") }
                         itemsIndexed(d.topSongs.take(5), key = { i, t -> "top$i:${t.id}" }) { i, t ->
                             TrackRow((i + 1).toString(), t, showArtist = false, nowPlaying = t.id == playing, starred = t.id in starred,
                                 modifier = Modifier.remembered(mem, page, "$page|top$i").focusProperties { left = mem.of(shuffleKey) }) { vm.play(d.topSongs, i) }
                         }
                     }
-                    item(key = "h-alb") { Text("Albums", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary, modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)) }
+                    item(key = "h-alb") { RowTitle("Albums", Modifier.padding(top = 10.dp)) }
                     val rowsOf = d.albums.chunked(5)
                     itemsIndexed(rowsOf, key = { i, _ -> "alb$i" }) { _, chunk ->
                         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.padding(bottom = 8.dp)) {
@@ -878,7 +918,7 @@ private fun MusicDetailPage(d: MusicDetail, vm: MusicViewModel, page: String, me
                         }
                     }
                     if (d.similar.isNotEmpty()) {
-                        item(key = "h-sim") { Text("Similar artists", fontSize = 16.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary, modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)) }
+                        item(key = "h-sim") { RowTitle("Similar artists", Modifier.padding(top = 10.dp)) }
                         item(key = "sim") {
                             androidx.compose.foundation.lazy.LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                                 items(d.similar.size, key = { "sim" + d.similar[it].key }) { i ->
@@ -892,6 +932,7 @@ private fun MusicDetailPage(d: MusicDetail, vm: MusicViewModel, page: String, me
                 }
             } else {
                 LazyColumn(Modifier.weight(1f), state = list, contentPadding = PaddingValues(bottom = 110.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    item(key = "hint") { HoldHint(Modifier.padding(start = 12.dp, bottom = 4.dp)) }
                     val multiDisc = d.songs.mapNotNull { it.disc }.distinct().size > 1
                     itemsIndexed(d.songs, key = { i, s -> "$i:${s.id}" }) { i, s ->
                         Column {
@@ -919,6 +960,12 @@ private fun MusicDetailPage(d: MusicDetail, vm: MusicViewModel, page: String, me
     }
 }
 
+/** What the remote does on the songs: over an album's, a playlist's or an artist's list. */
+@Composable
+private fun HoldHint(modifier: Modifier = Modifier) {
+    Text("OK: play  ·  Hold OK: options", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = modifier)
+}
+
 @Composable
 private fun TrackRow(number: String, song: Song, showArtist: Boolean, nowPlaying: Boolean, modifier: Modifier, starred: Boolean = false, onClick: () -> Unit) {
     Surface(
@@ -926,8 +973,8 @@ private fun TrackRow(number: String, song: Song, showArtist: Boolean, nowPlaying
         // Hold OK: play next, add to queue, song radio, favourite.
         onLongClick = { MusicOptions.song = song },
         modifier = modifier.fillMaxWidth().height(if (showArtist) 52.dp else 42.dp),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        scale = NoScale,
+        shape = ClickableSurfaceDefaults.shape(Tokens.RowShape),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color.Transparent, focusedContainerColor = AppColors.Accent,
             contentColor = AppColors.TextPrimary, focusedContentColor = AppColors.OnAccent,
@@ -950,17 +997,15 @@ private fun TrackRow(number: String, song: Song, showArtist: Boolean, nowPlaying
 @Composable
 internal fun MusicCardView(c: MusicCard, size: Dp?, modifier: Modifier, onClick: () -> Unit) {
     val round = c.kind == MusicKind.Artist
-    val shape = if (round) CircleShape else RoundedCornerShape(10.dp)
     Column(if (size != null) Modifier.width(size) else Modifier.fillMaxWidth()) {
-        Surface(
+        // The shared card (3 dp ring, no growing, no press shrink); artists round.
+        FocusCard(
             onClick = onClick,
             // Hold OK: play next, add to queue, favourite (not genres).
             onLongClick = if (c.kind == MusicKind.Genre) null else ({ MusicOptions.card = c }),
-            modifier = modifier.onFocusChanged { if (it.isFocused) MusicHover.card = c }.then(if (size != null) Modifier.size(size) else Modifier.fillMaxWidth().aspectRatio(1f)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-            shape = ClickableSurfaceDefaults.shape(shape),
-            border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(3.dp, AppColors.Accent), shape = shape)),
-            colors = ClickableSurfaceDefaults.colors(containerColor = AppColors.Panel, focusedContainerColor = AppColors.Panel),
+            modifier = modifier.onFocusChanged { if (it.isFocused) MusicHover.card = c }.then(if (size != null) Modifier.size(size) else Modifier.fillMaxWidth()),
+            shape = if (round) Tokens.RoundShape else Tokens.CardShape,
+            aspect = CardAspect.Square,
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(c.title.take(1).uppercase(), fontSize = 32.sp, color = AppColors.TextSecondary)
@@ -972,26 +1017,13 @@ internal fun MusicCardView(c: MusicCard, size: Dp?, modifier: Modifier, onClick:
     }
 }
 
+/** A button on the Music pages (Play, Shuffle, Radio…): the shared pill (no growing, no press shrink). */
 @Composable
 internal fun Pill(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.height(38.dp),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(19.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.White.copy(alpha = 0.1f), focusedContainerColor = AppColors.Accent,
-            contentColor = AppColors.TextPrimary, focusedContentColor = AppColors.OnAccent,
-        ),
-    ) {
-        Box(Modifier.fillMaxHeight().padding(horizontal = 20.dp), contentAlignment = Alignment.Center) { Text(text, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1) }
-    }
+    AppPill(text = text, selected = false, onClick = onClick, modifier = modifier, height = 38.dp)
 }
 
-/** Left from the first item of a row opens the side menu, as on the other pages. */
-internal fun Modifier.leftOpens(onOpenMenu: () -> Unit) = onPreviewKeyEvent { e ->
-    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft) { onOpenMenu(); true } else false
-}
+// (Music's own Modifier.leftOpens is gone: the shared one in common/Reorder.kt also ignores a held Left's repeats.)
 
 internal fun songCount(n: Int) = if (n == 1) "1 song" else "$n songs"
 

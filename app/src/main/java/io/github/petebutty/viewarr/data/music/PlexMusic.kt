@@ -1,6 +1,10 @@
 package io.github.petebutty.viewarr.data.music
 
 import io.github.petebutty.viewarr.data.accounts.PlexAuth
+import io.github.petebutty.viewarr.data.media.FilterGroup
+import io.github.petebutty.viewarr.data.media.FilterValue
+import io.github.petebutty.viewarr.data.media.LibraryQuery
+import io.github.petebutty.viewarr.data.media.SortOption
 import io.github.petebutty.viewarr.data.remote.services.HttpJson
 import io.github.petebutty.viewarr.data.remote.services.PlexService
 import io.github.petebutty.viewarr.data.remote.services.array
@@ -144,7 +148,7 @@ class PlexMusicSource private constructor(
     /** Plex's own sort key for each id we offer. */
     private val sortKeys = HashMap<String, String>()
 
-    override suspend fun albumOptions(): Pair<List<io.github.petebutty.viewarr.data.media.SortOption>, List<io.github.petebutty.viewarr.data.media.FilterGroup>> {
+    override suspend fun albumOptions(): Pair<List<SortOption>, List<FilterGroup>> {
         val s0 = sections.first()
         val sorts = get("/library/sections/$s0/sorts?type=9").array("Directory").mapNotNull { d ->
             val k = d.str("key") ?: return@mapNotNull null
@@ -158,13 +162,13 @@ class PlexMusicSource private constructor(
                 "title" -> "Title"; "artist" -> "Artist"; "added" -> "Date added"; "played" -> "Recently played"; "plays" -> "Most played"
                 "year" -> "Year"; "random" -> "Random"; else -> if (k == "userRating") "Your rating" else d.str("title") ?: k
             }
-            io.github.petebutty.viewarr.data.media.SortOption(id, label, descFirst = id !in setOf("title", "artist"))
+            SortOption(id, label, descFirst = id !in setOf("title", "artist"))
         }
         val filters = get("/library/sections/$s0/filters?type=9").array("Directory").mapNotNull { d ->
             val k = d.str("filter") ?: return@mapNotNull null
             when {
-                k in sharedFilters -> io.github.petebutty.viewarr.data.media.FilterGroup(sharedFilters.getValue(k), d.str("title") ?: k)
-                k in keepFilters -> io.github.petebutty.viewarr.data.media.FilterGroup("px.$k", d.str("title") ?: k)
+                k in sharedFilters -> FilterGroup(sharedFilters.getValue(k), d.str("title") ?: k)
+                k in keepFilters -> FilterGroup("px.$k", d.str("title") ?: k)
                 else -> null
             }
         }
@@ -174,7 +178,7 @@ class PlexMusicSource private constructor(
     // Each filter's values as Plex knows them: shown name → Plex's id (genres are matched across sources by name).
     private val valueIds = HashMap<String, HashMap<String, String>>()
 
-    override suspend fun albumFilterValues(group: String): List<io.github.petebutty.viewarr.data.media.FilterValue> {
+    override suspend fun albumFilterValues(group: String): List<FilterValue> {
         val key = group.removePrefix("px.")
         val ids = valueIds.getOrPut(group) { HashMap() }
         return sections.flatMap { s -> get("/library/sections/$s/$key?type=9").array("Directory") }.mapNotNull { d ->
@@ -182,11 +186,11 @@ class PlexMusicSource private constructor(
             val label = d.str("title") ?: id
             ids[MusicLibrary.norm(label)] = id
             // Genres: by name, so the same genre on Navidrome / Jellyfin matches. Decades: "1990" everywhere.
-            io.github.petebutty.viewarr.data.media.FilterValue(if (group == "genre") label else id, label)
+            FilterValue(if (group == "genre") label else id, label)
         }
     }
 
-    override suspend fun browseAlbums(q: io.github.petebutty.viewarr.data.media.LibraryQuery, size: Int, offset: Int): List<Album> {
+    override suspend fun browseAlbums(q: LibraryQuery, size: Int, offset: Int): List<Album> {
         if (sortKeys.isEmpty()) albumOptions()
         val parts = ArrayList<String>()
         val key = sortKeys[q.sort] ?: "titleSort"

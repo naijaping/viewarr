@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.ui.common.MenuItem
+import io.github.petebutty.viewarr.ui.theme.AppColors
 
 private enum class AddonSwitch(override val label: String) : RemoteChoice { On("On"), Off("Off") }
 
@@ -68,10 +70,10 @@ fun AddonSwitches(vm: AddonsSettingsViewModel = hiltViewModel()) {
     val addons = a?.addons.orEmpty()
     if (addons.isEmpty()) return
     androidx.tv.material3.Text(
-        "Addons", fontSize = 13.sp, color = io.github.petebutty.viewarr.ui.theme.AppColors.Accent,
+        "Addons", fontSize = 13.sp, color = AppColors.Accent,
         modifier = androidx.compose.ui.Modifier.padding(start = 12.dp, top = 6.dp),
     )
     addons.forEach { ad ->
-        io.github.petebutty.viewarr.ui.common.MenuItem(text = ad.name, trailing = if (ad.enabled) "On" else "Off", selected = false, dim = !ad.enabled, onClick = { vm.setEnabled(ad.baseUrl, !ad.enabled) })
+        MenuItem(text = ad.name, trailing = if (ad.enabled) "On" else "Off", selected = false, dim = !ad.enabled, onClick = { vm.setEnabled(ad.baseUrl, !ad.enabled) })
     }
 }

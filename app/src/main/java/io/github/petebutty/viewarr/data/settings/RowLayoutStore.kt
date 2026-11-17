@@ -58,17 +58,10 @@ class RowLayoutStore @Inject constructor(@ApplicationContext private val context
 
     fun layout(type: MediaType): Flow<RowLayout> = context.rowLayoutStore.data.map { p ->
         RowLayout(
-            order = p[orderKey(type)]?.split(SEP)?.filter { it.isNotEmpty() }.orEmpty(),
+            order = p[orderKey(type)].ids(),
             hidden = p[hiddenKey(type)].orEmpty(),
             menuHidden = p[menuHiddenKey(type)].orEmpty(),
         )
-    }
-
-    suspend fun setMenuHidden(type: MediaType, id: String, hidden: Boolean) {
-        context.rowLayoutStore.edit { p ->
-            val now = p[menuHiddenKey(type)].orEmpty()
-            p[menuHiddenKey(type)] = if (hidden) now + id else now - id
-        }
     }
 
     suspend fun setHidden(type: MediaType, id: String, hidden: Boolean) {
@@ -81,7 +74,7 @@ class RowLayoutStore @Inject constructor(@ApplicationContext private val context
     suspend fun setOrder(type: MediaType, ids: List<String>) {
         // Rows that didn't load this time (a server offline) keep their place at the end rather than being forgotten.
         context.rowLayoutStore.edit { p ->
-            val before = p[orderKey(type)]?.split(SEP)?.filter { it.isNotEmpty() }.orEmpty()
+            val before = p[orderKey(type)].ids()
             p[orderKey(type)] = (ids + before.filter { it !in ids }).joinToString(SEP)
         }
     }
@@ -89,7 +82,7 @@ class RowLayoutStore @Inject constructor(@ApplicationContext private val context
     /** The menu's library list: order and hidden ones (Settings → Home rows → Libraries). */
     fun libraryLayout(type: MediaType): Flow<RowLayout> = context.rowLayoutStore.data.map { p ->
         RowLayout(
-            order = p[libOrderKey(type)]?.split(SEP)?.filter { it.isNotEmpty() }.orEmpty(),
+            order = p[libOrderKey(type)].ids(),
             hidden = p[libHiddenKey(type)].orEmpty(),
         )
     }
@@ -101,12 +94,12 @@ class RowLayoutStore @Inject constructor(@ApplicationContext private val context
 
     /** Your own names for libraries (Settings → Home page & menu → Menu list → hold OK), by library key. */
     fun libraryNames(type: MediaType): Flow<Map<String, String>> = context.rowLayoutStore.data.map { p ->
-        p[libNamesKey(type)].orEmpty().split(REC).mapNotNull { r -> r.split(SEP).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+        names(p[libNamesKey(type)])
     }
 
     suspend fun setLibraryName(type: MediaType, key: String, name: String?) {
         context.rowLayoutStore.edit { p ->
-            val now = p[libNamesKey(type)].orEmpty().split(REC).mapNotNull { r -> r.split(SEP).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
+            val now = names(p[libNamesKey(type)])
             val next = if (name.isNullOrBlank()) now - key else now + (key to name.trim())
             p[libNamesKey(type)] = next.entries.joinToString(REC) { it.key + SEP + it.value }
         }
@@ -136,15 +129,47 @@ class RowLayoutStore @Inject constructor(@ApplicationContext private val context
 
     suspend fun setLibraryOrder(type: MediaType, keys: List<String>) {
         context.rowLayoutStore.edit { p ->
-            val before = p[libOrderKey(type)]?.split(SEP)?.filter { it.isNotEmpty() }.orEmpty()
+            val before = p[libOrderKey(type)].ids()
             p[libOrderKey(type)] = (keys + before.filter { it !in keys }).joinToString(SEP)
         }
     }
 
     suspend fun reset(type: MediaType) {
+        // (Library names are kept on reset: they're names, not layout.)
         context.rowLayoutStore.edit { it.remove(orderKey(type)); it.remove(hiddenKey(type)); it.remove(libOrderKey(type)); it.remove(libHiddenKey(type)); it.remove(menuHiddenKey(type)) }
-    // (Library names are kept on reset: they're names, not layout.)
     }
+
+    /**
+     * My Library's page (the menu's My Library, highlighted): your own servers' rows from Movies and Shows together, in
+     * its own order with its own on / off (Settings → Home page & menu → My Library). Keys "M:<row id>" / "S:<row id>".
+     */
+    val myLibrary: Flow<RowLayout> = context.rowLayoutStore.data.map { p ->
+        RowLayout(order = p[MY_ORDER].ids(), hidden = p[MY_HIDDEN].orEmpty())
+    }
+
+    /** [hidden]: marked when off, except a collection's own row ("…:col-…"), marked "+" when on (off by default). */
+    suspend fun setMyLibraryHidden(key: String, hidden: Boolean) {
+        context.rowLayoutStore.edit { p ->
+            val now = p[MY_HIDDEN].orEmpty()
+            p[MY_HIDDEN] = if (key.contains(":col-")) (if (hidden) now - "+$key" else now + "+$key") else if (hidden) now + key else now - key
+        }
+    }
+
+    suspend fun setMyLibraryOrder(keys: List<String>) {
+        context.rowLayoutStore.edit { p ->
+            val before = p[MY_ORDER].ids()
+            p[MY_ORDER] = (keys + before.filter { it !in keys }).joinToString(SEP)
+        }
+    }
+
+    suspend fun resetMyLibrary() { context.rowLayoutStore.edit { it.remove(MY_ORDER); it.remove(MY_HIDDEN) } }
+
+    /** A saved order: ids joined by [SEP]. */
+    private fun String?.ids(): List<String> = this?.split(SEP)?.filter { it.isNotEmpty() }.orEmpty()
+
+    /** Saved library names: key [SEP] name records, joined by [REC]. */
+    private fun names(raw: String?): Map<String, String> =
+        raw.orEmpty().split(REC).mapNotNull { r -> r.split(SEP).takeIf { it.size == 2 }?.let { it[0] to it[1] } }.toMap()
 
     private companion object {
         const val SEP = "\u001F"
@@ -157,5 +182,7 @@ class RowLayoutStore @Inject constructor(@ApplicationContext private val context
         fun menuHiddenKey(t: MediaType) = stringSetPreferencesKey("menu_hidden_${t.name}")
         fun libNamesKey(t: MediaType) = stringPreferencesKey("lib_names_${t.name}")
         val MERGE_ROWS = booleanPreferencesKey("merge_rows")
+        val MY_ORDER = stringPreferencesKey("my_library_order")
+        val MY_HIDDEN = stringSetPreferencesKey("my_library_hidden")
     }
 }

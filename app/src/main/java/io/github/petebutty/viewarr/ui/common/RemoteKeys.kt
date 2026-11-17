@@ -47,13 +47,13 @@ object RemoteKeys {
         RemoteAction.Record to "Record",
     )
 
-    /** Never taught: needed to move around and get out (or kept by the TV itself), and the number keys (channels). */
     /** Buttons that keep their own jobs (pausing, changing channel): not for search or an extra button. */
     fun isCore(code: Int): Boolean = code in setOf(
         android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, android.view.KeyEvent.KEYCODE_MEDIA_PLAY, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE,
         android.view.KeyEvent.KEYCODE_CHANNEL_UP, android.view.KeyEvent.KEYCODE_CHANNEL_DOWN,
     )
 
+    /** Never taught: needed to move around and get out (or kept by the TV itself), and the number keys (channels). */
     fun isProtected(code: Int): Boolean = code in setOf(
         android.view.KeyEvent.KEYCODE_DPAD_UP, android.view.KeyEvent.KEYCODE_DPAD_DOWN,
         android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT,

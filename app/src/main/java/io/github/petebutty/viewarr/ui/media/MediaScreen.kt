@@ -61,7 +61,6 @@ import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
 import androidx.compose.ui.platform.LocalDensity
 import io.github.petebutty.viewarr.data.settings.LocalRemote
 import io.github.petebutty.viewarr.data.settings.RowAlign
-import io.github.petebutty.viewarr.data.settings.RowLeft
 import io.github.petebutty.viewarr.data.settings.RowMemory
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -111,6 +110,39 @@ import coil.compose.AsyncImage
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import io.github.petebutty.viewarr.data.media.CastMember
+import io.github.petebutty.viewarr.data.media.EpisodeInfo
+import io.github.petebutty.viewarr.data.media.MediaDetail
+import io.github.petebutty.viewarr.data.media.PROVIDER
+import io.github.petebutty.viewarr.data.media.PersonInfo
+import io.github.petebutty.viewarr.data.media.RatingBadge
+import io.github.petebutty.viewarr.data.media.Review
+import io.github.petebutty.viewarr.data.media.TitleTracks
+import io.github.petebutty.viewarr.data.remote.services.SeerrService
+import io.github.petebutty.viewarr.data.trailers.TrailerRepository
+import io.github.petebutty.viewarr.ui.common.AppIcons
+import io.github.petebutty.viewarr.ui.common.BackLayer
+import io.github.petebutty.viewarr.ui.common.LiveBehind
+import io.github.petebutty.viewarr.ui.common.MenuItem
+import io.github.petebutty.viewarr.ui.common.PosterImage
+import io.github.petebutty.viewarr.ui.theme.Dates
+import io.github.petebutty.viewarr.ui.theme.TitleParts
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+import io.github.petebutty.viewarr.ui.theme.Wallpaper
+import io.github.petebutty.viewarr.ui.common.ViewarrPopup
+import io.github.petebutty.viewarr.ui.common.AppPill
+import io.github.petebutty.viewarr.ui.common.CardAspect
+import io.github.petebutty.viewarr.ui.common.FocusCard
+import io.github.petebutty.viewarr.ui.common.OptionsPopup
+import io.github.petebutty.viewarr.ui.common.PopupOption
+import io.github.petebutty.viewarr.ui.common.PopupPanel
+import io.github.petebutty.viewarr.ui.common.PopupTitle
+import io.github.petebutty.viewarr.ui.common.RoundIconButton
+import io.github.petebutty.viewarr.ui.common.SearchField
+import io.github.petebutty.viewarr.ui.common.VoiceButton
+import io.github.petebutty.viewarr.ui.common.leftOpens
+import io.github.petebutty.viewarr.ui.theme.NoScale
+import io.github.petebutty.viewarr.ui.theme.Tokens
 
 /** Movies or Shows: a hero for the focused title over Netflix-style poster rows. */
 @OptIn(ExperimentalFoundationApi::class)
@@ -218,7 +250,7 @@ fun MediaScreen(
         }
         val top = rows.firstOrNull()
         // (Not with a channel playing small top left: Back enlarges it in one press, it doesn't scroll to the top first.)
-        val playingSmall = io.github.petebutty.viewarr.ui.common.LiveBehind.preview
+        val playingSmall = LiveBehind.preview
         if (searchHeader == null && hasFocus && top != null && (focusedRow > 0 || focusedIndex > 0) && !playingSmall) {
             rowPos[top.id] = 0
             top.items.firstOrNull()?.let { lastCard = cardId(top, it) }
@@ -293,29 +325,33 @@ fun MediaScreen(
 
     // Movies and Shows: the highlighted title's artwork fills the page, whatever the wallpaper setting.
     if (searchHeader == null) androidx.compose.runtime.DisposableEffect(Unit) {
-        io.github.petebutty.viewarr.ui.theme.Wallpaper.titlePages++
-        onDispose { io.github.petebutty.viewarr.ui.theme.Wallpaper.titlePages-- }
+        Wallpaper.titlePages++
+        onDispose { Wallpaper.titlePages-- }
     }
     // Over live TV (opened from the menu while a channel was full screen): a see-through dark page, so it shows.
-    val overLive = io.github.petebutty.viewarr.ui.common.LiveBehind.on && searchHeader == null
+    val overLive = LiveBehind.on && searchHeader == null
     Box(Modifier.fillMaxSize().then(when {
         searchHeader != null -> Modifier
         // Over live TV: as see-through as the Glass setting says (0% solid … 100% nearly clear; a touch stays so the
         // text can be read).
         overLive -> Modifier.background(AppColors.palette.main.copy(alpha = maxOf(0.12f, AppColors.palette.menuAlpha)))
+        // The app's own background already shows the artwork full screen, under the menu too (Wallpaper.titleBehind):
+        // nothing of its own, so the picture runs on unbroken across the menu (a second copy, cropped to the page's
+        // smaller size, met it in a visible join at the menu's edge. Peter, 2026-11-17).
+        Wallpaper.titleBehind -> Modifier
         else -> Modifier.appBackground(titleArt = true)
     })) {
         // A library's grid has no hero: the background follows the highlighted title here too (it kept the last
         // page's artwork, e.g. a show's on the films' grid).
         LaunchedEffect(browse != null) {
             if (browse == null) return@LaunchedEffect
-            androidx.compose.runtime.snapshotFlow { focused?.backdrop }.collect { art -> art?.let { io.github.petebutty.viewarr.ui.theme.Wallpaper.title = it } }
+            androidx.compose.runtime.snapshotFlow { focused?.backdrop }.collect { art -> art?.let { Wallpaper.title = it } }
         }
         // As the catalogues' pages: the top-left window (live TV, or the highlighted title's trailer) with its details
         // beside it, and the library's grid below.
         browse?.let { b -> Column(Modifier.fillMaxSize()) {
             // (The header stays while scrolling: banner and trailer always there.)
-            val heroOn = !io.github.petebutty.viewarr.ui.common.LiveBehind.on
+            val heroOn = !LiveBehind.on
             if (heroOn) Hero(
                 item = focused,
                 type = type,
@@ -374,7 +410,7 @@ fun MediaScreen(
                     modifier = Modifier.fillMaxWidth().weight(1f).onFocusChanged { hasFocus = it.hasFocus },
                     // Room below the last row so it can also scroll up to the top (no half row left above it).
                     contentPadding = PaddingValues(bottom = 150.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(RowGap),
                 ) {
                     itemsIndexed(rows, key = { _, it -> it.id }) { index, row ->
                         PosterRow(
@@ -414,7 +450,6 @@ fun MediaScreen(
                 // Not while the menu (hold Back), search or Accounts is over it: its focus trap kept the remote
                 // here, under the menu. Focus comes back to Play when they close.
                 active = playing == null && (focusEnabled || cornerHasFocus),
-                onPlayPlex = vm::playPlex,
                 onSearch = vm::searchAddons,
                 onPickStream = vm::playStream,
                 onCloseStreams = vm::closeStreams,
@@ -467,11 +502,11 @@ private fun Hero(
     type: MediaType,
     trailerItem: MediaItem? = null,
     trailerActive: Boolean = false,
-    trailers: io.github.petebutty.viewarr.data.trailers.TrailerRepository? = null,
+    trailers: TrailerRepository? = null,
     /** Where a title from an addon row really is, e.g. "Plex" (AIOStreams can pass on your own library). */
     librarySourcesOf: (suspend (MediaItem) -> String?)? = null,
     logoOf: (suspend (MediaItem) -> String?)? = null,
-    ratingsOf: (suspend (MediaItem) -> List<io.github.petebutty.viewarr.data.media.RatingBadge>)? = null,
+    ratingsOf: (suspend (MediaItem) -> List<RatingBadge>)? = null,
     /** How tall: 212 on the Movies / Shows / service pages (the rows come up a little, the second row's ratings no longer cut
      *  off); library pages a little shorter still. The preview window (20 + 180) fits in either. */
     height: androidx.compose.ui.unit.Dp = 212.dp,
@@ -480,17 +515,18 @@ private fun Hero(
     // too, then shown at once with a fade (they used to pop in one by one as each arrived). A slow one doesn't hold
     // the rest up: after a second they show without it, and it slips in when it comes.
     val context = androidx.compose.ui.platform.LocalContext.current
+    val density = androidx.compose.ui.platform.LocalDensity.current
     val extras by produceState<HeroExtras?>(null, item?.key) {
         value = null
         val i = item ?: return@produceState
         delay(120) // (moving along a row: only for the one you stop on)
-        val logosOn = AppColors.palette.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.LOGO) && !AppColors.palette.lowMemory
-        val tp = io.github.petebutty.viewarr.ui.theme.TitleParts
+        val logosOn = AppColors.palette.shows(TitleParts.LOGO) && !AppColors.palette.lowMemory
+        val tp = TitleParts
         val ratingsWanted = ratingsOf != null && !AppColors.palette.lowMemory && tp.ratings.any { (src, _) -> src != "TMDB" && AppColors.palette.shows(tp.rating(src)) }
         val logoA = async {
             val url = if (logoOf != null && logosOn) runCatching { logoOf(i) }.getOrNull() else null
-            // The picture itself, so it's ready when the details show.
-            if (url != null) runCatching { context.imageLoader.execute(coil.request.ImageRequest.Builder(context).data(url).size(coil.size.Size.ORIGINAL).build()) }
+            // The picture itself, so it's ready when the details show (at the hero logo's size, as TitleLogo asks).
+            if (url != null) runCatching { context.imageLoader.execute(logoRequest(context, density, url, 340, 54)) }
             url
         }
         val ratingsA = async { if (ratingsWanted) runCatching { ratingsOf!!(i) }.getOrNull().orEmpty() else emptyList() }
@@ -514,10 +550,10 @@ private fun Hero(
     val detailsAlpha = detailsAnim.value
     val inLibrary = extras?.inLibrary
     // The Movies / Shows background: the highlighted title's backdrop.
-    LaunchedEffect(item?.backdrop) { item?.backdrop?.let { io.github.petebutty.viewarr.ui.theme.Wallpaper.title = it } }
+    LaunchedEffect(item?.backdrop) { item?.backdrop?.let { Wallpaper.title = it } }
     // On the Movies and Shows pages the artwork fills the whole page (drawn by the page's background), so the
     // hero doesn't draw its own copy (it left a seam where it ended).
-    val pageArt = io.github.petebutty.viewarr.ui.theme.Wallpaper.titlePages > 0 || io.github.petebutty.viewarr.ui.common.LiveBehind.on
+    val pageArt = Wallpaper.titlePages > 0 || LiveBehind.on
     // (Clipped: a tall logo with a long description ran down over the library's heading and search box below.)
     Box(Modifier.fillMaxWidth().height(height).clipToBounds()) {
         if (!pageArt) item?.backdrop?.let { url ->
@@ -536,14 +572,14 @@ private fun Hero(
         }
         // The top-left window, always in the same place (the guide's preview place): live TV when a channel's on
         // (drawn by the home screen), otherwise the highlighted title's picture with its trailer playing over it.
-        val besidePreview = !io.github.petebutty.viewarr.ui.common.LiveBehind.on
-        if (besidePreview && !io.github.petebutty.viewarr.ui.common.LiveBehind.preview) Box(
+        val besidePreview = !LiveBehind.on
+        if (besidePreview && !LiveBehind.preview) Box(
             Modifier.padding(start = 12.dp, top = 20.dp).size(width = 320.dp, height = 180.dp).clip(RoundedCornerShape(8.dp)).background(Color.Black.copy(alpha = 0.35f)),
         ) {
             item?.backdrop?.let { AsyncImage(model = it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
             if (trailers != null) TrailerPreview(item = trailerItem, active = trailerActive, trailers = trailers, modifier = Modifier.fillMaxSize())
         }
-        Column(Modifier.padding(start = if (besidePreview) 356.dp else 48.dp, top = 26.dp, end = 48.dp).fillMaxWidth(if (besidePreview) 0.75f else 0.5f)) {
+        Column(Modifier.padding(start = if (besidePreview) Tokens.BesideWindowStart else Tokens.Gutter, top = 26.dp, end = Tokens.Gutter).fillMaxWidth(if (besidePreview) 0.75f else 0.5f)) {
             Text(if (type == MediaType.Movie) "Movies" else "Shows", fontSize = 14.sp, color = AppColors.Accent)
             Spacer(Modifier.height(8.dp))
             val ex = extras
@@ -559,17 +595,21 @@ private fun Hero(
                 )
                 // IMDb / Rotten Tomatoes / Trakt for the highlighted title (fetched with the rest, above).
                 val heroRatings = ex?.takeIf { it.key == item.key }?.ratings.orEmpty()
+                // (One line of ratings here, the ones that don't fit left off: wrapping onto a second line pushed the
+                // description out of the hero's height, cut off mid-line. Peter, 2026-11-17.)
                 if (heroRatings.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
-                    RatingsLine(null, null, heroRatings)
+                    RatingsLine(null, heroRatings, oneLine = true)
                 }
                 item.subtitle?.let {
                     Spacer(Modifier.height(4.dp))
                     Text(it, fontSize = 14.sp, color = AppColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                // Ratings and a subtitle (or the shorter library hero): one line of description, so it all fits.
+                val roomy = heroRatings.isEmpty() || (item.subtitle == null && height >= 212.dp)
                 item.overview?.let {
                     Spacer(Modifier.height(10.dp))
-                    Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary, maxLines = if (roomy) 2 else 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -577,10 +617,10 @@ private fun Hero(
 }
 
 /** The header's details for one title, fetched together (see Hero). */
-private data class HeroExtras(val key: String, val logo: String?, val ratings: List<io.github.petebutty.viewarr.data.media.RatingBadge>, val inLibrary: String?)
+private data class HeroExtras(val key: String, val logo: String?, val ratings: List<RatingBadge>, val inLibrary: String?)
 
 /** Settings → Appearance → Library posters: how wide each poster is (Small: the rows' own 100 dp, so they match). */
-private val GRID_POSTER_DP get() = io.github.petebutty.viewarr.ui.theme.AppColors.palette.libraryPosterDp
+private val GRID_POSTER_DP get() = AppColors.palette.libraryPosterDp
 
 /**
  * A whole library as a poster grid, one page at a time (so a big library never weighs on the box), with the sort
@@ -596,8 +636,6 @@ private fun LibraryGrid(
     focused: MediaItem?,
     onFocus: (MediaItem) -> Unit,
     onHasFocus: (Boolean) -> Unit,
-    /** The row of the highlighted poster (0: the first), for folding the header away below the first row. */
-    onFocusRow: (Int) -> Unit = {},
     searching: Boolean,
     onSearchFocus: (Boolean) -> Unit,
     onOpen: (MediaItem) -> Unit,
@@ -764,13 +802,13 @@ private fun LibraryGrid(
                         val item = b.item(i)
                         val col = i % gridColumns
                         val m = Modifier.focusRequester(cell(i))
-                            .onFocusChanged { if (it.isFocused) { vm.setLastIndex(b.version, i); onFocusRow(i / gridColumns); item?.let(onFocus) } }
+                            .onFocusChanged { if (it.isFocused) { vm.setLastIndex(b.version, i); item?.let(onFocus) } }
+                            // Left on the first column: the menu (pick another library), once per press.
+                            .then(if (col == 0) Modifier.leftOpens(onMenu = onLeftEdge) else Modifier)
                             .onPreviewKeyEvent { e ->
                                 // (Back leaves the library in one press: it used to go up to the toolbar first.)
                                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                 when {
-                                    // Left on the first column: the menu (pick another library).
-                                    e.key == Key.DirectionLeft && col == 0 -> { onLeftEdge(); true }
                                     // Right at the end of a row: onto the A–Z strip.
                                     e.key == Key.DirectionRight && b.canLetters && (col == gridColumns - 1 || i == count - 1) -> { runCatching { railFocus.requestFocus() }; true }
                                     else -> false
@@ -821,38 +859,14 @@ private fun firstLetter(title: String): Char {
 /** A poster still on its way (the grid holds every position so you can scroll or jump anywhere). */
 @Composable
 private fun PlaceholderPoster(modifier: Modifier) {
-    Surface(
-        onClick = {},
-        modifier = modifier.fillMaxWidth().aspectRatio(2f / 3f),
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(3.dp, AppColors.Accent), shape = RoundedCornerShape(8.dp))),
-        colors = ClickableSurfaceDefaults.colors(containerColor = AppColors.Panel.copy(alpha = 0.6f), focusedContainerColor = AppColors.Panel),
+    FocusCard(
+        onClick = {}, modifier = modifier.fillMaxWidth(), aspect = CardAspect.Poster,
+        containerColor = AppColors.Panel.copy(alpha = 0.6f), focusedContainerColor = AppColors.Panel,
     ) {}
 }
 
 
 
-
-
-
-
-
-@Composable
-private fun FilterPill(text: String, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier,
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (active) AppColors.TextPrimary else AppColors.Panel,
-            contentColor = if (active) AppColors.Background else AppColors.TextSecondary,
-            focusedContainerColor = AppColors.Accent,
-            focusedContentColor = AppColors.OnAccent,
-        ),
-    ) { Text(text, fontSize = 13.sp, maxLines = 1, modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)) }
-}
 
 /**
  * Search within a library: a slim box. The keyboard opens only on OK (moving through doesn't pop it up); Search /
@@ -862,7 +876,6 @@ private fun FilterPill(text: String, active: Boolean, modifier: Modifier = Modif
 internal fun LibrarySearchBox(query: String, onQuery: (String) -> Unit, onFocus: (Boolean) -> Unit, onDone: () -> Unit, onLeft: (() -> Unit)? = null) {
     var text by remember { mutableStateOf(query) }
     var editing by remember { mutableStateOf(false) }
-    var focusedBox by remember { mutableStateOf(false) }
     val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
     val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     // Voice: the mic before the box, as in the main search.
@@ -877,36 +890,26 @@ internal fun LibrarySearchBox(query: String, onQuery: (String) -> Unit, onFocus:
             voiceScope.launch { kotlinx.coroutines.android.awaitFrame(); keyboard?.show() }
         },
     )
-    run {
-        Surface(
-            onClick = { voice.toggle() },
-            // Left on the mic (the first thing in the row): the menu, as Left on the first poster does (it did nothing).
-            modifier = Modifier.padding(end = 8.dp).size(36.dp).instantFocusScale(1.08f)
-                .onPreviewKeyEvent { e -> if (onLeft != null && e.key == Key.DirectionLeft) { if (e.type == KeyEventType.KeyDown) onLeft(); true } else false },
-            shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.CircleShape),
-            scale = io.github.petebutty.viewarr.ui.common.focusScale(1.08f),
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = AppColors.Panel, contentColor = AppColors.TextPrimary,
-                focusedContainerColor = AppColors.Accent, focusedContentColor = AppColors.OnAccent,
-            ),
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                androidx.tv.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Mic, contentDescription = "Voice search", modifier = Modifier.size(18.dp))
-            }
-        }
-    }
-    androidx.compose.foundation.text.BasicTextField(
+    // The shared mic and search box (common/SearchBar.kt), at the library's 36 dp size. (Peter, 2026-11-17: was its
+    // own copy of both.)
+    VoiceButton(
+        onClick = { voice.toggle() },
+        listening = voice.listening, level = voice.level, size = 36.dp, pulse = false,
+        // Left on the mic (the first thing in the row): the menu, as Left on the first poster does (it did nothing).
+        modifier = Modifier.leftOpens(enabled = onLeft != null) { onLeft?.invoke() },
+    )
+    Spacer(Modifier.width(8.dp))
+    SearchField(
         value = text,
         onValueChange = { text = it; onQuery(it) },
-        singleLine = true,
+        placeholder = "Search this library",
         readOnly = !editing,
-        cursorBrush = androidx.compose.ui.graphics.SolidColor(AppColors.Accent),
-        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = AppColors.TextPrimary),
-        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
+        compact = true,
+        listening = voice.listening,
         keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { editing = false; keyboard?.hide(); onDone() }),
+        onFocusChanged = { f -> onFocus(f); if (!f) { editing = false; keyboard?.hide() } },
         modifier = Modifier.padding(end = 8.dp).width(260.dp).height(36.dp)
             .focusRequester(boxFocus)
-            .onFocusChanged { focusedBox = it.isFocused; onFocus(it.isFocused); if (!it.isFocused) { editing = false; keyboard?.hide() } }
             .onPreviewKeyEvent { e ->
                 val ok = e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
                 when {
@@ -918,23 +921,6 @@ internal fun LibrarySearchBox(query: String, onQuery: (String) -> Unit, onFocus:
                     else -> false
                 }
             },
-        decorationBox = { inner ->
-            Row(
-                Modifier.fillMaxSize()
-                    .background(AppColors.Panel, RoundedCornerShape(50))
-                    .border(if (focusedBox) 2.dp else 1.dp, if (focusedBox) AppColors.Accent else AppColors.TextSecondary.copy(alpha = 0.4f), RoundedCornerShape(50))
-                    .padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Search, contentDescription = null, tint = AppColors.TextSecondary, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
-                    if (voice.listening) Text("Listening…", fontSize = 14.sp, color = AppColors.Accent, maxLines = 1)
-                    else if (text.isEmpty()) Text("Search this library", fontSize = 14.sp, color = AppColors.TextSecondary, maxLines = 1)
-                    inner()
-                }
-            }
-        },
     )
 }
 
@@ -943,8 +929,8 @@ internal fun LibrarySearchBox(query: String, onQuery: (String) -> Unit, onFocus:
 private val LIBRARY_ORIGINS = setOf("Plex", "Jellyfin", "Emby", "IPTV")
 
 /** The age rating from the country chosen in Settings → Appearance (UK or US). */
-private fun ageRating(d: io.github.petebutty.viewarr.data.media.MediaDetail): String? =
-    if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.AGE_RATING) == 1) d.certificationUs else d.certification
+private fun ageRating(d: MediaDetail): String? =
+    if (AppColors.palette.opt(UiOpts.AGE_RATING) == 1) d.certificationUs else d.certification
 
 /**
  * Netflix-style outlined badges under a title's info line: age rating, picture (4K, Dolby Vision…), sound (the
@@ -952,8 +938,8 @@ private fun ageRating(d: io.github.petebutty.viewarr.data.media.MediaDetail): St
  * played now (the time left, for one part-watched). Drawn here, not logos: nothing to licence.
  */
 @Composable
-private fun TitleBadges(item: MediaItem, d: io.github.petebutty.viewarr.data.media.MediaDetail, media: io.github.petebutty.viewarr.data.media.TitleTracks?) {
-    if (!AppColors.palette.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.BADGES)) return
+private fun TitleBadges(item: MediaItem, d: MediaDetail, media: TitleTracks?) {
+    if (!AppColors.palette.shows(TitleParts.BADGES)) return
     val audio = media?.audio?.let { a -> a.firstOrNull { it.default } ?: a.firstOrNull() }
     val boxes = listOfNotNull(
         ageRating(d),
@@ -968,7 +954,7 @@ private fun TitleBadges(item: MediaItem, d: io.github.petebutty.viewarr.data.med
     LaunchedEffect(Unit) { while (true) { kotlinx.coroutines.delay(30_000); now = System.currentTimeMillis() } }
     val ends = d.runtimeMin?.takeIf { it > 0 && item.type == MediaType.Movie }?.let { mins ->
         val left = (mins * 60_000L * (1f - (item.progress ?: 0f).coerceIn(0f, 1f))).toLong()
-        io.github.petebutty.viewarr.ui.theme.Dates.time(now + left)
+        Dates.time(now + left)
     }
     if (boxes.isEmpty() && ends == null) return
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -1007,7 +993,7 @@ private fun PosterRow(
     onLongOpen: (MediaItem) -> Unit = {},
 ) {
     Column {
-        Text(row.title, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary, modifier = Modifier.padding(start = 48.dp, bottom = 6.dp))
+        RowTitle(row.title, Modifier.padding(start = Tokens.Gutter, end = Tokens.Gutter))
         val rowEntry = remember { FocusRequester() }
         // True only while the remembered poster is actually composed. A poster can still be listed as visible while
         // its row is being torn down (e.g. leaving Movies for Shows); aiming focus at it then crashed the app
@@ -1038,10 +1024,8 @@ private fun PosterRow(
                     item = item,
                     modifier = (if (id == entryCard) Modifier.focusRequester(entryFocus) else Modifier)
                         .then(if (index == entryIndex) Modifier.focusRequester(rowEntry) else Modifier)
-                        // Left on a row's first poster opens the catalogue menu.
-                        .then(if (index == 0 && onLeftEdge != null) Modifier.onPreviewKeyEvent { e ->
-                            if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft) { onLeftEdge(); true } else false
-                        } else Modifier)
+                        // Left on a row's first poster opens the catalogue menu (once per press: the shared leftOpens).
+                        .then(if (index == 0 && onLeftEdge != null) Modifier.leftOpens(onMenu = onLeftEdge) else Modifier)
                         .onFocusChanged {
                             if (it.isFocused) {
                                 onFocus(item, id)
@@ -1059,23 +1043,21 @@ private fun PosterRow(
 @Composable
 private fun PosterCard(item: MediaItem, modifier: Modifier, onClick: () -> Unit, onLongClick: () -> Unit = {}, fill: Boolean = false) {
     var focused by remember { mutableStateOf(false) }
-    Surface(
+    // The shared card (FocusCard: 3 dp accent ring, no growing).
+    FocusCard(
         onClick = onClick,
         onLongClick = onLongClick,
         // In a grid ([fill]): as wide as its column, always 2:3 (a fixed size was squeezed to the column's width
         // but kept its height, so posters came out too wide).
-        modifier = modifier.free().then(if (fill) Modifier.fillMaxWidth().aspectRatio(2f / 3f) else Modifier.size(width = 100.dp, height = 150.dp)).onFocusChanged { focused = it.isFocused },
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(3.dp, AppColors.Accent), shape = RoundedCornerShape(8.dp))),
-        colors = ClickableSurfaceDefaults.colors(containerColor = AppColors.Panel, focusedContainerColor = AppColors.Panel),
+        modifier = modifier.free().then(if (fill) Modifier.fillMaxWidth() else Modifier.width(100.dp)).onFocusChanged { focused = it.isFocused },
+        aspect = CardAspect.Poster,
     ) {
         Box(Modifier.fillMaxSize()) {
             Text(
                 item.title, fontSize = 13.sp, color = AppColors.TextSecondary, textAlign = TextAlign.Center,
                 modifier = Modifier.align(Alignment.Center).padding(8.dp), maxLines = 4, overflow = TextOverflow.Ellipsis,
             )
-            item.poster?.let { io.github.petebutty.viewarr.ui.common.PosterImage(it, item.title, Modifier.fillMaxSize()) }
+            item.poster?.let { PosterImage(it, item.title, Modifier.fillMaxSize()) }
             // Search: this one's in your library, and where ("Plex", "Jellyfin · IPTV").
             if (item.owned && AppColors.palette.sourceBadges) Text(
                 item.ownedFrom ?: "In library",
@@ -1106,7 +1088,6 @@ private fun DetailScreen(
     ui: DetailUi,
     vm: MediaViewModel,
     active: Boolean,
-    onPlayPlex: () -> Unit,
     onSearch: () -> Unit,
     onPickStream: (StreamOption) -> Unit,
     onCloseStreams: () -> Unit,
@@ -1120,12 +1101,12 @@ private fun DetailScreen(
     val playFocus = remember { FocusRequester() }
     var playFocused by remember { mutableStateOf(false) }
     val onPlex = ui.copies?.any { it.source == "Plex" && it.ref != null } == true
-    val onProvider = ui.copies?.any { it.source == io.github.petebutty.viewarr.data.media.PROVIDER } == true
+    val onProvider = ui.copies?.any { it.source == PROVIDER } == true
     val serverName = ui.copies?.firstOrNull { (it.source == "Jellyfin" || it.source == "Emby") && it.ref != null }?.source
     val onServer = serverName != null
     val show = item.type == MediaType.Show
     val parts = AppColors.palette
-    val trailerId by produceState<String?>(null, item.key, parts.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.TRAILER)) { value = if (parts.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.TRAILER)) vm.trailers.youtubeId(item) else null }
+    val trailerId by produceState<String?>(null, item.key, parts.shows(TitleParts.TRAILER)) { value = if (parts.shows(TitleParts.TRAILER)) vm.trailers.youtubeId(item) else null }
     var trailerOpen by remember { mutableStateOf(false) }
     // Other sources: every copy (each Plex server, Jellyfin / Emby, IPTV) and the addon search, to pick one by hand.
     var sourcesOpen by remember { mutableStateOf(false) }
@@ -1148,10 +1129,10 @@ private fun DetailScreen(
         awaitFrame(); awaitFrame()
         runCatching { playFocus.requestFocus() }
     }
-    if (sourcesOpen) SourcesDialog(ui, vm, onSearch = { sourcesOpen = false; onSearch() }, onDone = { sourcesOpen = false })
+    if (sourcesOpen) SourcesDialog(ui, vm, onDone = { sourcesOpen = false })
     val trailerFocus = remember { FocusRequester() }
     // (The stream list, an episode's actions and the old episodes list are pop-ups over the title page.)
-    io.github.petebutty.viewarr.ui.common.BackLayer(ui.streams != null || ui.episode != null || ui.episodesOpen)
+    BackLayer(ui.streams != null || ui.episode != null || ui.episodesOpen)
     BackHandler(enabled = !trailerOpen) {
         when {
             ui.streams != null -> if (ui.episode != null) vm.closeEpisodeStreams() else onCloseStreams()
@@ -1167,7 +1148,7 @@ private fun DetailScreen(
     var buttonsFocused by remember { mutableStateOf(false) }
     // The channel in the preview place (top left): the details beside it follow what's highlighted below (an episode,
     // a title in More like this), and are the page's own again back up on the buttons.
-    val besidePreview = io.github.petebutty.viewarr.ui.common.LiveBehind.preview
+    val besidePreview = LiveBehind.preview
     var hover by remember(item.key) { mutableStateOf<Pair<String, String?>?>(null) }
     LaunchedEffect(buttonsFocused) { if (buttonsFocused) hover = null }
     var lastMode by remember { mutableStateOf<Any?>(null) }
@@ -1190,7 +1171,7 @@ private fun DetailScreen(
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.55f to Color.Transparent, 1f to bg)))
         // One screen: a compact header (poster, logo, details, ratings, description, buttons), then tabs with one
         // row under them (cast & crew, reviews, more like this, details), as on other TV media apps.
-        var reading by remember { mutableStateOf<io.github.petebutty.viewarr.data.media.Review?>(null) }
+        var reading by remember { mutableStateOf<Review?>(null) }
         val tabFocus = remember { FocusRequester() }
         val sectionsFree = !ui.episodesOpen && ui.streams == null && !trailerOpen
         // Shows: the seasons and episodes come between the header and the tabs, so the page scrolls (focus leads it).
@@ -1204,15 +1185,16 @@ private fun DetailScreen(
             awaitFrame(); awaitFrame()
             if (runCatching { episodesEntry.requestFocus() }.isFailure) runCatching { playFocus.requestFocus() }
         }
-        val inlineEpisodes = show && ui.seasons.isNotEmpty() && parts.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.EPISODES)
+        val inlineEpisodes = show && ui.seasons.isNotEmpty() && parts.shows(TitleParts.EPISODES)
         // The header (logo, details, buttons) stays put; only what's under it scrolls (the logo was cut off the top as
         // the page scrolled down to the episodes).
-        Column(Modifier.fillMaxSize().padding(start = 56.dp, end = 40.dp, top = 24.dp, bottom = 12.dp)) {
+        // (The one page margin, Tokens.Gutter, both sides: it was 56 on the left and 40 on the right.)
+        Column(Modifier.fillMaxSize().padding(start = Tokens.Gutter, end = Tokens.Gutter, top = 24.dp, bottom = 12.dp)) {
         Row(verticalAlignment = Alignment.Top, modifier = if (besidePreview) Modifier.heightIn(min = 190.dp) else Modifier) {
-            // The preview's place (12–332 dp from the left, under the page's 56 dp margin) instead of the poster.
-            if (besidePreview) Spacer(Modifier.width(300.dp))
+            // The preview's place (12–332 dp from the left) instead of the poster: the text starts at 356, as on every page.
+            if (besidePreview) Spacer(Modifier.width(Tokens.BesideWindowStart - Tokens.Gutter))
             else item.poster?.let {
-                io.github.petebutty.viewarr.ui.common.PosterImage(it, null, Modifier.size(width = 120.dp, height = 180.dp).clip(RoundedCornerShape(10.dp)))
+                PosterImage(it, null, Modifier.size(width = 120.dp, height = 180.dp).clip(Tokens.CardShape))
                 Spacer(Modifier.width(24.dp))
             }
             Column(Modifier.fillMaxWidth(0.68f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1222,15 +1204,15 @@ private fun DetailScreen(
                 val meta = listOfNotNull(
                     item.year?.toString(),
                     // The age rating is a badge below (Settings → Appearance → Title pages: Badges); in the line when they're off.
-                    if (AppColors.palette.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.BADGES)) null else ageRating(d),
+                    if (AppColors.palette.shows(TitleParts.BADGES)) null else ageRating(d),
                     d.runtimeMin?.takeIf { it > 0 }?.let { if (it >= 60) "${it / 60}h ${it % 60}m" else "${it}m" },
                     d.seasons.takeIf { it.isNotEmpty() }?.let { s -> "${s.size} season${if (s.size == 1) "" else "s"} · ${s.sumOf { it.episodes }} episodes" },
                     d.genres.takeIf { it.isNotEmpty() }?.take(3)?.joinToString(", "),
                 ).joinToString("  ·  ")
                 if (meta.isNotEmpty()) Text(meta, fontSize = 13.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 TitleBadges(item, d, ui.media)
-                RatingsLine(item.rating, d.voteCount, ui.ratings)
-                (ui.upTo()?.let { "S${it.first} · E${it.second}" } ?: item.subtitle)?.takeIf { parts.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.UP_NEXT) }?.let { Text("Up next: $it", fontSize = 13.sp, color = AppColors.Accent, maxLines = 1) }
+                RatingsLine(item.rating, ui.ratings)
+                (ui.upTo()?.let { "S${it.first} · E${it.second}" } ?: item.subtitle)?.takeIf { parts.shows(TitleParts.UP_NEXT) }?.let { Text("Up next: $it", fontSize = 13.sp, color = AppColors.Accent, maxLines = 1) }
                 (if (hovered != null) hovered.second else item.overview)?.let { Text(it, fontSize = 14.sp, lineHeight = 20.sp, color = AppColors.TextPrimary, maxLines = if (show) 2 else 3, overflow = TextOverflow.Ellipsis) }
                 Text(
                     listOfNotNull(
@@ -1256,7 +1238,7 @@ private fun DetailScreen(
                 // Down from any of them goes to the selected tab below (not just the nearest one).
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top, modifier = Modifier.wrapContentWidth(Alignment.Start, unbounded = true).onFocusChanged { buttonsFocused = it.hasFocus }.onPreviewKeyEvent { e ->
                     // Left on the first button: the menu (it did nothing, or went onto the picture in the corner).
-                    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && playFocused && buttonsFree) { onLeftEdge(); return@onPreviewKeyEvent true }
+                    if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft && playFocused && buttonsFree) { if (e.nativeKeyEvent.repeatCount == 0) onLeftEdge(); return@onPreviewKeyEvent true }
                     if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionDown && buttonsFree) runCatching { (if (inlineEpisodes && ui.episodes != null) episodesEntry else tabFocus).requestFocus() }.isSuccess else false
                 }) {
                     if (show) {
@@ -1275,11 +1257,11 @@ private fun DetailScreen(
                             val whenOut = when {
                                 upDate == today.plusDays(1) -> "tomorrow"
                                 upDate.isBefore(today.plusDays(7)) -> upDate.format(java.time.format.DateTimeFormatter.ofPattern("EEEE", java.util.Locale.UK))
-                                else -> upDate.format(io.github.petebutty.viewarr.ui.theme.Dates.day)
+                                else -> upDate.format(Dates.day)
                             }
                             // OK: the episodes (that one shows "Not out yet"), not a play that can only fail.
                             Button(onClick = vm::openEpisodes, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) {
-                                androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Clock, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current)
+                                androidx.compose.material3.Icon(AppIcons.Clock, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current)
                                 Text("S${next.first} · E${next.second} out $whenOut")
                             }
                         } else if (canPlay) {
@@ -1290,9 +1272,9 @@ private fun DetailScreen(
                             }
                             // Holding OK: the sources found for that episode, to pick from (as a film's Play). The seasons and
                             // episodes are on the page itself (below).
-                            Button(onClick = vm::playNextUp, onLongClick = vm::pickNextUp, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) { androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Play, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current); Text(if (ui.searching) "Looking…" else label) }
+                            Button(onClick = vm::playNextUp, onLongClick = vm::pickNextUp, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) { androidx.compose.material3.Icon(AppIcons.Play, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current); Text(if (ui.searching) "Looking…" else label) }
                             // Part-way through that episode: or start it again.
-                            if (next?.third == true) IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Replay, "Start over", vm::playFromStart, Modifier.free())
+                            if (next?.third == true) IconAction(AppIcons.Replay, "Start over", vm::playFromStart, Modifier.free())
                         } else {
                             Button(onClick = vm::openEpisodes, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) { Text("Episodes") }
                         }
@@ -1300,11 +1282,11 @@ private fun DetailScreen(
                         // One Play: your servers, IPTV and addons in the Play order setting (MediaViewModel.playBest).
                         // OK plays from the best source; holding OK lists every source to pick from.
                         Button(onClick = vm::playBest, onLongClick = { sourcesOpen = true }, modifier = (Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }).free()) {
-                            androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Play, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current)
+                            androidx.compose.material3.Icon(AppIcons.Play, null, modifier = Modifier.padding(end = 6.dp).size(20.dp), tint = androidx.tv.material3.LocalContentColor.current)
                             Text(if (ui.searching) "Looking…" else if (item.progress != null) "Resume" else "Play")
                         }
                         // Part-way through: or watch it again from the beginning.
-                        if (item.progress != null) IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Replay, "Start over", vm::playFromStart, Modifier.free())
+                        if (item.progress != null) IconAction(AppIcons.Replay, "Start over", vm::playFromStart, Modifier.free())
                     } else {
                         // Still checking your servers (or nowhere to play it): a button to land on, so the page has a
                         // highlight and Left reaches the menu (there was none until the check finished).
@@ -1315,28 +1297,28 @@ private fun DetailScreen(
                     // Films on your own server: pick the soundtrack and subtitles before Play (this play only).
                     if (!show && ui.tracks != null) {
                         val picked = ui.pickedAudio != null || ui.pickedSubtitle != null
-                        IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Subtitles, if (picked) "Audio & subtitles (chosen)" else "Audio & subtitles", { tracksOpen = true }, Modifier.free(), on = picked)
+                        IconAction(AppIcons.Subtitles, if (picked) "Audio & subtitles (chosen)" else "Audio & subtitles", { tracksOpen = true }, Modifier.free(), on = picked)
                     }
                     // Films: watched / not, on your servers and Trakt.
                     if (!show && ui.watched != null && (!ui.copies.isNullOrEmpty() || ui.hasTrakt)) {
-                        IconAction(if (ui.watched) io.github.petebutty.viewarr.ui.common.AppIcons.CheckCircle else io.github.petebutty.viewarr.ui.common.AppIcons.Check, if (ui.watched) "Watched (OK to undo)" else "Mark watched", vm::toggleWatched, Modifier.free(), on = ui.watched)
+                        IconAction(if (ui.watched) AppIcons.CheckCircle else AppIcons.Check, if (ui.watched) "Watched (OK: undo)" else "Mark watched", vm::toggleWatched, Modifier.free(), on = ui.watched)
                     }
                     if (!show && !onPlex && !onProvider && !onServer && !ui.hasAddons && ui.copies != null) {
-                        IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Back, "Back", onClose, Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }.free())
+                        IconAction(AppIcons.Back, "Back", onClose, Modifier.focusRequester(playFocus).onFocusChanged { playFocused = it.isFocused }.free())
                     }
                     if (trailerId != null) {
-                        IconAction(io.github.petebutty.viewarr.ui.common.AppIcons.Movie, "Trailer", { trailerOpen = true }, Modifier.focusRequester(trailerFocus).free())
+                        IconAction(AppIcons.Movie, "Trailer", { trailerOpen = true }, Modifier.focusRequester(trailerFocus).free())
                     }
                     if (ui.canWatchlist) {
-                        IconAction(if (ui.watchlisted) io.github.petebutty.viewarr.ui.common.AppIcons.BookmarkFilled else io.github.petebutty.viewarr.ui.common.AppIcons.Bookmark, if (ui.watchlisted) "Remove from watchlist" else "Add to watchlist", onWatchlist, Modifier.free(), on = ui.watchlisted)
+                        IconAction(if (ui.watchlisted) AppIcons.BookmarkFilled else AppIcons.Bookmark, if (ui.watchlisted) "Remove from watchlist" else "Add to watchlist", onWatchlist, Modifier.free(), on = ui.watchlisted)
                     }
                     // Seerr: ask for it to be kept (Radarr / Sonarr fetch it), or show it's already on the way.
-                    val seerrState by produceState<io.github.petebutty.viewarr.data.remote.services.SeerrService.Status?>(null, ui.detail.item.key, ui.message) { value = vm.seerrStatus(ui.detail.item) }
+                    val seerrState by produceState<SeerrService.Status?>(null, ui.detail.item.key, ui.message) { value = vm.seerrStatus(ui.detail.item) }
                     // Not for something already on your own server (only on IPTV can still be requested).
-                    if (ui.copies.orEmpty().none { it.source != io.github.petebutty.viewarr.data.media.PROVIDER }) seerrState?.takeIf { it != io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.Available }?.let { st ->
-                        val canAsk = st == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.None ||
-                            st == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.Partial
-                        IconAction(if (canAsk) io.github.petebutty.viewarr.ui.common.AppIcons.Add else io.github.petebutty.viewarr.ui.common.AppIcons.Clock, if (canAsk) "Request on Seerr" else "Requested on Seerr", { if (canAsk) vm.requestOnSeerr(ui.detail.item) }, Modifier.free(), on = !canAsk)
+                    if (ui.copies.orEmpty().none { it.source != PROVIDER }) seerrState?.takeIf { it != SeerrService.Status.Available }?.let { st ->
+                        val canAsk = st == SeerrService.Status.None ||
+                            st == SeerrService.Status.Partial
+                        IconAction(if (canAsk) AppIcons.Add else AppIcons.Clock, if (canAsk) "Request on Seerr" else "Requested on Seerr", { if (canAsk) vm.requestOnSeerr(ui.detail.item) }, Modifier.free(), on = !canAsk)
                     }
                 }
                 }
@@ -1362,9 +1344,9 @@ private fun DetailScreen(
                 }
 }
         reading?.let { r -> ReviewDialog(r) { reading = null } }
-        if (ui.episodesOpen) EpisodesPanel(ui, vm, onPlex)
+        if (ui.episodesOpen) EpisodesPanel(ui, vm)
         else if (ui.streams.isNullOrEmpty()) EpisodeActionsFor(ui, vm)
-        ui.streams?.takeIf { it.isNotEmpty() }?.let { StreamPicker(it, onPickStream, Modifier.align(Alignment.CenterEnd), onClose = { if (ui.episode != null) vm.closeEpisodeStreams() else onCloseStreams() }) }
+        ui.streams?.takeIf { it.isNotEmpty() }?.let { StreamPicker(it, onPickStream, Modifier, onClose = { if (ui.episode != null) vm.closeEpisodeStreams() else onCloseStreams() }) }
         ui.tracks?.takeIf { tracksOpen }?.let { t -> TracksDialog(t, ui.pickedAudio, ui.pickedSubtitle, onPick = { a, sub -> vm.pickTracks(a, sub) }, onDone = { tracksOpen = false }) }
         if (trailerOpen) {
             TrailerPlayer(item = item, trailers = vm.trailers, onClose = { trailerOpen = false })
@@ -1375,13 +1357,12 @@ private fun DetailScreen(
     }
 }
 
-/** Seasons along the top (Left/Right), episodes below. OK on an episode → Play on Plex / Search addons. */
 /**
  * Episodes: the show's artwork fills the screen. On the left, the title and the highlighted episode's details;
  * on the right, seasons and a compact episode list. OK on an episode → Play on Plex / Search addons.
  */
 @Composable
-private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel, onPlex: Boolean) {
+private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel) {
     val item = ui.detail.item
     // Watched on Plex, Jellyfin / Emby, or anywhere Trakt knows about.
     // Watched here from IPTV too (kept on the box).
@@ -1394,7 +1375,7 @@ private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel, onPlex: Boolean) {
         val next = if (ui.upTo()?.first == ui.season) eps.indexOfFirst { it.number == ui.upTo()?.second } else -1
         if (next >= 0) next else eps.indexOfFirst { e -> !watched(e.season, e.number) }.coerceAtLeast(0)
     } ?: -1
-    var highlighted by remember(ui.season) { mutableStateOf<io.github.petebutty.viewarr.data.media.EpisodeInfo?>(null) }
+    var highlighted by remember(ui.season) { mutableStateOf<EpisodeInfo?>(null) }
     val shown = highlighted ?: ui.episodes?.getOrNull(target)
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     // Nothing behind an open pop-up or stream list may take focus.
@@ -1418,7 +1399,7 @@ private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel, onPlex: Boolean) {
         if (idx >= 0) runCatching { seasonRow.scrollToItem(maxOf(0, idx - 1)) }
     }
     // While the next season loads, the last list stays (faded) instead of flashing "Loading episodes…".
-    var lastEpisodes by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.media.EpisodeInfo>?>(null) }
+    var lastEpisodes by remember { mutableStateOf<List<EpisodeInfo>?>(null) }
     LaunchedEffect(ui.episodes) { ui.episodes?.let { lastEpisodes = it } }
     LaunchedEffect(ui.season, ui.episodes != null, ui.episode == null, ui.streams == null) {
         if (ui.episodes.isNullOrEmpty() || ui.episode != null || ui.streams != null || target < 0) return@LaunchedEffect
@@ -1435,7 +1416,7 @@ private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel, onPlex: Boolean) {
         // Artwork stays clear on the left; the list side darkens for readability.
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0f to bg.copy(alpha = 0.55f), 0.38f to bg.copy(alpha = 0.35f), 0.55f to bg.copy(alpha = 0.85f), 1f to bg.copy(alpha = 0.95f))))
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.6f to Color.Transparent, 1f to bg.copy(alpha = 0.8f))))
-        Row(Modifier.fillMaxSize().padding(start = 56.dp, end = 40.dp, top = 40.dp, bottom = 24.dp)) {
+        Row(Modifier.fillMaxSize().padding(start = Tokens.Gutter, end = Tokens.Gutter, top = 40.dp, bottom = 24.dp)) {
             // Left: show title + the highlighted episode, at the top where it's read first.
             Column(Modifier.weight(0.42f).fillMaxHeight().padding(end = 32.dp), verticalArrangement = Arrangement.Top) {
                 TitleLogo(item, vm::logoFor, height = 80.dp, maxWidth = 400.dp, fontSize = 30)
@@ -1456,29 +1437,11 @@ private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel, onPlex: Boolean) {
             }
             // Right: seasons + compact episodes.
             Column(Modifier.weight(0.58f).fillMaxHeight()) {
-                LazyRow(Modifier.onFocusChanged { onSeasons = it.hasFocus }, state = seasonRow, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(ui.seasons, key = { it.number }) { season ->
-                        val selected = season.number == ui.season
-                        Surface(
-                            onClick = { pendingSeason = null; vm.selectSeason(season.number) },
-                            modifier = (if (selected) Modifier.focusRequester(seasonFocus) else Modifier)
-                                .focusProperties { canFocus = panelFree }
-                                // Only a real move onto a season changes it, never focus passing through behind a pop-up.
-                                .onFocusChanged { if (it.isFocused && panelFree) pendingSeason = season.number },
-                            scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(18.dp)),
-                            colors = ClickableSurfaceDefaults.colors(
-                                // The season you're viewing stands out even when you're down in its episodes.
-                                containerColor = if (selected) AppColors.Accent.copy(alpha = 0.35f) else AppColors.Panel.copy(alpha = 0.8f),
-                                contentColor = AppColors.TextPrimary,
-                                focusedContainerColor = AppColors.Accent,
-                                focusedContentColor = AppColors.OnAccent,
-                            ),
-                        ) {
-                            Text(season.name, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
-                        }
-                    }
-                }
+                SeasonPills(
+                    ui, seasonRow, free = panelFree, selectedFocus = seasonFocus,
+                    onSeasons = { onSeasons = it }, onPending = { pendingSeason = it },
+                    onPick = { pendingSeason = null; vm.selectSeason(it) },
+                )
                 Spacer(Modifier.height(12.dp))
                 val loading = ui.episodes == null
                 val eps = ui.episodes ?: lastEpisodes
@@ -1499,8 +1462,8 @@ private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel, onPlex: Boolean) {
                                     .then(if (i == 0) Modifier.safeMove(Key.DirectionUp) { seasonFocus } else Modifier)
                                     .onFocusChanged { if (it.isFocused) highlighted = ep }
                                     .fillMaxWidth(),
-                                scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                                scale = NoScale,
+                                shape = ClickableSurfaceDefaults.shape(Tokens.RowShape),
                                 colors = ClickableSurfaceDefaults.colors(
                                     containerColor = AppColors.Panel.copy(alpha = 0.75f),
                                     contentColor = AppColors.TextPrimary,
@@ -1540,53 +1503,47 @@ private fun EpisodesPanel(ui: DetailUi, vm: MediaViewModel, onPlex: Boolean) {
     }
 }
 
-/** A film's soundtrack and subtitles, picked before Play. */
+/** A film's soundtrack and subtitles, picked before Play. On the shared pop-up (PopupPanel). */
 @Composable
 private fun TracksDialog(
-    t: io.github.petebutty.viewarr.data.media.TitleTracks,
+    t: TitleTracks,
     audio: Int?, subtitle: Int?,
     onPick: (audio: Int?, subtitle: Int?) -> Unit,
     onDone: () -> Unit,
 ) {
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-    BackHandler { onDone() }
-    io.github.petebutty.viewarr.ui.common.BackLayer()
     // What the server would pick by itself, when you haven't picked.
     val a = audio ?: t.audio.firstOrNull { it.default }?.ordinal ?: 0
     val sub = subtitle ?: t.subtitles.firstOrNull { it.default }?.ordinal
-    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
-    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onDone) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
-            LazyColumn(
-                Modifier.width(560.dp).fillMaxHeight(0.85f).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus().ignoreHeldOk(),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                item { Text("Audio & subtitles", fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary) }
-                item { Text("For this play, from ${t.source}.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp)) }
-                if (t.audio.isNotEmpty()) item { Text("Audio", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 6.dp, start = 12.dp)) }
-                itemsIndexed(t.audio) { i, c ->
-                    io.github.petebutty.viewarr.ui.common.MenuItem(
-                        text = (if (c.ordinal == a) "✓  " else "     ") + c.label, selected = false,
-                        modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
-                        onClick = { onPick(c.ordinal, subtitle) },
-                    )
-                }
-                item { Text("Subtitles", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 10.dp, start = 12.dp)) }
-                item {
-                    io.github.petebutty.viewarr.ui.common.MenuItem(
-                        text = (if (sub == null || sub < 0) "✓  " else "     ") + "Off", selected = false,
-                        modifier = if (t.audio.isEmpty()) Modifier.focusRequester(first) else Modifier,
-                        onClick = { onPick(audio, -1) },
-                    )
-                }
-                items(t.subtitles) { c ->
-                    io.github.petebutty.viewarr.ui.common.MenuItem(text = (if (c.ordinal == sub) "✓  " else "     ") + c.label, selected = false, onClick = { onPick(audio, c.ordinal) })
-                }
-                item { io.github.petebutty.viewarr.ui.common.MenuItem(text = "Done", selected = false, onClick = onDone, modifier = Modifier.padding(top = 10.dp)) }
-            }
+    // (Was a solid panel of its own; now the one pop-up style, which scrolls with the highlight. Peter, 2026-11-17.)
+    PopupPanel(onClose = onDone, width = Tokens.PopupWide) {
+        PopupTitle("Audio & subtitles", "For this play, from ${t.source}.")
+        if (t.audio.isNotEmpty()) PopupSection("Audio")
+        t.audio.forEachIndexed { i, c ->
+            MenuItem(
+                text = (if (c.ordinal == a) "✓  " else "     ") + c.label, selected = false,
+                modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+                onClick = { onPick(c.ordinal, subtitle) },
+            )
         }
+        PopupSection("Subtitles")
+        MenuItem(
+            text = (if (sub == null || sub < 0) "✓  " else "     ") + "Off", selected = false,
+            modifier = if (t.audio.isEmpty()) Modifier.focusRequester(first) else Modifier,
+            onClick = { onPick(audio, -1) },
+        )
+        t.subtitles.forEach { c ->
+            MenuItem(text = (if (c.ordinal == sub) "✓  " else "     ") + c.label, selected = false, onClick = { onPick(audio, c.ordinal) })
+        }
+        MenuItem(text = "Done", selected = false, onClick = onDone, modifier = Modifier.padding(top = 10.dp))
     }
+}
+
+/** A heading inside a pop-up's list ("Audio", "Subtitles"). */
+@Composable
+private fun PopupSection(text: String) {
+    Text(text, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp, start = 12.dp, bottom = 2.dp))
 }
 
 /** Holding OK on an episode: where to play it from. */
@@ -1628,7 +1585,7 @@ private fun EpisodeActionsFor(ui: DetailUi, vm: MediaViewModel) {
  * up to). OK plays an episode from the best source; holding OK lists the sources.
  */
 @Composable
-private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entry: FocusRequester, up: FocusRequester, down: FocusRequester, onHover: (io.github.petebutty.viewarr.data.media.EpisodeInfo) -> Unit = {}) {
+private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entry: FocusRequester, up: FocusRequester, down: FocusRequester, onHover: (EpisodeInfo) -> Unit = {}) {
     val item = ui.detail.item
     // Watched here from IPTV too (kept on the box).
     val localEntries by vm.localWatch.entries.collectAsState()
@@ -1654,7 +1611,7 @@ private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entr
         kotlinx.coroutines.delay(350)
         vm.selectSeason(n)
     }
-    var lastEpisodes by remember { mutableStateOf<List<io.github.petebutty.viewarr.data.media.EpisodeInfo>?>(null) }
+    var lastEpisodes by remember { mutableStateOf<List<EpisodeInfo>?>(null) }
     LaunchedEffect(ui.episodes) { ui.episodes?.let { lastEpisodes = it } }
     val target = ui.episodes?.let { eps ->
         val next = if (ui.upTo()?.first == ui.season) eps.indexOfFirst { it.number == ui.upTo()?.second }
@@ -1672,31 +1629,12 @@ private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entr
     }
     if (ui.seasons.isEmpty()) return
     Column(Modifier.padding(top = 10.dp)) {
-        LazyRow(
-            Modifier.onFocusChanged { onSeasons = it.hasFocus },
-            state = seasonRow, horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(ui.seasons, key = { it.number }) { season ->
-                val selected = season.number == ui.season
-                Surface(
-                    onClick = { pendingSeason = null; vm.selectSeason(season.number) },
-                    modifier = (if (selected) Modifier.focusRequester(seasonFocus) else Modifier)
-                        .focusProperties { canFocus = free }
-                        .safeMove(Key.DirectionUp) { up }
-                        .onFocusChanged { if (it.isFocused && free) pendingSeason = season.number },
-                    scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(18.dp)),
-                    colors = ClickableSurfaceDefaults.colors(
-                        containerColor = if (selected) AppColors.Accent.copy(alpha = 0.35f) else AppColors.Panel.copy(alpha = 0.8f),
-                        contentColor = AppColors.TextPrimary,
-                        focusedContainerColor = AppColors.Accent,
-                        focusedContentColor = AppColors.OnAccent,
-                    ),
-                ) {
-                    Text(season.name, fontSize = 13.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp))
-                }
-            }
-        }
+        SeasonPills(
+            ui, seasonRow, free = free, selectedFocus = seasonFocus,
+            onSeasons = { onSeasons = it }, onPending = { pendingSeason = it },
+            onPick = { pendingSeason = null; vm.selectSeason(it) },
+            pillModifier = Modifier.safeMove(Key.DirectionUp) { up },
+        )
         Spacer(Modifier.height(10.dp))
         val loading = ui.episodes == null
         val eps = ui.episodes ?: lastEpisodes
@@ -1714,25 +1652,24 @@ private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entr
                     val plex = ui.plexEpisodes[ep.season to ep.number] ?: ui.serverEpisodes[ep.season to ep.number]
                     var focused by remember { mutableStateOf(false) }
                     Column(Modifier.width(192.dp)) {
-                        Surface(
+                        // The shared card (3 dp accent ring, no growing).
+                        FocusCard(
                             onClick = { vm.playBestEpisode(ep.season, ep.number) },
                             onLongClick = { vm.pickEpisode(ep) },
                             modifier = (if (i == target.coerceAtLeast(0)) Modifier.focusRequester(entry) else Modifier)
                                 .focusProperties { canFocus = free && !loading }
                                 .safeMove(Key.DirectionUp) { seasonFocus }.safeMove(Key.DirectionDown) { down }
                                 .onFocusChanged { focused = it.isFocused; if (it.isFocused) onHover(ep) }
-                                .size(width = 192.dp, height = 108.dp),
-                            scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                            border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(3.dp, AppColors.Accent), shape = RoundedCornerShape(8.dp))),
-                            colors = ClickableSurfaceDefaults.colors(containerColor = AppColors.PanelAlt, focusedContainerColor = AppColors.PanelAlt),
+                                .width(192.dp),
+                            aspect = CardAspect.Wide,
+                            containerColor = AppColors.PanelAlt,
                         ) {
                             Box(Modifier.fillMaxSize()) {
                                 (ep.still ?: item.backdrop)?.let { AsyncImage(model = it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
                                 if (watched(ep.season, ep.number)) Box(
                                     Modifier.align(Alignment.TopEnd).padding(6.dp).size(24.dp).background(AppColors.Accent, androidx.compose.foundation.shape.CircleShape),
                                     contentAlignment = Alignment.Center,
-                                ) { androidx.compose.material3.Icon(io.github.petebutty.viewarr.ui.common.AppIcons.Check, contentDescription = "Watched", tint = AppColors.OnAccent, modifier = Modifier.size(16.dp)) }
+                                ) { androidx.compose.material3.Icon(AppIcons.Check, contentDescription = "Watched", tint = AppColors.OnAccent, modifier = Modifier.size(16.dp)) }
                                 plex?.takeIf { it.viewOffsetMs > 0 && !it.watched && AppColors.palette.progressBadges }?.let {
                                     Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(0.5f).height(4.dp).background(AppColors.Accent))
                                 }
@@ -1749,6 +1686,37 @@ private fun InlineEpisodes(ui: DetailUi, vm: MediaViewModel, free: Boolean, entr
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * A show's seasons as pills: the one season selector, shared by the title page's episodes and the Episodes panel
+ * (they were two copies). The season being viewed stays tinted even when you're down in its episodes. Moving onto a
+ * pill asks for that season ([onPending], loaded once you pause there); OK picks it now ([onPick]). Only a real move
+ * changes it ([free] false: behind a pop-up, the pills can't take focus). (Peter, 2026-11-17.)
+ */
+@Composable
+private fun SeasonPills(
+    ui: DetailUi,
+    state: LazyListState,
+    free: Boolean,
+    selectedFocus: FocusRequester,
+    onSeasons: (Boolean) -> Unit,
+    onPending: (Int) -> Unit,
+    onPick: (Int) -> Unit,
+    pillModifier: Modifier = Modifier,
+) {
+    LazyRow(Modifier.onFocusChanged { onSeasons(it.hasFocus) }, state = state, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        items(ui.seasons, key = { it.number }) { season ->
+            val selected = season.number == ui.season
+            AppPill(
+                text = season.name, selected = selected, onClick = { onPick(season.number) },
+                modifier = (if (selected) Modifier.focusRequester(selectedFocus) else Modifier)
+                    .focusProperties { canFocus = free }
+                    .then(pillModifier)
+                    .onFocusChanged { if (it.isFocused && free) onPending(season.number) },
+            )
         }
     }
 }
@@ -1779,29 +1747,28 @@ private fun EpisodeActions(
     LaunchedEffect(addonStreams?.isNotEmpty() == true) {
         if (addonStreams?.isNotEmpty() == true && noneAbove) { awaitFrame(); runCatching { first.requestFocus() } }
     }
-    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
-    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
-            // Opened by holding OK on an episode: letting go of that OK mustn't pick the first source.
-            Column(Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus().ignoreHeldOk(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(title, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(bottom = 10.dp))
-                var firstUsed = false
-                fun m(): Modifier = if (!firstUsed) { firstUsed = true; Modifier.focusRequester(first) } else Modifier
-                plexLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onPlex, modifier = m()) }
-                serverLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onServer, modifier = m()) }
-                onProvider?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = providerLabel, selected = false, onClick = it, modifier = m()) }
-                androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.5f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    AddonStreamItems(hasAddons, addonStreams, ::m, onAddon)
-                }
-                if (plexLabel == null && serverLabel == null && onProvider == null && !hasAddons) Text("This episode isn't in Plex or on IPTV, and no addon is connected.", fontSize = 13.sp, color = AppColors.TextSecondary)
-                markLabel?.let { io.github.petebutty.viewarr.ui.common.MenuItem(text = it, selected = false, onClick = onMark, modifier = m()) }
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Close", selected = false, onClick = onClose, modifier = m())
-                message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp)) }
-            }
-        }
+    // The shared pop-up (its own window; the held OK that opened it is ignored, so letting go doesn't pick the
+    // first source). Cancel last, as every options pop-up. (Peter, 2026-11-17: was a solid panel with "Close".)
+    PopupPanel(onClose = onClose, width = Tokens.PopupWide) {
+        PopupTitle(title)
+        var firstUsed = false
+        fun m(): Modifier = if (!firstUsed) { firstUsed = true; Modifier.focusRequester(first) } else Modifier
+        plexLabel?.let { MenuItem(text = it, selected = false, onClick = onPlex, modifier = m()) }
+        serverLabel?.let { MenuItem(text = it, selected = false, onClick = onServer, modifier = m()) }
+        onProvider?.let { MenuItem(text = providerLabel, selected = false, onClick = it, modifier = m()) }
+        AddonStreamItems(hasAddons, addonStreams, ::m, onAddon)
+        if (plexLabel == null && serverLabel == null && onProvider == null && !hasAddons) Text("This episode isn't in Plex or on IPTV, and no addon is connected.", fontSize = 13.sp, color = AppColors.TextSecondary)
+        markLabel?.let { MenuItem(text = it, selected = false, onClick = onMark, modifier = m()) }
+        MenuItem(text = "Cancel", selected = false, onClick = onClose, modifier = m())
+        message?.let { Text(it, fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp)) }
     }
 }
 
+/**
+ * The streams the addons found (Find a source / an episode's search): the shared pop-up, each stream one row as in
+ * Play from (a short summary, where it's from beside it). (Peter, 2026-11-17: was a solid side panel with two-line
+ * rows of its own.)
+ */
 @Composable
 private fun StreamPicker(streams: List<StreamOption>, onPick: (StreamOption) -> Unit, modifier: Modifier, onClose: () -> Unit) {
     val first = remember { FocusRequester() }
@@ -1809,36 +1776,13 @@ private fun StreamPicker(streams: List<StreamOption>, onPick: (StreamOption) -> 
         awaitFrame()
         runCatching { first.requestFocus() }
     }
-    // Its own window (ViewarrPopup), on the right of the title page: the remote can't be left on the page.
-    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterEnd) {
-            Column(
-                Modifier.fillMaxHeight().fillMaxWidth(0.46f).background(AppColors.Panel.copy(alpha = 0.97f)).padding(horizontal = 20.dp, vertical = 28.dp).trapFocus(),
-            ) {
-                Text("${streams.size} stream${if (streams.size == 1) "" else "s"} found", fontSize = 18.sp, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary)
-                Text("Back to close", fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 12.dp))
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    itemsIndexed(streams) { i, s ->
-                        Surface(
-                            onClick = { onPick(s) },
-                            modifier = (if (i == 0) Modifier.focusRequester(first) else Modifier).fillMaxWidth(),
-                            scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                            colors = ClickableSurfaceDefaults.colors(
-                                containerColor = AppColors.PanelAlt,
-                                contentColor = AppColors.TextPrimary,
-                                focusedContainerColor = AppColors.Accent,
-                                focusedContentColor = AppColors.OnAccent,
-                            ),
-                        ) {
-                            Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
-                                Text(s.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (s.description.isNotBlank()) Text(s.description, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            }
-                        }
-                    }
-                }
-            }
+    PopupPanel(onClose = onClose, width = Tokens.PopupWide, modifier = modifier) {
+        PopupTitle("${streams.size} stream${if (streams.size == 1) "" else "s"} found", "Back to close")
+        streams.forEachIndexed { i, s ->
+            MenuItem(
+                text = StreamLabel.summary(s), selected = false, trailing = StreamLabel.from(s),
+                onClick = { onPick(s) }, modifier = if (i == 0) Modifier.focusRequester(first) else Modifier,
+            )
         }
     }
 }
@@ -1854,7 +1798,7 @@ private fun Modifier.free(): Modifier {
 
 /** "Next episode in 10 s": OK plays now, Back cancels. */
 @Composable
-private fun UpNextOverlay(ep: io.github.petebutty.viewarr.data.media.EpisodeInfo, onPlay: () -> Unit, onCancel: () -> Unit) {
+private fun UpNextOverlay(ep: EpisodeInfo, onPlay: () -> Unit, onCancel: () -> Unit) {
     // Settings → Playback → Next episode countdown.
     var left by remember(ep) { androidx.compose.runtime.mutableIntStateOf(AppColors.palette.upNextSeconds) }
     val focus = remember { FocusRequester() }
@@ -1866,7 +1810,7 @@ private fun UpNextOverlay(ep: io.github.petebutty.viewarr.data.media.EpisodeInfo
     }
     Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f * AppColors.palette.popupAlpha)).trapFocus(), contentAlignment = Alignment.BottomEnd) {
         Column(
-            Modifier.padding(56.dp).width(520.dp).glass(14.dp).padding(24.dp),
+            Modifier.padding(56.dp).width(520.dp).glass(Tokens.PopupRadius).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("Next episode in $left s", fontSize = 14.sp, color = AppColors.Accent)
@@ -1880,102 +1824,59 @@ private fun UpNextOverlay(ep: io.github.petebutty.viewarr.data.media.EpisodeInfo
     }
 }
 
-/** Hold OK on a poster: play, details, trailer and watchlist without opening the title page first. */
+/**
+ * Hold OK on a poster: play, details, trailer and watchlist without opening the title page first. The shared options
+ * pop-up (first option highlighted, Cancel last). (Peter, 2026-11-17: the collection card's menu wasn't in its own
+ * window at all, and "Close" is now "Cancel".)
+ */
 @Composable
 private fun QuickOptions(item: MediaItem, vm: MediaViewModel, onTrailer: () -> Unit, onClose: () -> Unit) {
-    val first = remember { FocusRequester() }
+    // A collection / playlist card: open it, or give it its own row on this page.
+    if (item.key.startsWith("col:")) {
+        val hasRow = remember(item.key) { vm.hasCollectionRow(item) }
+        OptionsPopup(
+            title = item.title,
+            subtitle = listOfNotNull(item.subtitle, item.origin).joinToString("  ·  "),
+            options = listOf(
+                PopupOption("Open") { vm.open(item) },
+                PopupOption(if (hasRow) "Remove its row from this page" else "Show as a row on this page") { vm.setCollectionRow(item, !hasRow) },
+            ),
+            onClose = onClose,
+        )
+        return
+    }
     val trailerId by produceState<String?>(null, item.key) { value = vm.trailers.youtubeId(item) }
     // null = no Trakt (no watchlist option); loading shows nothing until known.
     val watchlisted by produceState<Boolean?>(null, item.key) { value = vm.watchlistState(item) }
     // Seerr set up: request the title to keep (or see that it's already requested / available).
-    val seerrStatus by produceState<io.github.petebutty.viewarr.data.remote.services.SeerrService.Status?>(null, item.key) { value = vm.seerrStatus(item) }
-    BackHandler(onBack = onClose)
-    io.github.petebutty.viewarr.ui.common.BackLayer()
-    LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
+    val seerrStatus by produceState<SeerrService.Status?>(null, item.key) { value = vm.seerrStatus(item) }
     val show = item.type == MediaType.Show
-    // A collection / playlist card: open it, or give it its own row on this page.
-    if (item.key.startsWith("col:")) {
-        val hasRow = remember(item.key) { vm.hasCollectionRow(item) }
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
-            Column(
-                Modifier.width(420.dp).glass(14.dp).padding(20.dp).trapFocus().then(Modifier.ignoreHeldOk()),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(item.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(listOfNotNull(item.subtitle, item.origin).joinToString("  ·  "), fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp))
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Open", selected = false, modifier = Modifier.focusRequester(first), onClick = { onClose(); vm.open(item) })
-                io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = if (hasRow) "Remove its row from this page" else "Show as a row on this page", selected = false,
-                    onClick = { onClose(); vm.setCollectionRow(item, !hasRow) },
-                )
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Cancel", selected = false, onClick = onClose)
-            }
+    // IPTV keeps no history: watched / not watched kept on the box (films; episodes on the title page).
+    val iptv by produceState(false, item.key) { value = !show && vm.hasIptv(item) }
+    val localEntries by vm.localWatch.entries.collectAsState()
+    val done = remember(localEntries, item.key) { vm.localWatch.isWatched(item) }
+    val seerrAsk = seerrStatus == SeerrService.Status.None || seerrStatus == SeerrService.Status.Partial
+    val options = buildList {
+        add(PopupOption(if (show) "Episodes" else if (item.progress != null) "Resume" else "Play") { if (show) vm.quickEpisodes(item) else vm.quickPlay(item) })
+        add(PopupOption("Details") { vm.open(item) })
+        // (Stays open: the trailer replaces this pop-up itself, and closing would send the highlight back to the rows.)
+        if (trailerId != null) add(PopupOption("Watch trailer", keepOpen = true, onClick = onTrailer))
+        watchlisted?.let { on -> add(PopupOption(if (on) "Remove from watchlist" else "Add to watchlist") { vm.quickWatchlist(item, add = !on) }) }
+        seerrStatus?.takeIf { seerrAsk }?.let { st -> add(PopupOption(st.label) { vm.requestOnSeerr(item) }) }
+        if (iptv) {
+            add(PopupOption(if (done) "Mark as not watched" else "Mark as watched") { vm.markIptvWatched(item, !done) })
+            if (item.origin == "IPTV" && item.progress != null) add(PopupOption("Remove from Continue watching") { vm.hideIptv(item) })
         }
-        return
+        // A show you're done with: out of Continue watching (and Upcoming episodes) for good, and dropped on Trakt.
+        // Watching any episode of it again brings it back.
+        if (show && vm.inContinue(item)) add(PopupOption("Drop show") { vm.dropShow(item) })
     }
-    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
-    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.55f)), contentAlignment = Alignment.Center) {
-            Column(
-                Modifier.width(420.dp).glass(14.dp).padding(20.dp).trapFocus()
-                    .then(Modifier.ignoreHeldOk()),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Text(item.title, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                val seerrAsk = seerrStatus == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.None ||
-                    seerrStatus == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.Partial
-                listOfNotNull(item.year?.toString(), item.origin, seerrStatus?.takeIf { !seerrAsk }?.label).joinToString("  ·  ").takeIf { it.isNotEmpty() }?.let {
-                    Text(it, fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 8.dp))
-                }
-                io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = if (show) "Episodes" else if (item.progress != null) "Resume" else "Play",
-                    selected = false,
-                    modifier = Modifier.focusRequester(first),
-                    onClick = { onClose(); if (show) vm.quickEpisodes(item) else vm.quickPlay(item) },
-                )
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Details", selected = false, onClick = { onClose(); vm.open(item) })
-                if (trailerId != null) io.github.petebutty.viewarr.ui.common.MenuItem(text = "Watch trailer", selected = false, onClick = onTrailer)
-                watchlisted?.let { on ->
-                    io.github.petebutty.viewarr.ui.common.MenuItem(
-                        text = if (on) "Remove from watchlist" else "Add to watchlist",
-                        selected = false,
-                        onClick = { onClose(); vm.quickWatchlist(item, add = !on) },
-                    )
-                }
-                seerrStatus?.takeIf { seerrAsk }?.let { st ->
-                    val canAsk = st == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.None ||
-                        st == io.github.petebutty.viewarr.data.remote.services.SeerrService.Status.Partial
-                    io.github.petebutty.viewarr.ui.common.MenuItem(
-                        text = st.label,
-                        selected = false,
-                        dim = !canAsk,
-                        onClick = { if (canAsk) { onClose(); vm.requestOnSeerr(item) } },
-                    )
-                }
-                // IPTV keeps no history: watched / not watched kept on the box (films; episodes on the title page).
-                val iptv by produceState(false, item.key) { value = !show && vm.hasIptv(item) }
-                val localEntries by vm.localWatch.entries.collectAsState()
-                if (iptv) {
-                    val done = remember(localEntries, item.key) { vm.localWatch.isWatched(item) }
-                    io.github.petebutty.viewarr.ui.common.MenuItem(
-                        text = if (done) "Mark as not watched" else "Mark as watched", selected = false,
-                        onClick = { onClose(); vm.markIptvWatched(item, !done) },
-                    )
-                    if (item.origin == "IPTV" && item.progress != null) io.github.petebutty.viewarr.ui.common.MenuItem(
-                        text = "Remove from Continue watching", selected = false,
-                        onClick = { onClose(); vm.hideIptv(item) },
-                    )
-                }
-                // A show you're done with: out of Continue watching (and Upcoming episodes) for good, and dropped on Trakt.
-                // Watching any episode of it again brings it back.
-                if (show && vm.inContinue(item)) io.github.petebutty.viewarr.ui.common.MenuItem(
-                    text = "Drop show", selected = false,
-                    onClick = { onClose(); vm.dropShow(item) },
-                )
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = "Close", selected = false, onClick = onClose)
-            }
-        }
-    }
+    OptionsPopup(
+        title = item.title,
+        subtitle = listOfNotNull(item.year?.toString(), item.origin, seerrStatus?.takeIf { !seerrAsk }?.label).joinToString("  ·  "),
+        options = options,
+        onClose = onClose,
+    )
 }
 
 
@@ -1986,7 +1887,7 @@ private fun QuickOptions(item: MediaItem, vm: MediaViewModel, onTrailer: () -> U
 @Composable
 private fun TitleLogo(item: MediaItem, logoOf: (suspend (MediaItem) -> String?)?, height: androidx.compose.ui.unit.Dp, maxWidth: androidx.compose.ui.unit.Dp, fontSize: Int, waitMs: Long = 0) {
     // Settings → Appearance → Title logo off: the name as text, and no logo lookup.
-    val logosOn = AppColors.palette.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.LOGO) && !AppColors.palette.lowMemory
+    val logosOn = AppColors.palette.shows(TitleParts.LOGO) && !AppColors.palette.lowMemory
     val logo by produceState<String?>(null, item.key, logosOn) {
         value = null
         if (logoOf == null || !logosOn) return@produceState
@@ -1994,12 +1895,13 @@ private fun TitleLogo(item: MediaItem, logoOf: (suspend (MediaItem) -> String?)?
         value = logoOf(item)
     }
     var loaded by remember(logo) { mutableStateOf(false) }
-    val context = androidx.compose.ui.platform.LocalContext.current
+    // Decoded to fit its space (not the original, thousands of pixels wide), sized here as the space stays 0 high
+    // until it arrives.
+    val request = rememberLogoRequest(logo, maxWidth.value.toInt(), height.value.toInt())
     Box {
-        logo?.let { url ->
+        request?.let { req ->
             AsyncImage(
-                // Loaded at its own size: the space stays 0 high until it arrives.
-                model = remember(url) { coil.request.ImageRequest.Builder(context).data(url).size(coil.size.Size.ORIGINAL).build() },
+                model = req,
                 contentDescription = item.title,
                 contentScale = ContentScale.Fit,
                 alignment = Alignment.CenterStart,
@@ -2012,28 +1914,53 @@ private fun TitleLogo(item: MediaItem, logoOf: (suspend (MediaItem) -> String?)?
 }
 
 
-/** "TMDB 8.6 (1.2k) · IMDb 7.9 · Rotten Tomatoes 87% · RT audience 91% · Trakt 82%". */
+/**
+ * "TMDB 8.6 · IMDb 7.9 · Rotten Tomatoes 87% · RT audience 91% · Trakt 82%". [oneLine]: never wraps, the ones that
+ * don't fit are left off (the Movies / Shows hero, which has a fixed height).
+ */
 @Composable
-private fun RatingsLine(tmdb: Double?, votes: Int?, more: List<io.github.petebutty.viewarr.data.media.RatingBadge>) {
+private fun RatingsLine(tmdb: Double?, more: List<RatingBadge>, oneLine: Boolean = false) {
     val all = buildList {
         // Scores only (no vote counts), so up to seven sources fit on one line.
         // Settings → Appearance → Ratings: only the ones switched on.
         val p = AppColors.palette
-        tmdb?.takeIf { it > 0 && p.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.rating("TMDB")) }?.let { add("TMDB" to "%.1f".format(it)) }
-        more.filter { p.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.rating(it.source)) }.forEach { add(it.source to it.value) }
+        tmdb?.takeIf { it > 0 && p.shows(TitleParts.rating("TMDB")) }?.let { add("TMDB" to "%.1f".format(it)) }
+        more.filter { p.shows(TitleParts.rating(it.source)) }.forEach { add(it.source to it.value) }
     }.sortedBy { AppColors.palette.ratingRank(it.first) }
     if (all.isEmpty()) return
+    if (oneLine) { OneLine(12.dp) { all.forEach { (src, v) -> RatingBadgeView(src, v) } }; return }
     // Wraps onto a second line rather than running past its column (e.g. under the trailer on the Movies page).
     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
     androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        all.forEach { (src, v) ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(src, fontSize = 11.sp, maxLines = 1, softWrap = false, fontWeight = FontWeight.SemiBold, color = Color.Black,
-                    modifier = Modifier.background(ratingColour(src), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(v, fontSize = 13.sp, color = AppColors.TextPrimary, maxLines = 1, softWrap = false)
-            }
+        all.forEach { (src, v) -> RatingBadgeView(src, v) }
+    }
+}
+
+@Composable
+private fun RatingBadgeView(src: String, v: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(src, fontSize = 11.sp, maxLines = 1, softWrap = false, fontWeight = FontWeight.SemiBold, color = Color.Black,
+            modifier = Modifier.background(ratingColour(src), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(v, fontSize = 13.sp, color = AppColors.TextPrimary, maxLines = 1, softWrap = false)
+    }
+}
+
+/** Its children side by side, [gap] apart, as many as fit the width whole; the rest aren't drawn. */
+@Composable
+private fun OneLine(gap: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {
+    androidx.compose.ui.layout.Layout(content) { measurables, c ->
+        val g = gap.roundToPx()
+        val placeables = measurables.map { it.measure(c.copy(minWidth = 0, minHeight = 0)) }
+        val xs = ArrayList<Int>()
+        var x = 0
+        for (pl in placeables) {
+            val at = if (xs.isEmpty()) 0 else x + g
+            if (at + pl.width > c.maxWidth) break
+            xs.add(at); x = at + pl.width
         }
+        val h = placeables.take(xs.size).maxOfOrNull { it.height } ?: 0
+        layout(x.coerceAtLeast(c.minWidth), h) { xs.forEachIndexed { i, px -> placeables[i].place(px, 0) } }
     }
 }
 
@@ -2055,13 +1982,13 @@ private enum class DetailTab(val label: String) { Cast("Cast & crew"), Reviews("
  */
 @Composable
 private fun DetailTabs(
-    d: io.github.petebutty.viewarr.data.media.MediaDetail,
+    d: MediaDetail,
     show: Boolean,
     free: Boolean,
     /** On the selected tab: where Down from the buttons above goes. */
     tabFocus: FocusRequester,
-    onPerson: (io.github.petebutty.viewarr.data.media.CastMember) -> Unit,
-    onReview: (io.github.petebutty.viewarr.data.media.Review) -> Unit,
+    onPerson: (CastMember) -> Unit,
+    onReview: (Review) -> Unit,
     onSimilar: (MediaItem) -> Unit,
     /** A title highlighted in More like this / the collection (null: off them, onto the tabs). */
     onHover: (MediaItem?) -> Unit = {},
@@ -2072,7 +1999,8 @@ private fun DetailTabs(
     // Left with nothing further left in the tabs or a row: the menu, as Left at the edge of any page.
     val leftOpensMenu = Modifier.onPreviewKeyEvent { e ->
         if (e.key != Key.DirectionLeft || e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-        if (!focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Left)) onLeftEdge()
+        // (At the edge, once per press: holding Left to run along a row stops there instead of opening the menu.)
+        if (!focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Left) && e.nativeKeyEvent.repeatCount == 0) onLeftEdge()
         true
     }
     val facts = listOfNotNull(
@@ -2088,11 +2016,11 @@ private fun DetailTabs(
     val tabs = buildList {
         // Settings → Appearance → Title pages: only the tabs switched on.
         val p = AppColors.palette
-        if (d.cast.isNotEmpty() && p.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.CAST)) add(DetailTab.Cast)
-        if (d.reviews.isNotEmpty() && p.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.REVIEWS)) add(DetailTab.Reviews)
-        if (d.collection.isNotEmpty() && p.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.COLLECTION)) add(DetailTab.Collection)
-        if (d.similar.isNotEmpty() && p.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.SIMILAR)) add(DetailTab.Similar)
-        if (facts.isNotEmpty() && p.shows(io.github.petebutty.viewarr.ui.theme.TitleParts.DETAILS)) add(DetailTab.Details)
+        if (d.cast.isNotEmpty() && p.shows(TitleParts.CAST)) add(DetailTab.Cast)
+        if (d.reviews.isNotEmpty() && p.shows(TitleParts.REVIEWS)) add(DetailTab.Reviews)
+        if (d.collection.isNotEmpty() && p.shows(TitleParts.COLLECTION)) add(DetailTab.Collection)
+        if (d.similar.isNotEmpty() && p.shows(TitleParts.SIMILAR)) add(DetailTab.Similar)
+        if (facts.isNotEmpty() && p.shows(TitleParts.DETAILS)) add(DetailTab.Details)
     }
     if (tabs.isEmpty()) return
     var tab by remember(d.item.key) { mutableStateOf(tabs.first()) }
@@ -2100,53 +2028,66 @@ private fun DetailTabs(
     // Right past the last tab stays put (it used to jump up to the Play button).
     Row(Modifier.stopAtRight().then(leftOpensMenu), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         tabs.forEach { t ->
-            Surface(
+            // The shared pill (selected: the tint; highlighted: the accent fill).
+            AppPill(
+                text = (if (t == DetailTab.Collection) d.collectionName ?: t.label else t.label) + if (t == DetailTab.Reviews) " (${d.reviews.size})" else "",
+                selected = t == tab,
                 // OK: into the tab's row (it only re-picked the tab already showing).
                 onClick = { tab = t; focusManager.moveFocus(androidx.compose.ui.focus.FocusDirection.Down) },
                 modifier = (if (t == tab) Modifier.focusRequester(tabFocus) else Modifier).onFocusChanged { if (it.isFocused) { tab = t; onHover(null) } }.focusProperties { canFocus = free },
-                scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-                colors = ClickableSurfaceDefaults.colors(
-                    containerColor = if (t == tab) AppColors.TextPrimary.copy(alpha = 0.15f) else Color.Transparent,
-                    contentColor = if (t == tab) AppColors.TextPrimary else AppColors.TextSecondary,
-                    focusedContainerColor = AppColors.Accent, focusedContentColor = AppColors.OnAccent,
-                ),
-            ) { Text((if (t == DetailTab.Collection) d.collectionName ?: t.label else t.label) + if (t == DetailTab.Reviews) " (${d.reviews.size})" else "", fontSize = 14.sp, fontWeight = FontWeight.Medium, modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) }
+            )
         }
     }
     Spacer(Modifier.height(12.dp))
-    val rowPadding = PaddingValues(end = 40.dp)
-    when (tab) {
-        DetailTab.Cast -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(d.cast, key = { "${it.id}-${it.name}" }) { c -> CastCard(c, free) { onPerson(c) } }
-        }
-        DetailTab.Reviews -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(d.reviews.size) { i -> ReviewCard(d.reviews[i], free) { onReview(d.reviews[i]) } }
-        }
-        DetailTab.Similar, DetailTab.Collection -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            // The film you're on stays out of its own collection row.
-            items(if (tab == DetailTab.Collection) d.collection.filter { it.tmdbId != d.item.tmdbId } else d.similar, key = { it.key }) { m ->
-                Column(Modifier.width(86.dp)) {
-                    PosterCard(m, Modifier.focusProperties { canFocus = free }.onFocusChanged { if (it.isFocused) onHover(m) }, onClick = { onSimilar(m) })
-                    Text(m.title, fontSize = 11.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+    val rowPadding = PaddingValues(end = Tokens.Gutter)
+    // One tab's row (the chosen tab's, and the second row under it).
+    @Composable
+    fun TabRow(t: DetailTab) {
+        when (t) {
+            DetailTab.Cast -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                items(d.cast, key = { "${it.id}-${it.name}" }) { c -> CastCard(c, free) { onPerson(c) } }
+            }
+            DetailTab.Reviews -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                items(d.reviews.size) { i -> ReviewCard(d.reviews[i], free) { onReview(d.reviews[i]) } }
+            }
+            DetailTab.Similar, DetailTab.Collection -> androidx.compose.foundation.lazy.LazyRow(modifier = leftOpensMenu, contentPadding = rowPadding, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // The film you're on stays out of its own collection row.
+                items(if (t == DetailTab.Collection) d.collection.filter { it.tmdbId != d.item.tmdbId } else d.similar, key = { it.key }) { m ->
+                    Column(Modifier.width(86.dp)) {
+                        PosterCard(m, Modifier.focusProperties { canFocus = free }.onFocusChanged { if (it.isFocused) onHover(m) }, onClick = { onSimilar(m) })
+                        Text(m.title, fontSize = 11.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 4.dp))
+                    }
                 }
             }
-        }
-        DetailTab.Details -> Surface(
-            onClick = {}, modifier = Modifier.focusProperties { canFocus = free },
-            scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            colors = ClickableSurfaceDefaults.colors(containerColor = AppColors.Panel.copy(alpha = 0.6f), focusedContainerColor = AppColors.Panel),
-        ) {
-            Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(30.dp)) {
-                facts.forEach { (k, v) ->
-                    Column {
-                        Text(k, fontSize = 11.sp, color = AppColors.TextSecondary)
-                        Text(v, fontSize = 14.sp, color = AppColors.TextPrimary, maxLines = 1)
+            DetailTab.Details -> Surface(
+                onClick = {}, modifier = Modifier.focusProperties { canFocus = free },
+                scale = NoScale,
+                shape = ClickableSurfaceDefaults.shape(Tokens.CardShape),
+                colors = ClickableSurfaceDefaults.colors(containerColor = AppColors.Panel.copy(alpha = 0.6f), focusedContainerColor = AppColors.Panel),
+            ) {
+                Row(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(30.dp)) {
+                    facts.forEach { (k, v) ->
+                        Column {
+                            Text(k, fontSize = 11.sp, color = AppColors.TextSecondary)
+                            Text(v, fontSize = 14.sp, color = AppColors.TextPrimary, maxLines = 1)
+                        }
                     }
                 }
             }
         }
+    }
+    TabRow(tab)
+    // A second row under it, so the page isn't half empty below one short row (Peter, 2026-11-17): More like this, or
+    // the cast when More like this is the tab chosen. Down from the first row goes into it.
+    val second = when {
+        tab != DetailTab.Similar && DetailTab.Similar in tabs -> DetailTab.Similar
+        tab == DetailTab.Similar && DetailTab.Cast in tabs -> DetailTab.Cast
+        else -> null
+    }
+    if (second != null) {
+        Spacer(Modifier.height(16.dp))
+        RowTitle(second.label, Modifier.padding(start = 4.dp))
+        TabRow(second)
     }
 }
 
@@ -2158,16 +2099,14 @@ private fun money(n: Long): String = when {
 
 /** A cast member: round photo (initials when TMDB has none), name and character. OK opens their films and shows. */
 @Composable
-private fun CastCard(c: io.github.petebutty.viewarr.data.media.CastMember, free: Boolean, onClick: () -> Unit) {
+private fun CastCard(c: CastMember, free: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Column(Modifier.width(96.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Surface(
+        // The shared card, round (no growing: one card rule everywhere).
+        FocusCard(
             onClick = onClick,
-            modifier = Modifier.size(76.dp).onFocusChanged { focused = it.isFocused }.focusProperties { canFocus = free }.instantFocusScale(1.06f),
-            scale = io.github.petebutty.viewarr.ui.common.focusScale(1.06f),
-            shape = ClickableSurfaceDefaults.shape(androidx.compose.foundation.shape.CircleShape),
-            border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(3.dp, AppColors.Accent), shape = androidx.compose.foundation.shape.CircleShape)),
-            colors = ClickableSurfaceDefaults.colors(containerColor = AppColors.Panel, focusedContainerColor = AppColors.Panel),
+            modifier = Modifier.size(76.dp).onFocusChanged { focused = it.isFocused }.focusProperties { canFocus = free },
+            shape = Tokens.RoundShape,
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(c.name.split(' ').mapNotNull { it.firstOrNull()?.uppercase() }.take(2).joinToString(""), fontSize = 20.sp, color = AppColors.TextSecondary)
@@ -2181,14 +2120,11 @@ private fun CastCard(c: io.github.petebutty.viewarr.data.media.CastMember, free:
 }
 
 @Composable
-private fun ReviewCard(r: io.github.petebutty.viewarr.data.media.Review, free: Boolean, onClick: () -> Unit) {
-    Surface(
+private fun ReviewCard(r: Review, free: Boolean, onClick: () -> Unit) {
+    FocusCard(
         onClick = onClick,
         modifier = Modifier.size(width = 380.dp, height = 140.dp).focusProperties { canFocus = free },
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(2.dp, AppColors.Accent), shape = RoundedCornerShape(10.dp))),
-        colors = ClickableSurfaceDefaults.colors(containerColor = AppColors.Panel.copy(alpha = 0.7f), focusedContainerColor = AppColors.Panel),
+        containerColor = AppColors.Panel.copy(alpha = 0.7f), focusedContainerColor = AppColors.Panel,
     ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2196,23 +2132,29 @@ private fun ReviewCard(r: io.github.petebutty.viewarr.data.media.Review, free: B
                 r.rating?.let { Text("★ %.0f/10".format(it), fontSize = 13.sp, color = AppColors.Accent) }
             }
             Text(listOfNotNull(r.source, r.date, r.likes.takeIf { it > 0 }?.let { "♥ $it" }).joinToString("  ·  "), fontSize = 11.sp, color = AppColors.TextSecondary)
-            if (r.spoiler) Text("Contains spoilers: OK to read", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp))
+            if (r.spoiler) Text("Contains spoilers  ·  OK: read", fontSize = 13.sp, color = AppColors.Accent, modifier = Modifier.padding(top = 8.dp))
             else Text(r.text.replace(Regex("\\s+"), " "), fontSize = 12.sp, lineHeight = 17.sp, color = AppColors.TextPrimary, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp))
         }
     }
 }
 
-/** A whole review, scrolled with Up/Down; Back or OK closes it. */
+/** A whole review, scrolled with Up/Down; Back or OK closes it. On the shared pop-up (PopupPanel, wide). */
 @Composable
-private fun ReviewDialog(r: io.github.petebutty.viewarr.data.media.Review, onClose: () -> Unit) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-        val scroll = androidx.compose.foundation.rememberScrollState()
-        val f = remember { FocusRequester() }
-        val scope = rememberCoroutineScope()
-        LaunchedEffect(Unit) { awaitFrame(); runCatching { f.requestFocus() } }
+private fun ReviewDialog(r: Review, onClose: () -> Unit) {
+    val scroll = androidx.compose.foundation.rememberScrollState()
+    val f = remember { FocusRequester() }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(Unit) { awaitFrame(); runCatching { f.requestFocus() } }
+    PopupPanel(onClose = onClose, width = Tokens.PopupWide + 120.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(r.author, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.weight(1f))
+            r.rating?.let { Text("★ %.0f/10".format(it), fontSize = 16.sp, color = AppColors.Accent) }
+        }
+        r.date?.let { Text(it, fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 12.dp)) }
+        // (Its own scroll, held under the panel's height, moved by Up / Down on the text.)
         Column(
-            Modifier.width(820.dp).heightIn(max = 600.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(28.dp)
-                .focusRequester(f).then(Modifier.focusable())
+            Modifier.heightIn(max = 380.dp).verticalScroll(scroll)
+                .focusRequester(f).focusable()
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (e.key) {
@@ -2223,14 +2165,7 @@ private fun ReviewDialog(r: io.github.petebutty.viewarr.data.media.Review, onClo
                     }
                 },
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(r.author, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.weight(1f))
-                r.rating?.let { Text("★ %.0f/10".format(it), fontSize = 16.sp, color = AppColors.Accent) }
-            }
-            r.date?.let { Text(it, fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 12.dp)) }
-            Column(Modifier.verticalScroll(scroll)) {
-                Text(r.text, fontSize = 16.sp, lineHeight = 24.sp, color = AppColors.TextPrimary)
-            }
+            Text(r.text, fontSize = 16.sp, lineHeight = 24.sp, color = AppColors.TextPrimary)
         }
     }
 }
@@ -2240,7 +2175,7 @@ private fun ReviewDialog(r: io.github.petebutty.viewarr.data.media.Review, onClo
  * listed with what it is (4K · Dolby Vision · Atmos 7.1 · 58 GB), the best for this TV first and marked.
  */
 @Composable
-private fun SourcesDialog(ui: DetailUi, vm: MediaViewModel, onSearch: () -> Unit, onDone: () -> Unit) {
+private fun SourcesDialog(ui: DetailUi, vm: MediaViewModel, onDone: () -> Unit) {
     val first = remember { FocusRequester() }
     val ranked by produceState<List<MediaViewModel.RankedCopy>?>(null, ui.copies) { value = vm.rankedCopies(ui.copies.orEmpty()) }
     // The addons are searched as soon as it opens, their streams listed with your copies (null: still searching).
@@ -2250,29 +2185,22 @@ private fun SourcesDialog(ui: DetailUi, vm: MediaViewModel, onSearch: () -> Unit
     LaunchedEffect(addonStreams?.isNotEmpty() == true) {
         if (addonStreams?.isNotEmpty() == true && ranked.isNullOrEmpty()) { awaitFrame(); runCatching { first.requestFocus() } }
     }
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDone) {
-        Column(
-            // Opened by holding OK: letting go of that OK mustn't pick the first source.
-            Modifier.width(680.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp).ignoreHeldOk(),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text("Play from", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 8.dp))
-            var firstUsed = false
-            fun mod(): Modifier = if (!firstUsed) { firstUsed = true; Modifier.focusRequester(first) } else Modifier
-            if (ranked == null) Text("Checking your copies…", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 6.dp))
-            // (Scrolls inside the pop-up: long lists stay reachable, see popupScroll.)
-            androidx.compose.foundation.layout.Column(Modifier.popupScroll(0.6f), verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)) {
-                ranked.orEmpty().forEach { r ->
-                    io.github.petebutty.viewarr.ui.common.MenuItem(
-                        text = (if (r.best) "★ " else "") + vm.copyLabel(r.copy), selected = false,
-                        trailing = if (r.best) "Best for this TV" else r.note, dim = r.note != null && !r.best,
-                        onClick = { onDone(); vm.playCopy(r.copy) }, modifier = mod(),
-                    )
-                }
-                AddonStreamItems(ui.hasAddons, addonStreams, ::mod) { opt -> onDone(); vm.playStream(opt) }
-            }
-            io.github.petebutty.viewarr.ui.common.MenuItem(text = "Cancel", selected = false, onClick = onDone, modifier = mod())
+    // The shared pop-up (its own window; the held OK that opened it is ignored, so letting go doesn't pick the first
+    // source). (Peter, 2026-11-17: was a raw Dialog with a solid panel.)
+    PopupPanel(onClose = onDone, width = Tokens.PopupWide + 80.dp) {
+        PopupTitle("Play from")
+        var firstUsed = false
+        fun mod(): Modifier = if (!firstUsed) { firstUsed = true; Modifier.focusRequester(first) } else Modifier
+        if (ranked == null) Text("Checking your copies…", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 6.dp))
+        ranked.orEmpty().forEach { r ->
+            MenuItem(
+                text = (if (r.best) "★ " else "") + vm.copyLabel(r.copy), selected = false,
+                trailing = if (r.best) "Best for this TV" else r.note, dim = r.note != null && !r.best,
+                onClick = { onDone(); vm.playCopy(r.copy) }, modifier = mod(),
+            )
         }
+        AddonStreamItems(ui.hasAddons, addonStreams, ::mod) { opt -> onDone(); vm.playStream(opt) }
+        MenuItem(text = "Cancel", selected = false, onClick = onDone, modifier = mod())
     }
 }
 
@@ -2287,7 +2215,7 @@ private fun AddonStreamItems(hasAddons: Boolean, streams: List<StreamOption>?, m
         streams == null -> Text("Searching your addons…", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(vertical = 6.dp, horizontal = 12.dp))
         streams.isEmpty() -> Text("Your addons found nothing for this.", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(vertical = 6.dp, horizontal = 12.dp))
         else -> streams.take(25).forEach { s ->
-            io.github.petebutty.viewarr.ui.common.MenuItem(
+            MenuItem(
                 // (Addons' own names run to several lines of emoji: a short summary, and where it comes from.)
                 text = StreamLabel.summary(s), selected = false, trailing = StreamLabel.from(s),
                 onClick = { onPick(s) }, modifier = mod(),
@@ -2296,25 +2224,36 @@ private fun AddonStreamItems(hasAddons: Boolean, streams: List<StreamOption>?, m
     }
 }
 
-/** A person's films and shows: who they are at the top (photo, born / died, where, biography). */
+/**
+ * A person's films and shows: who they are at the top (photo, born / died, where, biography). Beside the corner
+ * window (live TV, or a film made small): no photo, the text from x 356 as the Movies hero, and a shorter header that
+ * ends under the window (it sat under the window, photo and name hidden). (Peter, 2026-11-17.)
+ */
 @Composable
-private fun PersonHeader(p: io.github.petebutty.viewarr.data.media.PersonInfo) {
-    Row(Modifier.fillMaxWidth().padding(start = 48.dp, end = 48.dp, top = 36.dp, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(28.dp)) {
-        Box(Modifier.size(width = 150.dp, height = 210.dp).clip(RoundedCornerShape(10.dp)).background(AppColors.Panel)) {
+private fun PersonHeader(p: PersonInfo) {
+    val beside = LiveBehind.preview
+    Row(
+        Modifier.fillMaxWidth()
+            .then(if (beside) Modifier.heightIn(max = 200.dp) else Modifier)
+            .padding(start = if (beside) Tokens.BesideWindowStart else Tokens.Gutter, end = Tokens.Gutter, top = if (beside) 26.dp else 36.dp, bottom = if (beside) 8.dp else 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(28.dp),
+    ) {
+        if (!beside) Box(Modifier.size(width = 150.dp, height = 210.dp).clip(Tokens.CardShape).background(AppColors.Panel)) {
             p.photo?.let { AsyncImage(model = it, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
         }
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(p.name, fontSize = 34.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(if (beside) 4.dp else 6.dp)) {
+            Text(p.name, fontSize = if (beside) 26.sp else 34.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val life = listOfNotNull(
                 p.knownFor,
                 p.born?.let { b -> if (p.died != null) "$b – ${p.died}" else "Born $b" },
                 p.place,
             ).joinToString("  ·  ")
-            if (life.isNotEmpty()) Text(life, fontSize = 15.sp, color = AppColors.TextSecondary)
+            if (life.isNotEmpty()) Text(life, fontSize = if (beside) 14.sp else 15.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
             (p.bio ?: if (p.loading) "Loading…" else null)?.let { bio -> Text(
                 bio,
-                fontSize = 15.sp, lineHeight = 21.sp, color = AppColors.TextPrimary, maxLines = 6, overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 6.dp),
+                fontSize = if (beside) 14.sp else 15.sp, lineHeight = if (beside) 20.sp else 21.sp, color = AppColors.TextPrimary,
+                maxLines = if (beside) 4 else 6, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = if (beside) 2.dp else 6.dp),
             ) }
         }
     }
@@ -2323,34 +2262,15 @@ private fun PersonHeader(p: io.github.petebutty.viewarr.data.media.PersonInfo) {
 
 /**
  * A title page action as an icon in a circle (like the player's controls), its name underneath while it's
- * highlighted. [on]: a state that's set (watched, on your watchlist, tracks chosen) shows filled in.
+ * highlighted. [on]: a state that's set (watched, on your watchlist, tracks chosen) shows filled in. The shared
+ * RoundIconButton with the title page's look (thin white ring, dark fill). (Peter, 2026-11-17: was its own copy.)
  */
 @Composable
 private fun IconAction(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, onClick: () -> Unit, modifier: Modifier = Modifier, on: Boolean = false) {
-    var focused by remember { mutableStateOf(false) }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(48.dp)) {
-        Surface(
-            onClick = onClick,
-            modifier = modifier.size(44.dp).onFocusChanged { focused = it.isFocused }.instantFocusScale(1.08f),
-            scale = io.github.petebutty.viewarr.ui.common.focusScale(1.08f),
-            shape = ClickableSurfaceDefaults.shape(CircleShape),
-            border = ClickableSurfaceDefaults.border(border = Border(androidx.compose.foundation.BorderStroke(1.5.dp, Color.White.copy(alpha = 0.45f)))),
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = if (on) Color.White.copy(alpha = 0.22f) else Color.Black.copy(alpha = 0.25f),
-                contentColor = Color.White,
-                focusedContainerColor = AppColors.Accent,
-                focusedContentColor = AppColors.OnAccent,
-            ),
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                androidx.compose.material3.Icon(icon, contentDescription = label, tint = if (focused) AppColors.OnAccent else Color.White, modifier = Modifier.size(22.dp))
-            }
-        }
-        Text(
-            if (focused) label else "", fontSize = 12.sp, color = Color.White, maxLines = 1, softWrap = false,
-            modifier = Modifier.padding(top = 4.dp).wrapContentWidth(unbounded = true),
-        )
-    }
+    RoundIconButton(
+        icon = icon, label = label, onClick = onClick, modifier = modifier, on = on, outlined = true,
+        columnWidth = 48.dp, iconSize = 22.dp, focusedScale = 1.08f, containerColor = Color.Black.copy(alpha = 0.25f),
+    )
 }
 
 /**

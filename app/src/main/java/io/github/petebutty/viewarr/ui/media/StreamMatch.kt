@@ -3,6 +3,7 @@ package io.github.petebutty.viewarr.ui.media
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import io.github.petebutty.viewarr.data.media.StreamOption
+import io.github.petebutty.viewarr.data.media.VodStream
 
 /**
  * Settings → Playback → Auto-play match: which addon stream Play starts by itself (Peter, 2026-11-15).
@@ -14,7 +15,7 @@ import io.github.petebutty.viewarr.data.media.StreamOption
  *   can be added. It picks: the lists aren't hidden or re-sorted by it.
  * - **Cached only**: addon streams from Usenet or torrents that aren't marked instant (⚡) are left out, of the lists too.
  * - **Try the next stream** if one fails or doesn't start: the following ones in the same order go behind it
- *   ([io.github.petebutty.viewarr.data.media.VodStream.fallback]), see [SourceChain].
+ *   ([VodStream.fallback]), see [SourceChain].
  */
 object StreamMatch {
     /** One rule: [own] = typed by you (can be removed). */
@@ -91,8 +92,11 @@ object StreamMatch {
     fun cached(o: StreamOption): Boolean {
         val t = o.name + " " + o.description
         val notCached = t.contains("uncached", ignoreCase = true) || t.contains("not cached", ignoreCase = true)
-        return "⚡" in t || "+]" in t || t.contains("cached", ignoreCase = true) && !notCached || Regex("\\bplex\\b", RegexOption.IGNORE_CASE).containsMatchIn(t)
+        return "⚡" in t || "+]" in t || t.contains("cached", ignoreCase = true) && !notCached || plexWord.containsMatchIn(t)
     }
+
+    // (Compiled once: cached() is called for every stream while ranking.)
+    private val plexWord = Regex("\\bplex\\b", RegexOption.IGNORE_CASE)
 
     private val debridKind = Regex("nzb|usenet|easynews|torrent|\\[(rd|pm|tb|ad)[+⚡]?\\]|real-?debrid|premiumize|torbox|alldebrid|⏳|uncached|not cached", RegexOption.IGNORE_CASE)
 
@@ -107,8 +111,10 @@ object StreamMatch {
         val active = rules.filter { it.on }.mapNotNull { regex(it.pattern) }
         if (active.isEmpty()) return ranked
         val keys = ranked.associateWith { o -> val t = text(o); active.map { re -> re.containsMatchIn(t) } }
+        // (Each stream's quality check once, not again in every comparison.)
+        val inside = ranked.associateWith(within)
         return ranked.sortedWith { a, b ->
-            val wa = within(a); val wb = within(b)
+            val wa = inside.getValue(a); val wb = inside.getValue(b)
             if (wa != wb) return@sortedWith if (wa) -1 else 1
             val ka = keys.getValue(a); val kb = keys.getValue(b)
             for (i in ka.indices) if (ka[i] != kb[i]) return@sortedWith if (ka[i]) -1 else 1
@@ -118,10 +124,10 @@ object StreamMatch {
 }
 
 /**
- * The stream playing and what's behind it ([io.github.petebutty.viewarr.data.media.VodStream.fallback]): Plex's
+ * The stream playing and what's behind it ([VodStream.fallback]): Plex's
  * conversion, or the next addon streams ("Try the next stream"). [next] moves on to the one behind, if any.
  */
-class SourceChain(first: io.github.petebutty.viewarr.data.media.VodStream) {
+class SourceChain(first: VodStream) {
     var current = first
         private set
 
@@ -133,7 +139,7 @@ class SourceChain(first: io.github.petebutty.viewarr.data.media.VodStream) {
         private set
 
     /** The one behind, or null: [current] becomes it. */
-    fun next(): io.github.petebutty.viewarr.data.media.VodStream? = current.fallback?.also { current = it; ready = false; switches++ }
+    fun next(): VodStream? = current.fallback?.also { current = it; ready = false; switches++ }
 
     /** The one behind is another addon stream (not Plex's conversion of this one): a stream that won't start moves on too. */
     val nextIsSource get() = current.fallback?.nextSource == true

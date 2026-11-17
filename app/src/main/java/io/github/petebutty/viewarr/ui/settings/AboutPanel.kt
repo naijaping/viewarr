@@ -25,9 +25,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.text.DateFormat
-import java.util.Date
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.session.Session
+import io.github.petebutty.viewarr.ui.onboarding.Tour
 
 /** One line on the About page: a name, a value and (optionally) a note under it. */
 data class AboutRow(val title: String, val value: String, val note: String = "")
@@ -83,7 +83,6 @@ class AboutViewModel @Inject constructor(
         listOf("", "-wal", "-shm", "-journal").sumOf { context.getDatabasePath(name + it).let { f -> if (f.exists()) f.length() else 0L } }
 
     private suspend fun gather(): AboutInfo {
-        val df = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
         val pkg = runCatching { context.packageManager.getPackageInfo(context.packageName, 0) }.getOrNull()
         val viewarr = listOfNotNull(
             AboutRow("Version", "${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"),
@@ -112,7 +111,7 @@ class AboutViewModel @Inject constructor(
         // Storage: what Viewarr itself uses, by kind.
         val saved = sessions.saved.first()
         // The guide's databases are named from the guide's own key for a source (as GuideRepository keeps it).
-        fun guideKey(x: io.github.petebutty.viewarr.data.session.Session) = "${x.serverUrl}|${x.username}|${x.isXc}|${x.isM3u}|${x.m3uEpg}"
+        fun guideKey(x: Session) = "${x.serverUrl}|${x.username}|${x.isXc}|${x.isM3u}|${x.m3uEpg}"
         val labelFor = saved.associate { guides.nameFor(guideKey(it)) to it.label }
         val guideNames = guides.cachedNames()
         val guideRows = guideNames.mapIndexed { i, n -> AboutRow("TV guide: ${labelFor[n] ?: "a removed source (${i + 1})"}", mb(dbSize(n))) }
@@ -173,15 +172,15 @@ fun AboutSettingsScreen(onBack: () -> Unit, vm: AboutViewModel = hiltViewModel()
     val loading = info == null
     val categories = listOf(
         SettingCategory("Viewarr", if (loading) "Gathering details…" else "This version of Viewarr.", rows(i.viewarr) + listOf(
-            SettingItem("Changelog", "What changed in each version of Viewarr, newest first.", emptyList(), Value("OK to read"), action = { io.github.petebutty.viewarr.ui.update.Changelog.open = true }, onSelect = {}),
-            SettingItem("Show the tour", "The five-page tour of how Viewarr works, from the first run.", emptyList(), Value("OK to show"), action = { io.github.petebutty.viewarr.ui.onboarding.Tour.requested = true }, onSelect = {}),
+            SettingItem("Changelog", "What changed in each version of Viewarr, newest first.", emptyList(), Value("OK: read"), action = { io.github.petebutty.viewarr.ui.update.Changelog.open = true }, onSelect = {}),
+            SettingItem("Show the tour", "The tour of how Viewarr works, from the first run.", emptyList(), Value("OK: show"), action = { Tour.requested = true }, onSelect = {}),
         )),
         SettingCategory("This TV", if (loading) "Gathering details…" else "The box Viewarr is running on.", rows(i.device)),
         SettingCategory(
             "Storage", if (loading) "Measuring…" else "What Viewarr keeps on this TV.",
             rows(i.storage) + if (loading) emptyList() else listOf(
-                SettingItem("Clear artwork", "Posters, logos and backdrops are fetched again as you browse.", emptyList(), Value("OK to clear"), action = { vm.clearArtwork() }, onSelect = {}),
-                SettingItem("Delete downloaded updates", "Update files that have already been installed.", emptyList(), Value("OK to delete"), action = { vm.clearUpdates() }, onSelect = {}),
+                SettingItem("Clear artwork", "Posters, logos and backdrops are fetched again as you browse.", emptyList(), Value("OK: clear"), action = { vm.clearArtwork() }, onSelect = {}),
+                SettingItem("Delete downloaded updates", "Update files that have already been installed.", emptyList(), Value("OK: delete"), action = { vm.clearUpdates() }, onSelect = {}),
             ),
         ),
         SettingCategory("Live TV sources", "Your saved sources and their guides (the three most recent are kept on the TV).", rows(i.sources)),

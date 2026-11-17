@@ -30,7 +30,7 @@ import io.github.petebutty.viewarr.ui.theme.AppColors
 private data class RuleChoice(override val label: String) : RemoteChoice
 
 /**
- * Settings → Playback → Auto-play match: every rule in your order (Right picks one up, Up / Down move it, Right puts
+ * Settings → Playback → Auto-play match: every rule in your order (hold OK → Move or Right picks one up, Up / Down move it, Right puts
  * it down; OK switches it on or off, or removes one of your own), then "Add your own…" and "Reset".
  */
 @Composable
@@ -51,7 +51,7 @@ fun streamRuleItems(saved: String, onSave: (String) -> Unit): List<SettingItem> 
         val place = if (r.on) "${rules.take(i + 1).count { it.on }} of ${rules.count { it.on }} switched on" else "Off"
         SettingItem(
             r.label,
-            place + "  ·  Right to move it" + if (r.own) "  ·  your own" else "  ·  ${r.pattern}",
+            place + "  ·  Hold OK: move" + if (r.own) "  ·  your own" else "  ·  ${r.pattern}",
             if (r.own) listOf(on, off, remove) else listOf(on, off), if (r.on) on else off,
             reorder = { delta ->
                 val j = (i + delta).coerceIn(0, rules.lastIndex)
@@ -68,7 +68,7 @@ fun streamRuleItems(saved: String, onSave: (String) -> Unit): List<SettingItem> 
             }))
         }
     }
-    val add = SettingItem("Add your own…", "A rule of your own: a word or a regex (upper / lower case alike), checked against each stream's addon, name and description. It goes at the top, switched on.",
+    val add = SettingItem("Add your own…", "A rule of your own: a word or a pattern (upper / lower case alike), looked for in each stream's addon, name and description. It goes at the top, switched on.",
         listOf(RuleChoice("")), RuleChoice(""), action = { typing = true }, onSelect = {})
     val reset = SettingItem("Reset the rules", "All switched off, in the starting order; your own are removed.",
         listOf(RuleChoice("")), RuleChoice(""), action = { onSave("") }, onSelect = {})
@@ -87,7 +87,7 @@ private fun StreamMatchDialog(start: String, onSave: (String) -> Unit, onClose: 
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("Add your own rule", fontSize = 22.sp, color = AppColors.TextPrimary)
-            Text("A word or a regex, checked against each stream's addon, name and description. Examples: remux  ·  (atmos|truehd)  ·  ^(?!.*\\bcam\\b) (anything without CAM).", fontSize = 13.sp, color = AppColors.TextSecondary)
+            Text("A word, or a search pattern for the more technical, looked for in each stream's addon, name and description. Examples: remux  ·  (atmos|truehd)  ·  ^(?!.*\\bcam\\b) (anything without CAM).", fontSize = 13.sp, color = AppColors.TextSecondary)
             androidx.compose.material3.OutlinedTextField(
                 value = text, onValueChange = { text = it }, singleLine = true,
                 label = { androidx.compose.material3.Text("Pattern") },

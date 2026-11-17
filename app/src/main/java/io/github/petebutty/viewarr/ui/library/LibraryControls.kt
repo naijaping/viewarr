@@ -47,41 +47,33 @@ import androidx.tv.material3.Text
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.launch
+import io.github.petebutty.viewarr.data.media.FilterGroup
+import io.github.petebutty.viewarr.data.media.FilterValue
+import io.github.petebutty.viewarr.data.media.LibraryOptions
+import io.github.petebutty.viewarr.data.media.LibraryQuery
+import io.github.petebutty.viewarr.ui.common.BackLayer
+import io.github.petebutty.viewarr.ui.common.MenuItem
+import io.github.petebutty.viewarr.ui.common.ViewarrPopup
+import io.github.petebutty.viewarr.ui.common.AppPill
 
 /*
  * The parts every library grid shares (films, shows, IPTV and music): the toolbar buttons, active-filter chips,
  * the A–Z strip, and the Sort and Filter panels. Each library fills them with what its own server offers.
  */
 
+/**
+ * Sort / Filter on a library's toolbar: the shared pill. [active] (filters on): shown as selected (the shared tint).
+ * (Peter, 2026-11-17: was its own pill, active = white.)
+ */
 @Composable
 internal fun ToolButton(text: String, active: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.height(36.dp),
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(18.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (active) AppColors.TextPrimary else AppColors.Panel,
-            contentColor = if (active) AppColors.Background else AppColors.TextPrimary,
-            focusedContainerColor = AppColors.Accent, focusedContentColor = AppColors.OnAccent,
-        ),
-    ) { Box(Modifier.fillMaxHeight().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) { Text(text, fontSize = 14.sp, maxLines = 1) } }
+    AppPill(text = text, selected = active, onClick = onClick, modifier = modifier, height = 36.dp)
 }
 
-/** An active filter: OK removes it. */
+/** An active filter: OK removes it. The shared pill with a thin accent edge ("Clear all": no tint). */
 @Composable
 internal fun FilterChip(text: String, clear: Boolean = false, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = Modifier.height(30.dp),
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(15.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (clear) Color.Transparent else AppColors.Accent.copy(alpha = 0.22f),
-            contentColor = AppColors.TextPrimary, focusedContainerColor = AppColors.Accent, focusedContentColor = AppColors.OnAccent,
-        ),
-        border = ClickableSurfaceDefaults.border(border = Border(BorderStroke(1.dp, AppColors.Accent.copy(alpha = 0.6f)), shape = RoundedCornerShape(15.dp))),
-    ) { Box(Modifier.fillMaxHeight().padding(horizontal = 12.dp), contentAlignment = Alignment.Center) { Text(if (clear) text else "$text  ✕", fontSize = 13.sp, maxLines = 1) } }
+    AppPill(text = if (clear) text else "$text  ✕", selected = !clear, outlined = true, onClick = onClick, height = 30.dp)
 }
 
 /**
@@ -162,10 +154,10 @@ internal fun AlphabetRail(
 internal fun SidePanel(title: String, onClose: () -> Unit, onBack: () -> Unit = onClose, content: androidx.compose.foundation.lazy.LazyListScope.(first: FocusRequester) -> Unit) {
     val first = remember(title) { FocusRequester() }
     androidx.activity.compose.BackHandler { onBack() }
-    io.github.petebutty.viewarr.ui.common.BackLayer()
+    BackLayer()
     LaunchedEffect(title) { awaitFrame(); awaitFrame(); runCatching { first.requestFocus() } }
     // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
-    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onBack) {
+    ViewarrPopup(onClose = onBack) {
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f))) {
             Column(
                 Modifier.align(Alignment.CenterEnd).width(400.dp).fillMaxHeight().background(AppColors.Panel)
@@ -190,17 +182,17 @@ internal fun directionLabel(sort: String, desc: Boolean): String {
 }
 
 @Composable
-internal fun SortPanel(o: io.github.petebutty.viewarr.data.media.LibraryOptions, q: io.github.petebutty.viewarr.data.media.LibraryQuery, onPick: (String) -> Unit, onDesc: (Boolean) -> Unit, onClose: () -> Unit) {
+internal fun SortPanel(o: LibraryOptions, q: LibraryQuery, onPick: (String) -> Unit, onDesc: (Boolean) -> Unit, onClose: () -> Unit) {
     SidePanel("Sort by", onClose) { first ->
         if (o.directions) item(key = "dir") {
-            io.github.petebutty.viewarr.ui.common.MenuItem(
+            MenuItem(
                 text = "Order", trailing = directionLabel(q.sort, q.desc) + "  ⇅", selected = false,
                 onClick = { onDesc(!q.desc) }, modifier = Modifier.focusRequester(first).padding(bottom = 8.dp),
             )
         }
         items(o.sorts, key = { "s-" + it.id }) { s ->
             val on = s.id == q.sort
-            io.github.petebutty.viewarr.ui.common.MenuItem(
+            MenuItem(
                 text = s.label, trailing = if (on) "✓" else null, selected = on, onClick = { onPick(s.id) },
                 modifier = if (!o.directions && s == o.sorts.first()) Modifier.focusRequester(first) else Modifier,
             )
@@ -210,19 +202,19 @@ internal fun SortPanel(o: io.github.petebutty.viewarr.data.media.LibraryOptions,
 
 @Composable
 internal fun FilterPanel(
-    o: io.github.petebutty.viewarr.data.media.LibraryOptions, q: io.github.petebutty.viewarr.data.media.LibraryQuery,
-    values: Map<String, List<io.github.petebutty.viewarr.data.media.FilterValue>?>,
+    o: LibraryOptions, q: LibraryQuery,
+    values: Map<String, List<FilterValue>?>,
     onOpenGroup: (String) -> Unit, onToggle: (String) -> Unit,
-    onValue: (String, io.github.petebutty.viewarr.data.media.FilterValue) -> Unit, onClear: () -> Unit, onClose: () -> Unit,
+    onValue: (String, FilterValue) -> Unit, onClear: () -> Unit, onClose: () -> Unit,
 ) {
-    var group by remember { mutableStateOf<io.github.petebutty.viewarr.data.media.FilterGroup?>(null) }
+    var group by remember { mutableStateOf<FilterGroup?>(null) }
     val g = group
     if (g == null) SidePanel("Filter", onClose) { first ->
         val toggles = o.filters.filter { it.toggle }
         val lists = o.filters.filter { !it.toggle }
         items(toggles, key = { "t-" + it.id }) { t ->
             val on = t.id in q.toggles
-            io.github.petebutty.viewarr.ui.common.MenuItem(
+            MenuItem(
                 text = t.label, trailing = if (on) "On" else "Off", selected = on, onClick = { onToggle(t.id) },
                 modifier = if (t == toggles.first()) Modifier.focusRequester(first) else Modifier,
             )
@@ -230,7 +222,7 @@ internal fun FilterPanel(
         if (toggles.isNotEmpty() && lists.isNotEmpty()) item(key = "gap") { Spacer(Modifier.height(10.dp)) }
         items(lists, key = { "g-" + it.id }) { fg ->
             val picked = q.filters[fg.id].orEmpty()
-            io.github.petebutty.viewarr.ui.common.MenuItem(
+            MenuItem(
                 text = fg.label,
                 trailing = (if (picked.isEmpty()) "Any" else picked.take(2).joinToString(", ") { it.label } + if (picked.size > 2) " +${picked.size - 2}" else "") + "  ›",
                 selected = picked.isNotEmpty(),
@@ -239,11 +231,11 @@ internal fun FilterPanel(
             )
         }
         if (q.active > 0) item(key = "clear") {
-            io.github.petebutty.viewarr.ui.common.MenuItem(text = "Clear all filters", selected = false, onClick = onClear, modifier = Modifier.padding(top = 10.dp))
+            MenuItem(text = "Clear all filters", selected = false, onClick = onClear, modifier = Modifier.padding(top = 10.dp))
         }
     } else SidePanel(g.label, onClose, onBack = { group = null }) { first ->
         item(key = "back") {
-            io.github.petebutty.viewarr.ui.common.MenuItem(text = "‹  All filters", selected = false, onClick = { group = null }, modifier = Modifier.focusRequester(first).padding(bottom = 6.dp))
+            MenuItem(text = "‹  All filters", selected = false, onClick = { group = null }, modifier = Modifier.focusRequester(first).padding(bottom = 6.dp))
         }
         val list = values[g.id]
         when {
@@ -251,7 +243,7 @@ internal fun FilterPanel(
             list.isEmpty() -> item(key = "none") { Text("Nothing to pick from in this library.", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(12.dp)) }
             else -> items(list, key = { "v-" + it.id }) { v ->
                 val on = q.filters[g.id].orEmpty().any { it.id == v.id }
-                io.github.petebutty.viewarr.ui.common.MenuItem(text = v.label, trailing = if (on) "✓" else null, selected = on, onClick = { onValue(g.id, v) })
+                MenuItem(text = v.label, trailing = if (on) "✓" else null, selected = on, onClick = { onValue(g.id, v) })
             }
         }
     }

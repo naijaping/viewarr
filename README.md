@@ -23,19 +23,19 @@ Viewarr doesn't provide any content. It plays only what your own servers and acc
 ## Highlights
 
 - **One glass menu on the left** that slides the page aside, and a **top-left window** where live TV, a film or a trailer keeps playing while you browse.
-- **A TiviMate-style TV guide** for your Dispatcharr channels, up to 7 days ahead, with catch-up, pause and rewind, **Start over**, **Go to show**, **★ favourites** and channel groups in your own order.
+- **A classic IPTV-style TV guide** for your Dispatcharr channels, up to 7 days ahead, with catch-up, pause and rewind, **Start over**, **Go to show**, **★ favourites** and channel groups in your own order.
 - **Recordings, reminders and one-press record** on your Dispatcharr server; **multi-view** of up to four channels.
 - **Sports**: follow teams and leagues and see which channel shows each game.
 - **No Dispatcharr?** Use an IPTV provider's Xtream Codes login or an M3U playlist, and save several sources.
 - **Films and shows** from Plex, Jellyfin, Emby, your addons and your IPTV provider, with Netflix-style rows, full libraries with sort, filter and A–Z, and your **streaming services** in the menu.
 - **One Play button** that picks the best copy you have; hold OK on Play to choose the source yourself. **Auto-play match** rules (4K, Dolby Vision, Atmos, English…) decide which addon stream plays, with **Cached only** and **Try the next stream** if one fails.
-- **Watch progress for IPTV films and shows** too: Resume, watched ticks and Continue watching, kept on the box for each profile (Dispatcharr and Xtream keep none).
+- **Watch progress for IPTV films and shows** too: Resume, watched ticks and Continue watching, shared between your TVs through your Dispatcharr user (Dispatcharr and Xtream keep none themselves).
 - **Skip intro, next episode** and a **mini player** that keeps a film going while you browse.
 - **Music** from Navidrome, Plex, Jellyfin or Emby, with lyrics, the queue, song radio, artist pages and a spinning vinyl Now Playing.
 - **An info bar you arrange yourself**, in **11 styles** from glass to a soft fade: show, hide and move its buttons, and add extras such as Favourite, Last channel, Audio sync, a Sleep timer and TV settings. Browse channels in it without changing until you press OK. Press Down for **rows you choose** under it: next episodes, Continue watching, favourite or recent channels, what's on now and more.
 - **Frame rate matching** for films and live TV (the TV switches to 50 Hz for UK channels), with frame-rate badges on the info bar; for films and shows the TV switches as they open, with the frame rate from Plex, Jellyfin or Emby, so the sound works from the start.
 - **Source switching without a break**: the channel keeps playing while its backup stream opens, then swaps in; stalled streams reconnect by themselves, and the info bar shows which provider you're on.
-- **Every remote button your way**, with TiviMate and Viewarr presets.
+- **Every remote button your way**, with Classic and Viewarr presets.
 - **Your setup saved on Dispatcharr**, so a new TV picks it up. *(Profiles for everyone in the house, and sharing with friends in another house, are coming soon.)*
 - **Easy setup** from your phone with a QR code, and **Search settings** to find any option by name.
 
@@ -44,7 +44,7 @@ Viewarr doesn't provide any content. It plays only what your own servers and acc
 - **Back** while watching (live TV or a film): the **mini player**. The picture keeps playing in the window at the top left while you browse.
 - **Back** on the mini player: **full screen** again.
 - **Hold Back** on either: **close the player**.
-- **Left** opens the menu from any page. In the TV guide, Left goes back a programme and on into catch-up; **Menu (≡)** opens the menu (with the TiviMate preset, Left on what's on now opens the channel groups and **hold Left** goes into catch-up).
+- **Left** opens the menu from any page. In the TV guide, Left goes back a programme and on into catch-up; **Menu (≡)** opens the menu (with the Classic preset, Left on what's on now opens the channel groups and **hold Left** goes into catch-up).
 - **Back** in the menu closes it.
 
 Hints at the bottom of the screen remind you the first few times. Every button can be changed: see **[Remote control](docs/REMOTE.md)**.

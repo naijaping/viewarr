@@ -26,6 +26,13 @@ import io.github.petebutty.viewarr.playback.SeekThumbs
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
+import io.github.petebutty.viewarr.ui.common.LocalQuickSearchOpen
+import io.github.petebutty.viewarr.ui.player.AvSyncPanel
+import io.github.petebutty.viewarr.ui.player.StreamQuality
+import io.github.petebutty.viewarr.ui.player.TransparencyPanel
+import io.github.petebutty.viewarr.ui.player.TvSettingsPanel
+import io.github.petebutty.viewarr.ui.settings.AppearanceViewModel
+import io.github.petebutty.viewarr.ui.settings.UiOptsViewModel
 
 /*
  * What the two film players (the built-in one, VodPlayer.kt, and mpv, MpvPlayer.kt) have in common, written once so
@@ -52,17 +59,17 @@ class FilmWiring(val buttons: List<PlayerButton>, val keys: VodKeys, val hooks: 
 @Composable
 fun rememberFilmWiring(
     remote: VodRemote, panels: FilmPanels, menu: PlayerMenu, scrub: Scrubber, skip: IntroSkip, seekMs: Long,
-    switchPlayer: (() -> Unit)?, onClose: () -> Unit, showOsd: () -> Unit, osdShowing: () -> Boolean, backStep: () -> Unit,
+    switchPlayer: (() -> Unit)?, onClose: () -> Unit, showOsd: () -> Unit, backStep: () -> Unit,
 ): FilmWiring {
-    val barAppearance: io.github.petebutty.viewarr.ui.settings.AppearanceViewModel = androidx.hilt.navigation.compose.hiltViewModel()
-    val barOpts: io.github.petebutty.viewarr.ui.settings.UiOptsViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+    val barAppearance: AppearanceViewModel = androidx.hilt.navigation.compose.hiltViewModel()
+    val barOpts: UiOptsViewModel = androidx.hilt.navigation.compose.hiltViewModel()
     val buttons = filmButtons(menu, canSwitch = switchPlayer != null)
     val keys = remember { VodKeys(scrub, menu) }
     DisposableEffect(Unit) { onDispose { if (VodHost.remote != null) VodHost.remote = null } }
     SideEffect { VodHost.remote = remote }
     val press: (PlayerButton) -> Unit = { b -> if (pressFilmButton(b, remote, panels, menu, onClose, switchPlayer, barOpts::set)) showOsd() }
-    val hooks = filmHooks(buttons, remote, panels, menu, scrub, skip, seekMs, press = press, showOsd = showOsd,
-        osdShowing = osdShowing, backStep = backStep, onClose = onClose, barAppearance = barAppearance)
+    val hooks = filmHooks(buttons, remote, panels, menu, skip, seekMs, press = press, showOsd = showOsd,
+        backStep = backStep, onClose = onClose, barAppearance = barAppearance)
     return FilmWiring(buttons, keys, hooks)
 }
 
@@ -83,7 +90,7 @@ fun FilmEffects(panels: FilmPanels, menu: PlayerMenu, scrub: Scrubber, paused: B
         // The player must hold focus itself, or the remote keeps driving the screen underneath.
         repeat(3) { awaitFrame(); takeFilmFocus(focus) }
     }
-    val searchOpen = io.github.petebutty.viewarr.ui.common.LocalQuickSearchOpen.current
+    val searchOpen = LocalQuickSearchOpen.current
     val anyOpen = panels.anyOpen
     LaunchedEffect(hasFocus, anyOpen, searchOpen, mini) {
         if (!hasFocus && !anyOpen && !searchOpen && !mini) { delay(150); takeFilmFocus(focus) }
@@ -93,9 +100,7 @@ fun FilmEffects(panels: FilmPanels, menu: PlayerMenu, scrub: Scrubber, paused: B
         // Paused (the Play / Pause button or the remote's): the film's info shows straight away; playing hides it.
         if (paused) panels.pausedLong = true else panels.detailsOn = false
     }
-    // (Not while a shortcut's menu is open or one is being moved: they'd be left behind.)
-    LaunchedEffect(menu.open, menu.lastKey, paused, menu.scOptions, menu.scMoving, menu.scRows, io.github.petebutty.viewarr.ui.player.CardMenu.open) {
-        if (menu.scOptions != null || menu.scMoving || menu.scRows != null || io.github.petebutty.viewarr.ui.player.CardMenu.open != null) return@LaunchedEffect
+    LaunchedEffect(menu.open, menu.lastKey, paused) {
         if (menu.open && !paused) { delay(maxOf(8_000L, 2 * AppColors.palette.controlsMs)); menu.open = false }
     }
 }
@@ -118,16 +123,20 @@ fun Modifier.filmKeys(focus: FocusRequester, panels: FilmPanels, mini: Boolean, 
 
 /** Where the film is and how it looks, as the player reads it, for the controls. */
 class FilmState(
-    val positionMs: Long, val durationMs: Long, val bufferedMs: Long, val paused: Boolean, val buffering: Boolean,
+    /**
+     * Where it is and how far it has loaded: read only where the controls are drawn (they change four times a second;
+     * read by the player itself, its whole body redrew with them).
+     */
+    val positionMs: () -> Long, val durationMs: Long, val bufferedMs: () -> Long, val paused: Boolean, val buffering: Boolean,
     /** Playing has begun (the first picture): until then, the loading screen. */
     val started: Boolean,
     /** The controls are up (paused, loading, a key a moment ago, seeking, or the buttons open). */
     val osdVisible: Boolean,
-    val quality: io.github.petebutty.viewarr.ui.player.StreamQuality?,
+    val quality: StreamQuality?,
 )
 
 /**
- * Everything over the picture: the film's info, the controls, Skip intro, the shortcut menus, the loading screen, the
+ * Everything over the picture: the film's info, the controls, Skip intro, the loading screen, the
  * panels (audio & subtitles from [tracks], the player's own) and an error. [otherPlayer]: the switch button's name.
  */
 @Composable
@@ -138,34 +147,28 @@ fun BoxScope.FilmOverlays(
 ) {
     if (!mini && f.started && (panels.detailsOn || (f.paused && panels.pausedLong && !panels.anyOpen && !scrub.active))) PlayerDetails(stream.title, art)
     if (!mini && f.started && f.osdVisible) PlayerOsd(
-        stream.title, f.positionMs, f.durationMs, f.paused, f.buffering, scrub.targetMs, thumbs, Modifier.align(Alignment.BottomCenter), logo = art?.logo,
+        stream.title, f.positionMs(), f.durationMs, f.paused, f.buffering, scrub.targetMs, thumbs, Modifier.align(Alignment.BottomCenter), logo = art?.logo,
         from = stream.from,
-        bufferedMs = f.bufferedMs,
+        bufferedMs = f.bufferedMs(),
         // The badges: the film's own picture, frame rate and sound, as the player reads them.
         quality = f.quality,
         buttons = filmOsdButtons(buttons, menu, f.paused, otherPlayer),
         editingButtons = menu.open && menu.editing,
-        buttonFocus = if (menu.open && !menu.onBar && !menu.onShortcuts && !menu.onEpisodes) menu.focusIndex(buttons) else -1,
+        buttonFocus = if (menu.open && !menu.onBar && !menu.onEpisodes) menu.focusIndex(buttons) else -1,
         barFocused = menu.open && menu.onBar,
-        shortcuts = if (menu.open && menu.onShortcuts) io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge.items.map { it.first } else null,
-        shortcutFocus = menu.shortcut, shortcutMoving = menu.scMoving,
-        shortcutsHint = false,
         downRows = if (menu.open && menu.onEpisodes) FilmShortcuts.downRows(menu.withNext) else null,
         downRow = menu.downRow,
         episodeFocus = menu.episode,
-        rows = if (menu.open && menu.onRows) io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge.rowsFor(menu.shortcut) else null,
-        rowFocus = menu.row, cardFocus = menu.card,
     )
     if (!mini && f.started && !menu.open && !scrub.active && !panels.anyOpen && !f.osdVisible) IntroSkipPill(skip, Modifier.align(Alignment.BottomEnd).padding(end = 40.dp, bottom = 36.dp))
-    // Holding OK on a shortcut or a card: their menus.
     FilmShortcutDialogs(menu)
     PlayerLoading(stream.title, art, visible = !mini && !f.started && error == null)
     if (panels.tracksOpen && !mini) tracks()
-    if (panels.transOpen && !mini) io.github.petebutty.viewarr.ui.player.TransparencyPanel(onClose = { panels.transOpen = false; takeFilmFocus(focus) },
+    if (panels.transOpen && !mini) TransparencyPanel(onClose = { panels.transOpen = false; takeFilmFocus(focus) },
         // On its info bar rows: the film's bar up behind it, while they're being changed.
         onInfoBar = holdOsd)
-    if (panels.syncOpen && !mini) io.github.petebutty.viewarr.ui.player.AvSyncPanel(onClose = { panels.syncOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
-    if (panels.tvOpen && !mini) io.github.petebutty.viewarr.ui.player.TvSettingsPanel(onClose = { panels.tvOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
+    if (panels.syncOpen && !mini) AvSyncPanel(onClose = { panels.syncOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
+    if (panels.tvOpen && !mini) TvSettingsPanel(onClose = { panels.tvOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
     error?.let {
         Text(it, fontSize = 18.sp, color = Color.White, modifier = Modifier.align(Alignment.Center).background(Color.Black.copy(alpha = 0.7f)).padding(20.dp))
     }

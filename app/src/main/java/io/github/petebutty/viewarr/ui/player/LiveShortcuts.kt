@@ -1,6 +1,5 @@
 package io.github.petebutty.viewarr.ui.player
 
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.layout.size
@@ -197,22 +196,6 @@ fun ShortcutFace(sc: LiveShortcut, style: ShortcutStyle, h: androidx.compose.ui.
             androidx.compose.material3.Icon(sc.icon, sc.label, tint = white, modifier = androidx.compose.ui.Modifier.size(h / 2))
         }
     }
-}
-
-/** A shortcut (in its style), for screens that track the highlight themselves (the film controls). */
-@androidx.compose.runtime.Composable
-fun ShortcutDisc(sc: LiveShortcut, highlighted: Boolean, size: androidx.compose.ui.unit.Dp) {
-    val style = shortcutStyle()
-    val (w, h) = shortcutBox(size, style)
-    // The same gentle grow as live TV's highlighted shortcut.
-    val grow = androidx.compose.animation.core.animateFloatAsState(if (highlighted) 1.2f else 1f, label = "shortcut").value
-    androidx.compose.foundation.layout.Box(
-        androidx.compose.ui.Modifier.size(w, h)
-            .then(androidx.compose.ui.Modifier.scale(grow))
-            .background(if (highlighted) io.github.petebutty.viewarr.ui.theme.AppColors.Accent else androidx.compose.ui.graphics.Color.White.copy(alpha = 0.14f), shortcutShape(style))
-            .padding(if (highlighted) h / 20 else androidx.compose.ui.unit.Dp(0f)),
-        contentAlignment = androidx.compose.ui.Alignment.Center,
-    ) { ShortcutFace(sc, style, h) }
 }
 
 /** Logos found for row-set shortcuts (TMDB), by network / service name. */

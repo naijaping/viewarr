@@ -3,7 +3,10 @@ package io.github.petebutty.viewarr.data.update
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
+import android.content.pm.PackageManager
+import android.content.pm.Signature
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -11,27 +14,34 @@ import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.longPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.petebutty.viewarr.BuildConfig
+import kotlin.concurrent.thread
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import java.io.File
+import java.security.MessageDigest
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "Updates"
 private const val RELEASES_URL = "https://api.github.com/repos/petebutty/viewarr/releases?per_page=30"
-/** Automatic checks happen at most this often (on app start). */
 /** Automatic checks: on start and when the app comes back to the front, at most this often (GitHub allows 60 an hour). */
 private const val AUTO_INTERVAL_MS = 30 * 60_000L
 
@@ -41,6 +51,8 @@ data class Release(
     val apkUrl: String,
     val apkSize: Long,
     val prerelease: Boolean,
+    /** The APK's SHA-256 (hex) when GitHub gives one (the asset's "digest": "sha256:…"). */
+    val sha256: String? = null,
 )
 
 sealed interface UpdateState {
@@ -137,7 +149,8 @@ class UpdateManager @Inject constructor(
                 val assets = j.optJSONArray("assets") ?: return@mapNotNull null
                 val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
                     .firstOrNull { it.optString("name").endsWith(".apk", ignoreCase = true) } ?: return@mapNotNull null
-                Release(version, cleanNotes(j.optString("body")), apk.optString("browser_download_url"), apk.optLong("size"), j.optBoolean("prerelease"))
+                val sha = apk.optString("digest").takeIf { it.startsWith("sha256:", ignoreCase = true) }?.substringAfter(':')?.lowercase()
+                Release(version, cleanNotes(j.optString("body")), apk.optString("browser_download_url"), apk.optLong("size"), j.optBoolean("prerelease"), sha)
             }
             .filter { isNewer(it.version, currentVersion) }
             .maxWithOrNull { a, b -> compareVersions(a.version, b.version) }
@@ -150,9 +163,12 @@ class UpdateManager @Inject constructor(
         val ok = runCatching {
             withContext(Dispatchers.IO) {
                 file.parentFile?.listFiles()?.forEach { if (it != file) it.delete() }
+                // Only from GitHub (the release page's link and the places it hands the file out from), redirects included.
+                if (!trustedHost(release.apkUrl.toHttpUrlOrNull())) error("not a GitHub download: ${release.apkUrl.toHttpUrlOrNull()?.host}")
                 val req = Request.Builder().url(release.apkUrl).header("User-Agent", "Viewarr/$currentVersion").build()
                 client.newCall(req).execute().use { r ->
                     if (!r.isSuccessful) error("download ${r.code}")
+                    if (!trustedHost(r.request.url)) error("download redirected to ${r.request.url.host}")
                     val total = r.body!!.contentLength().takeIf { it > 0 } ?: release.apkSize
                     val tmp = File(file.path + ".part")
                     r.body!!.byteStream().use { input ->
@@ -163,6 +179,7 @@ class UpdateManager @Inject constructor(
                             while (true) {
                                 val n = input.read(buf)
                                 if (n < 0) break
+                                ensureActive()
                                 out.write(buf, 0, n)
                                 done += n
                                 val p = if (total > 0) done.toFloat() / total else 0f
@@ -171,18 +188,72 @@ class UpdateManager @Inject constructor(
                         }
                     }
                     if (total > 0 && tmp.length() != total) error("incomplete download")
-                    tmp.renameTo(file)
+                    file.delete()
+                    if (!tmp.renameTo(file)) error("couldn't keep the download")
                 }
             }
         }
         if (ok.isFailure) {
             Log.w(TAG, "download failed: ${ok.exceptionOrNull()?.message}")
-            file.delete()
+            file.delete(); File(file.path + ".part").delete()
             _state.value = UpdateState.Failed("The download didn't finish. Try again.", release)
+            return
+        }
+        val problem = withContext(Dispatchers.IO) { runCatching { verify(file, release) }.getOrElse { "it couldn't be checked (${it.message})" } }
+        if (problem != null) {
+            Log.w(TAG, "downloaded APK rejected: $problem")
+            file.delete()
+            _state.value = UpdateState.Failed("The download wasn't a genuine Viewarr update: $problem.", release)
             return
         }
         install(release)
     }
+
+    /**
+     * Checks the downloaded APK before it goes near the installer: it must be this app, a newer build, signed with
+     * the same certificate as the installed copy, and (when GitHub gave one) match the release's SHA-256. Android
+     * refuses a different signature too, but only after the user has been asked; a tampered or wrong file is
+     * stopped here instead. Null when it's fine, else what's wrong.
+     */
+    private fun verify(file: File, release: Release): String? {
+        release.sha256?.let { want ->
+            val md = MessageDigest.getInstance("SHA-256")
+            file.inputStream().use { input ->
+                val buf = ByteArray(64 * 1024)
+                while (true) { val n = input.read(buf); if (n < 0) break; md.update(buf, 0, n) }
+            }
+            val got = md.digest().hex()
+            if (!got.equals(want, ignoreCase = true)) return "its checksum doesn't match the release"
+        }
+        val pm = context.packageManager
+        val flags = if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else @Suppress("DEPRECATION") PackageManager.GET_SIGNATURES
+        val archive = pm.getPackageArchiveInfo(file.path, flags) ?: return "it isn't a readable app"
+        if (archive.packageName != context.packageName) return "it's a different app (${archive.packageName})"
+        val installed = pm.getPackageInfo(context.packageName, flags)
+        if (archive.longVersionCodeCompat() <= installed.longVersionCodeCompat()) return "it isn't newer than this one"
+        val theirs = signersOf(archive)
+        val mine = signersOf(installed)
+        // Only refused when both can be read and differ: some Android 9–12 boxes can't read a downloaded file's
+        // signature, and Android's installer refuses an update signed by anyone else anyway (this is a second check).
+        if (theirs.isNotEmpty() && mine.isNotEmpty() && theirs != mine) return "it isn't signed like this one"
+        return null
+    }
+
+    /** The certificates the APK itself is signed with, as SHA-256 hex (a rotated key's history isn't needed here). */
+    private fun signersOf(info: PackageInfo): Set<String> {
+        val sigs: Array<Signature>? =
+            if (Build.VERSION.SDK_INT >= 28) info.signingInfo?.apkContentsSigners else @Suppress("DEPRECATION") info.signatures
+        return sigs.orEmpty().map { sig -> MessageDigest.getInstance("SHA-256").digest(sig.toByteArray()).hex() }.toSet()
+    }
+
+    private fun ByteArray.hex() = joinToString("") { "%02x".format(it) }
+
+    private fun PackageInfo.longVersionCodeCompat(): Long =
+        if (Build.VERSION.SDK_INT >= 28) longVersionCode else @Suppress("DEPRECATION") versionCode.toLong()
+
+    /** GitHub's own addresses for release files: the release link, and the hosts it redirects to. */
+    private fun trustedHost(url: HttpUrl?): Boolean =
+        url != null && url.scheme == "https" && url.host.lowercase() in TRUSTED_HOSTS
 
     /** Installs the downloaded APK, or asks for permission to install apps first. */
     fun install(release: Release) {
@@ -195,10 +266,10 @@ class UpdateManager @Inject constructor(
         _state.value = UpdateState.Installing(release)
         // Copying the APK into the installer is done off the main thread (on a slow box a big APK risked "not responding"
         // right at install time); a session that fails part-way is let go.
-        kotlin.concurrent.thread(name = "viewarr-install") { installNow(release, file) }
+        thread(name = "viewarr-install") { installNow(release, file) }
     }
 
-    private fun installNow(release: Release, file: java.io.File) {
+    private fun installNow(release: Release, file: File) {
         var sessionId = -1
         runCatching {
             val installer = context.packageManager.packageInstaller
@@ -226,9 +297,9 @@ class UpdateManager @Inject constructor(
         }
     }
 
-    /** Called by [InstallReceiver] when Android reports back. Success never arrives: the app is restarted. */
-    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    /** Called by [InstallReceiver] when Android reports back. Success never arrives: the app is restarted. */
     internal fun onInstallResult(status: Int, message: String?) {
         val release = (state.value as? UpdateState.Installing)?.release
         when (status) {
@@ -262,7 +333,8 @@ class UpdateManager @Inject constructor(
         val AUTO = booleanPreferencesKey("auto")
         val BETA = booleanPreferencesKey("beta")
         val LAST_CHECK = longPreferencesKey("last_check")
-        val FAILED = androidx.datastore.preferences.core.stringPreferencesKey("failed_version")
+        val FAILED = stringPreferencesKey("failed_version")
+        val TRUSTED_HOSTS = setOf("github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
     }
 }
 

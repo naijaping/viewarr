@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -44,6 +45,11 @@ import io.github.petebutty.viewarr.ui.common.InfoRows
 import io.github.petebutty.viewarr.ui.common.RemoteAction
 import io.github.petebutty.viewarr.ui.common.RemoteKeys
 import io.github.petebutty.viewarr.ui.theme.AppColors
+import io.github.petebutty.viewarr.data.settings.RemoteChoice
+import io.github.petebutty.viewarr.ui.common.OptionsPopup
+import io.github.petebutty.viewarr.ui.common.PopupOption
+import io.github.petebutty.viewarr.ui.common.movingHint
+import io.github.petebutty.viewarr.ui.theme.Tokens
 
 /** Settings → Rows under the info bar (shown over everything by the app's root, like Send a report). */
 object InfoRowsEditor {
@@ -51,7 +57,7 @@ object InfoRowsEditor {
     var open by mutableStateOf<String?>(null)
 }
 
-internal data class InfoRowsLabel(override val label: String) : io.github.petebutty.viewarr.data.settings.RemoteChoice
+internal data class InfoRowsLabel(override val label: String) : RemoteChoice
 
 /** The settings row that opens the editor, with how many rows each player has switched on. */
 fun infoRowsItem(): SettingItem {
@@ -66,7 +72,10 @@ fun infoRowsItem(): SettingItem {
 
 /**
  * Choose the rows under each player's info bar: Live TV or Films & shows along the top, the rows below (OK: on / off;
- * hold OK: pick it up, Up / Down to move, OK to put it down) and, beside them, how they'll stack under the bar.
+ * hold OK: options, Move / Show or Hide; Right picks it up too, as in Settings lists; Up / Down move it, OK, Back, Left
+ * or Right put it down) and, beside them, how they'll stack under the bar.
+ * (UI review, Peter, 2026-11-17: fits the 960 × 540 screen (it was 1060 wide and ~684 high, the bottom rows and hints
+ * off screen); the shared pop-up window, pill look and options pop-up; hold OK no longer picks up straight away.)
  */
 @Composable
 fun InfoRowsScreen(start: String, onClose: () -> Unit) {
@@ -77,6 +86,8 @@ fun InfoRowsScreen(start: String, onClose: () -> Unit) {
     var index by remember { mutableIntStateOf(0) }
     var moving by remember { mutableStateOf(false) }
     var okHeld by remember { mutableStateOf(false) }
+    // Hold OK on a row: its options.
+    var menuFor by remember { mutableStateOf<InfoRows.Kind?>(null) }
     val focus = remember { FocusRequester() }
     val list = rememberLazyListState()
     val kinds = InfoRows.ordered(player)
@@ -94,8 +105,17 @@ fun InfoRowsScreen(start: String, onClose: () -> Unit) {
         appearance.setBarOrder("rows_$player", ids)
         index = ids.filter { id -> InfoRows.kinds(player).any { it.id == id } }.indexOf(k.id).coerceAtLeast(0)
     }
+    fun toggle(k: InfoRows.Kind) {
+        val on = !InfoRows.shown(player, k)
+        // Switched on: up to the end of the rows that are on; off: the top of the rest. The highlight follows it there.
+        val ids = InfoRows.toggledOrder(player, k)
+        appearance.setBarOrder("rows_$player", ids)
+        index = kinds.count { it != k && InfoRows.shown(player, it) }
+        InfoRows.setShown(player, k, on, appearance::setTitlePart, opts::set)
+    }
+    fun switchPlayer() { player = if (player == InfoRows.LIVE) InfoRows.FILM else InfoRows.LIVE; index = 0 }
 
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
         Box(
             Modifier.fillMaxSize().focusRequester(focus).focusable().onPreviewKeyEvent { e ->
                 val down = e.type == KeyEventType.KeyDown
@@ -107,28 +127,23 @@ fun InfoRowsScreen(start: String, onClose: () -> Unit) {
                     RemoteAction.Down -> if (down) {
                         if (onTabs) onTabs = false else if (moving) move(1) else if (index < kinds.lastIndex) index++
                     }
-                    RemoteAction.Left, RemoteAction.Right -> if (down) when {
-                        onTabs && !moving -> { player = if (player == InfoRows.LIVE) InfoRows.FILM else InfoRows.LIVE; index = 0 }
-                        // As the home rows editor: Right picks the row up (as holding OK), Left or Right puts it down.
+                    RemoteAction.Left, RemoteAction.Right -> if (down && repeat == 0) when {
+                        onTabs && !moving -> switchPlayer()
+                        // Carrying: Left or Right put it down. Right picks a row up (the Settings lists' shortcut).
                         moving -> moving = false
                         RemoteKeys.action(e) == RemoteAction.Right && kinds.getOrNull(index) != null -> moving = true
                     }
                     RemoteAction.Ok -> {
                         if (down && repeat == 0) okHeld = false
-                        // Held: pick the row up (or put it down).
-                        if (down && repeat > 0 && !okHeld && !onTabs) { okHeld = true; moving = !moving }
+                        // Held: the row's options (carrying: just put it down).
+                        if (down && repeat > 0 && !okHeld && !onTabs) {
+                            okHeld = true
+                            if (moving) moving = false else menuFor = kinds.getOrNull(index)
+                        }
                         if (!down && !okHeld) {
-                            if (onTabs) { player = if (player == InfoRows.LIVE) InfoRows.FILM else InfoRows.LIVE; index = 0 }
+                            if (onTabs) switchPlayer()
                             else if (moving) moving = false
-                            else kinds.getOrNull(index)?.let { k ->
-                                val on = !InfoRows.shown(player, k)
-                                // Switched on: up to the end of the rows that are on; off: the top of the rest. The
-                                // highlight follows it there.
-                                val ids = InfoRows.toggledOrder(player, k, on)
-                                appearance.setBarOrder("rows_$player", ids)
-                                index = kinds.count { it != k && InfoRows.shown(player, it) }
-                                InfoRows.setShown(player, k, on, appearance::setTitlePart, opts::set)
-                            }
+                            else kinds.getOrNull(index)?.let(::toggle)
                         }
                     }
                     // Back while moving a row: put it down (otherwise the window's own Back closes it).
@@ -141,95 +156,136 @@ fun InfoRowsScreen(start: String, onClose: () -> Unit) {
         ) {
             // The settings page behind darkened, and a solid panel (the glass let the page show through the text).
             Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.7f)))
-            Column(Modifier.width(1060.dp).background(AppColors.MenuPanel.copy(alpha = 1f), RoundedCornerShape(16.dp)).padding(28.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("Rows under the info bar", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+            Column(
+                Modifier.fillMaxWidth(0.92f).fillMaxHeight(0.92f)
+                    .background(AppColors.MenuPanel.copy(alpha = 1f), RoundedCornerShape(Tokens.PopupRadius)).padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text("Rows under the info bar", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
                 Text(
                     "Down from the info bar's buttons: these rows, in this order. They scroll: the row you're on, the next peeking in below.",
-                    fontSize = 14.sp, color = AppColors.TextSecondary,
+                    fontSize = 13.sp, color = AppColors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
-                // Which player's rows.
+                // Which player's rows (the shared pill look, AppPill: highlighted = accent, chosen = the shared tint).
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     listOf(InfoRows.LIVE to "Live TV", InfoRows.FILM to "Films & shows").forEach { (id, name) ->
-                        val on = player == id
-                        Box(
-                            Modifier
-                                .background(if (on) AppColors.Accent.copy(alpha = if (onTabs) 1f else 0.55f) else AppColors.PanelAlt, RoundedCornerShape(20.dp))
-                                .border(2.dp, if (on && onTabs) Color.White else Color.Transparent, RoundedCornerShape(20.dp))
-                                .padding(horizontal = 20.dp, vertical = 8.dp),
-                        ) { Text(name, fontSize = 16.sp, color = if (on) AppColors.OnAccent else AppColors.TextPrimary) }
+                        TabPill(name, selected = player == id, highlighted = onTabs && player == id)
                     }
                 }
-                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                    // The rows: on / off and the order.
-                    LazyColumn(Modifier.width(470.dp).height(470.dp), state = list, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        itemsIndexed(kinds, key = { _, k -> player + k.id }) { i, k ->
-                            val here = !onTabs && i == index
-                            val on = InfoRows.shown(player, k)
-                            Row(
-                                Modifier.fillMaxWidth()
-                                    .background(if (here) AppColors.Accent else AppColors.PanelAlt.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
-                                    .padding(horizontal = 14.dp, vertical = 9.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Text(if (on) "✓" else "", fontSize = 16.sp, color = if (here) AppColors.OnAccent else AppColors.Accent, modifier = Modifier.width(26.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(
-                                        if (here && moving) "▲  ${k.label}  ▼" else k.label, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                                        color = if (here) AppColors.OnAccent else if (on) AppColors.TextPrimary else AppColors.TextSecondary,
-                                    )
-                                    if (here) Text(k.about, fontSize = 12.sp, color = AppColors.OnAccent.copy(alpha = 0.85f), maxLines = 2)
-                                }
-                            }
-                        }
-                    }
-                    // What it'll look like: the bar, the row you'd land on, the next one peeking in.
-                    Column(Modifier.weight(1f)) {
-                        Text("Preview", fontSize = 14.sp, color = AppColors.Accent)
-                        Spacer(Modifier.height(8.dp))
-                        Box(Modifier.fillMaxWidth().height(300.dp).background(Color.Black, RoundedCornerShape(12.dp)).clipToBounds().padding(14.dp)) {
-                            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
-                                // The info bar.
-                                Box(Modifier.fillMaxWidth().height(54.dp).background(AppColors.Panel.copy(alpha = 0.85f), RoundedCornerShape(10.dp)).padding(10.dp)) {
-                                    Text(if (player == InfoRows.LIVE) "Info bar  ·  live TV" else "Info bar  ·  film / episode", fontSize = 13.sp, color = AppColors.TextPrimary)
-                                }
-                                if (active.isEmpty()) Text("No rows: Down does nothing.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 10.dp))
-                                active.getOrNull(0)?.let { first ->
-                                    Row(Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Text(first.label, fontSize = 13.sp, color = AppColors.TextPrimary, fontWeight = FontWeight.Medium)
-                                        if (active.size > 1) Text("   1 of ${active.size}", fontSize = 11.sp, color = AppColors.TextSecondary)
-                                    }
-                                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        repeat(5) { c ->
-                                            Box(Modifier.size(92.dp, 52.dp).background(if (c == 0) AppColors.Accent else AppColors.PanelAlt, RoundedCornerShape(6.dp)))
-                                        }
-                                    }
-                                }
-                                // The next row: only its top edge shows.
-                                active.getOrNull(1)?.let { next ->
-                                    Box(Modifier.fillMaxWidth().height(30.dp).clipToBounds()) {
-                                        Column(Modifier.padding(top = 8.dp)) {
-                                            Text(next.label, fontSize = 12.sp, color = AppColors.TextSecondary)
-                                            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                repeat(5) { Box(Modifier.size(92.dp, 52.dp).background(AppColors.PanelAlt.copy(alpha = 0.6f), RoundedCornerShape(6.dp))) }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if (active.size > 2) Text(
-                            "Then: " + active.drop(2).joinToString("  ·  ") { it.label },
-                            fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 10.dp),
-                        )
-                    }
+                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    RowsList(kinds, player, list, index, onTabs, moving, Modifier.weight(1f).fillMaxHeight())
+                    RowsPreview(player, active, Modifier.weight(1f))
                 }
                 Text(
-                    if (onTabs) "◀ ▶ switch between live TV and films  ·  ▼ the rows  ·  Back: close"
-                    else if (moving) "▲ ▼ move it  ·  OK: put it down"
-                    else "OK: on / off  ·  ▶ or hold OK: move it  ·  ▲ at the top: switch player  ·  Back: close",
-                    fontSize = 13.sp, color = AppColors.TextSecondary,
+                    if (onTabs) "◀ ▶ live TV or films  ·  ▼ the rows  ·  Back: close"
+                    else if (moving) movingHint()
+                    else "OK: on / off  ·  Hold OK: options  ·  ▶: move  ·  ▲ at the top: live TV or films  ·  Back: close",
+                    fontSize = 13.sp, color = if (moving) AppColors.Accent else AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
         }
+    }
+    menuFor?.let { k ->
+        val shown = InfoRows.shown(player, k)
+        OptionsPopup(
+            title = k.label,
+            options = listOfNotNull(
+                // (Only rows that are on have an order: the ones off sit below.)
+                if (shown) PopupOption("Move") { index = kinds.indexOf(k).coerceAtLeast(0); moving = true } else null,
+                PopupOption(if (shown) "Hide" else "Show") { toggle(k) },
+            ),
+            onClose = { menuFor = null },
+        )
+    }
+}
+
+/** A tab at the top: AppPill's look, drawn (this screen moves its own highlight, so nothing here takes focus). */
+@Composable
+private fun TabPill(text: String, selected: Boolean, highlighted: Boolean) {
+    Box(
+        Modifier.height(34.dp)
+            .background(if (highlighted) AppColors.Accent else if (selected) Tokens.SelectedTint else Tokens.PillIdle, Tokens.PillShape)
+            .padding(horizontal = 14.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text, fontSize = 14.sp, maxLines = 1,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            color = if (highlighted) AppColors.OnAccent else AppColors.TextPrimary,
+        )
+    }
+}
+
+/** The rows: on / off and the order, the highlighted one (moved by InfoRowsScreen's keys) in the accent. */
+@Composable
+private fun RowsList(
+    kinds: List<InfoRows.Kind>, player: String, list: androidx.compose.foundation.lazy.LazyListState,
+    index: Int, onTabs: Boolean, moving: Boolean, modifier: Modifier,
+) {
+    LazyColumn(modifier, state = list, verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        itemsIndexed(kinds, key = { _, k -> player + k.id }) { i, k ->
+            val here = !onTabs && i == index
+            val on = InfoRows.shown(player, k)
+            Row(
+                Modifier.fillMaxWidth()
+                    .background(if (here) AppColors.Accent else AppColors.PanelAlt.copy(alpha = 0.6f), Tokens.RowShape)
+                    .then(if (here && moving) Modifier.border(3.dp, Color.White, Tokens.RowShape) else Modifier)
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(if (here && moving) "↕" else if (on) "✓" else "", fontSize = 16.sp, color = if (here) AppColors.OnAccent else AppColors.Accent, modifier = Modifier.width(26.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        k.label, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        color = if (here) AppColors.OnAccent else if (on) AppColors.TextPrimary else AppColors.TextSecondary,
+                    )
+                    if (here) Text(k.about, fontSize = 12.sp, color = AppColors.OnAccent.copy(alpha = 0.85f), maxLines = 2)
+                }
+            }
+        }
+    }
+}
+
+/** What it'll look like: the bar, the row you'd land on, the next one peeking in. */
+@Composable
+private fun RowsPreview(player: String, active: List<InfoRows.Kind>, modifier: Modifier) {
+    Column(modifier) {
+        Text("Preview", fontSize = 14.sp, color = AppColors.Accent)
+        Spacer(Modifier.height(8.dp))
+        Box(Modifier.fillMaxWidth().height(220.dp).background(Color.Black, RoundedCornerShape(12.dp)).clipToBounds().padding(12.dp)) {
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth()) {
+                // The info bar.
+                Box(Modifier.fillMaxWidth().height(44.dp).background(AppColors.Panel.copy(alpha = 0.85f), RoundedCornerShape(10.dp)).padding(10.dp)) {
+                    Text(if (player == InfoRows.LIVE) "Info bar  ·  live TV" else "Info bar  ·  film / episode", fontSize = 13.sp, color = AppColors.TextPrimary)
+                }
+                if (active.isEmpty()) Text("No rows: Down does nothing.", fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 10.dp))
+                active.getOrNull(0)?.let { first ->
+                    Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text(first.label, fontSize = 13.sp, color = AppColors.TextPrimary, fontWeight = FontWeight.Medium)
+                        if (active.size > 1) Text("   1 of ${active.size}", fontSize = 11.sp, color = AppColors.TextSecondary)
+                    }
+                    Row(Modifier.padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        repeat(5) { c ->
+                            Box(Modifier.size(72.dp, 40.dp).background(if (c == 0) AppColors.Accent else AppColors.PanelAlt, RoundedCornerShape(6.dp)))
+                        }
+                    }
+                }
+                // The next row: only its top edge shows.
+                active.getOrNull(1)?.let { next ->
+                    Box(Modifier.fillMaxWidth().height(28.dp).clipToBounds()) {
+                        Column(Modifier.padding(top = 8.dp)) {
+                            Text(next.label, fontSize = 12.sp, color = AppColors.TextSecondary)
+                            Row(Modifier.padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                repeat(5) { Box(Modifier.size(72.dp, 40.dp).background(AppColors.PanelAlt.copy(alpha = 0.6f), RoundedCornerShape(6.dp))) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (active.size > 2) Text(
+            "Then: " + active.drop(2).joinToString("  ·  ") { it.label },
+            fontSize = 13.sp, color = AppColors.TextSecondary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 8.dp),
+        )
     }
 }

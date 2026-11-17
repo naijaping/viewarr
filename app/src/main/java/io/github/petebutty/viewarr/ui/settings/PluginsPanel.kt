@@ -59,6 +59,7 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.dvr.PluginResult
 
 @HiltViewModel
 class PluginsViewModel @Inject constructor(private val repo: PluginsRepository) : ViewModel() {
@@ -91,7 +92,7 @@ class PluginsViewModel @Inject constructor(private val repo: PluginsRepository) 
         }
     }
 
-    private fun act(work: suspend () -> io.github.petebutty.viewarr.data.dvr.PluginResult, reload: Boolean = true) {
+    private fun act(work: suspend () -> PluginResult, reload: Boolean = true) {
         // One thing at a time: a second OK while the server is still answering would act on stale values.
         if (_ui.value.busy) return
         _ui.value = _ui.value.copy(busy = true, message = "Working…")
@@ -130,8 +131,9 @@ fun PluginsSettingsScreen(onBack: () -> Unit, vm: PluginsViewModel = hiltViewMod
     LaunchedEffect(ui.loading) { if (!ui.loading) { awaitFrame(); runCatching { firstFocus.requestFocus() } } }
     androidx.compose.runtime.CompositionLocalProvider(LocalFocusMemory provides memory) {
     Box(Modifier.fillMaxSize().appBackground(readable = true).trapFocus()) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 40.dp)) {
-            Column(Modifier.width(300.dp).fillMaxHeight()) {
+        Row(Modifier.fillMaxSize().padding(horizontal = io.github.petebutty.viewarr.ui.theme.Tokens.Gutter, vertical = 40.dp)) {
+            // (Below the live TV window when one is up, as SettingsPage.)
+            Column(Modifier.width(300.dp).fillMaxHeight().padding(top = if (SettingsLayout.belowPreview) 170.dp else 0.dp)) {
                 Text("Settings", fontSize = 14.sp, color = AppColors.Accent)
                 Text("Dispatcharr plugins", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 20.dp))
                 if (ui.loading) Text("Loading…", fontSize = 14.sp, color = AppColors.TextSecondary)

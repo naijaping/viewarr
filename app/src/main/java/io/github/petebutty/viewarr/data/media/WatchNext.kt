@@ -78,8 +78,12 @@ class WatchNext @Inject constructor(
             else -> null
         }
         listOfNotNull(where, item.overview).joinToString("\n").takeIf { it.isNotBlank() }?.let { b.setDescription(it) }
-        (item.backdrop ?: item.poster)?.let { b.setPosterArtUri(Uri.parse(it)) }
-        b.setPosterArtAspectRatio(if (wide) TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9 else TvContractCompat.PreviewPrograms.ASPECT_RATIO_2_3)
+        // Only pictures that carry no sign-in: the home screen (another app) keeps these, and a Plex or Jellyfin
+        // picture link has the server's token in it. Without the token it wouldn't load anyway, so it's left out.
+        val wideArt = DeepLink.publicImage(item.backdrop)
+        val art = wideArt ?: DeepLink.publicImage(item.poster)
+        art?.let { b.setPosterArtUri(Uri.parse(it)) }
+        b.setPosterArtAspectRatio(if (wideArt != null || (art == null && wide)) TvContractCompat.PreviewPrograms.ASPECT_RATIO_16_9 else TvContractCompat.PreviewPrograms.ASPECT_RATIO_2_3)
         if (episode) {
             item.nextSeason?.let { b.setSeasonNumber(it) }
             item.nextEpisode?.let { b.setEpisodeNumber(it) }
@@ -153,12 +157,31 @@ object DeepLink {
         item.tmdbId?.let { appendQueryParameter("tmdb", it.toString()) }
         item.imdbId?.let { appendQueryParameter("imdb", it) }
         item.year?.let { appendQueryParameter("year", it.toString()) }
-        item.poster?.let { appendQueryParameter("poster", it) }
-        item.backdrop?.let { appendQueryParameter("backdrop", it) }
+        // Never a picture link with a sign-in in it: this link is handed to the home screen (and kept there).
+        publicImage(item.poster)?.let { appendQueryParameter("poster", it) }
+        publicImage(item.backdrop)?.let { appendQueryParameter("backdrop", it) }
         item.nextSeason?.let { appendQueryParameter("season", it.toString()) }
         item.nextEpisode?.let { appendQueryParameter("episode", it.toString()) }
         appendQueryParameter("origin", item.origin)
     }.build()
+
+    /**
+     * [url] if it's a plain http(s) picture link with no sign-in in it, else null. Plex links carry X-Plex-Token,
+     * Jellyfin / Emby api_key: those (and any user:password@ link) are never handed outside the app.
+     */
+    fun publicImage(url: String?): String? {
+        if (url.isNullOrBlank()) return null
+        val u = runCatching { Uri.parse(url) }.getOrNull() ?: return null
+        if (u.scheme?.lowercase() !in setOf("http", "https") || u.host.isNullOrBlank() || u.userInfo != null) return null
+        val names = runCatching { u.queryParameterNames }.getOrNull() ?: return null
+        if (names.any { SECRET_PARAM.containsMatchIn(it) }) return null
+        // (Some servers take the token in the path too: /…/X-Plex-Token/… or ?…;api_key=….)
+        if (SECRET_IN_PATH.containsMatchIn(u.encodedPath.orEmpty())) return null
+        return url
+    }
+
+    private val SECRET_PARAM = Regex("(?i)token|api[_-]?key|apikey|passw|secret|auth|session|signature|^sig$")
+    private val SECRET_IN_PATH = Regex("(?i)x-plex-token|x-emby-token|api_key|apikey|access_token")
 
     /** From an incoming intent's data, or null if it isn't one of ours. */
     fun parse(uri: Uri?): MediaItem? {

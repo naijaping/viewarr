@@ -3,9 +3,20 @@ package io.github.petebutty.viewarr.data.guide
 import io.github.petebutty.viewarr.data.remote.services.HttpJson
 import io.github.petebutty.viewarr.data.remote.services.array
 import io.github.petebutty.viewarr.data.remote.services.str
+import io.github.petebutty.viewarr.ui.theme.AppColors
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import java.net.URLEncoder
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.abs
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -27,9 +38,9 @@ class SportsEvents @Inject constructor(private val http: HttpJson) {
         if (t.isEmpty()) return null
         if (PLACEHOLDER.containsMatchIn(t)) return null
         // A start time at the front ("16:55 ATP Tour …"), already shown on the card.
-        t = t.replace(Regex("^\\d{1,2}[:.]\\d{2}\\s*(am|pm)?\\s*[-–:|]?\\s*", RegexOption.IGNORE_CASE), "")
+        t = t.replace(LEADING_TIME, "")
         // A competition named twice ("EFL EFL Trophy", "ATP Tour ATP Tennis"): its second, fuller name.
-        t = t.replace(Regex("^(\\S+)\\b(?:\\s+\\S+){0,2}?\\s+\\1\\b"), "$1")
+        t = t.replace(NAMED_TWICE, "$1")
         return t.trim().ifEmpty { null }
     }
 
@@ -38,29 +49,39 @@ class SportsEvents @Inject constructor(private val http: HttpJson) {
     // ---- TheSportsDB (its free service): very few requests a minute before it refuses for a while, so they're paced,
     // a refusal pauses them all, and a failed or refused one is never remembered as "nothing found".
 
-    private val tsdbLock = kotlinx.coroutines.sync.Mutex()
+    private val tsdbLock = Mutex()
     @Volatile private var lastAsk = 0L
     @Volatile private var pausedUntil = 0L
     /** Channel lookups (a team's next games) waiting: pictures stand aside for them. */
-    private val channelAsks = java.util.concurrent.atomic.AtomicInteger(0)
+    private val channelAsks = AtomicInteger(0)
 
     /** One request, in turn (one every few seconds). Null: refused, failed or paused (try again later). */
-    private suspend fun tsdb(path: String, picture: Boolean = false): kotlinx.serialization.json.JsonElement? {
+    private suspend fun tsdb(path: String, picture: Boolean = false): JsonElement? {
         if (System.currentTimeMillis() < pausedUntil || (picture && channelAsks.get() > 0)) return null
         return tsdbLock.withLock {
             if (System.currentTimeMillis() < pausedUntil || (picture && channelAsks.get() > 0)) return@withLock null
             val wait = lastAsk + GAP_MS - System.currentTimeMillis()
-            if (wait > 0) kotlinx.coroutines.delay(wait)
+            if (wait > 0) delay(wait)
             lastAsk = System.currentTimeMillis()
             val r = withTimeoutOrNull(6_000) { runCatching { http.get("https://www.thesportsdb.com/api/v1/json/123/$path") }.getOrNull() }
             when {
                 r == null -> null
                 r.code == 429 -> { pausedUntil = System.currentTimeMillis() + PAUSE_MS; null }
                 !r.ok -> null
-                else -> r.body ?: kotlinx.serialization.json.JsonObject(emptyMap())
+                else -> r.body ?: JsonObject(emptyMap())
             }
         }
     }
+
+    /** TheSportsDB's events for "[home] vs [away]". Null: not answered (asked again next time). */
+    private suspend fun searchEvents(home: String, away: String, picture: Boolean = false): List<JsonElement>? {
+        val q = "${home.replace(' ', '_')}_vs_${away.replace(' ', '_')}"
+        return tsdb("searchevents.php?e=${URLEncoder.encode(q, "UTF-8")}", picture)?.array("event")
+    }
+
+    /** How many days an event is from [day]. Null: it has no (readable) date. */
+    private fun daysApart(e: JsonElement, day: LocalDate): Long? =
+        e.str("dateEvent")?.let { runCatching { abs(LocalDate.parse(it).toEpochDay() - day.toEpochDay()) }.getOrNull() }
 
     private val thumbs = ConcurrentHashMap<String, String>()
 
@@ -68,22 +89,19 @@ class SportsEvents @Inject constructor(private val http: HttpJson) {
     suspend fun picture(title: String): String? {
         val m = MATCH.find(title) ?: return null
         // The teams: the words either side of "vs", without the competition in front (its last few words).
-        val home = m.groupValues[1].trim().split(Regex("\\s+")).takeLast(3).joinToString(" ").trim()
-        val away = m.groupValues[2].trim().split(Regex("\\s+|\\(|-")).filter { it.isNotBlank() }.take(3).joinToString(" ").trim()
+        val home = m.groupValues[1].trim().split(SPACES).takeLast(3).joinToString(" ").trim()
+        val away = m.groupValues[2].trim().split(AWAY_BREAK).filter { it.isNotBlank() }.take(3).joinToString(" ").trim()
         if (home.length < 3 || away.length < 3) return null
         val key = "$home|$away".lowercase()
         thumbs[key]?.let { return it.ifEmpty { null } }
         // Shorter team names first matched more often (the guide's "Sheff Wed" vs the database's full name).
         var found: String? = null
+        val today = LocalDate.now()
         for ((h, a) in listOf(home to away, home.split(" ").last() to away.split(" ").first())) {
-            val q = "${h.replace(' ', '_')}_vs_${a.replace(' ', '_')}"
             // (Not answered: not remembered, asked again next time.)
-            val events = tsdb("searchevents.php?e=${java.net.URLEncoder.encode(q, "UTF-8")}", picture = true)?.array("event") ?: return null
+            val events = searchEvents(h, a, picture = true) ?: return null
             // The fixture nearest today (the same two teams meet again in other seasons).
-            val today = java.time.LocalDate.now()
-            val best = events.minByOrNull { e ->
-                e.str("dateEvent")?.let { runCatching { kotlin.math.abs(java.time.LocalDate.parse(it).toEpochDay() - today.toEpochDay()) }.getOrNull() } ?: Long.MAX_VALUE
-            }
+            val best = events.minByOrNull { e -> daysApart(e, today) ?: Long.MAX_VALUE }
             found = best?.let { it.str("strThumb") ?: it.str("strLeagueBadge") }
             if (found != null) break
         }
@@ -99,7 +117,7 @@ class SportsEvents @Inject constructor(private val http: HttpJson) {
      * Null: no answer yet (asked again next time).
      */
     suspend fun ukChannels(home: String, away: String, start: Long): List<String>? {
-        val day = java.time.Instant.ofEpochMilli(start).atZone(java.time.ZoneOffset.UTC).toLocalDate()
+        val day = Instant.ofEpochMilli(start).atZone(ZoneOffset.UTC).toLocalDate()
         val key = "$home|$away|$day".lowercase()
         tvCache[key]?.takeIf { System.currentTimeMillis() - it.first < 12 * 3_600_000L }?.let { return it.second }
         channelAsks.incrementAndGet()
@@ -120,12 +138,11 @@ class SportsEvents @Inject constructor(private val http: HttpJson) {
      * TheSportsDB's id for the game between [home] and [away] on [day] (full names first, then shorter ones).
      * First: whether it answered at all.
      */
-    private suspend fun eventOn(home: String, away: String, day: java.time.LocalDate): Pair<Boolean, String?> {
-        fun short(n: String) = n.split(" ").filter { it.lowercase() !in setOf("fc", "afc", "cf", "sc") }.joinToString(" ")
+    private suspend fun eventOn(home: String, away: String, day: LocalDate): Pair<Boolean, String?> {
+        fun short(n: String) = n.split(" ").filter { it.lowercase() !in CLUB_MARKS }.joinToString(" ")
         for ((h, a) in listOf(home to away, short(home) to short(away)).distinct()) {
-            val q = "${h.replace(' ', '_')}_vs_${a.replace(' ', '_')}"
-            val events = tsdb("searchevents.php?e=${java.net.URLEncoder.encode(q, "UTF-8")}")?.array("event") ?: return false to null
-            events.firstOrNull { e -> e.str("dateEvent")?.let { runCatching { kotlin.math.abs(java.time.LocalDate.parse(it).toEpochDay() - day.toEpochDay()) <= 1 }.getOrNull() } == true }
+            val events = searchEvents(h, a) ?: return false to null
+            events.firstOrNull { e -> daysApart(e, day)?.let { it <= 1 } == true }
                 ?.str("idEvent")?.let { return true to it }
         }
         return true to null
@@ -135,8 +152,14 @@ class SportsEvents @Inject constructor(private val http: HttpJson) {
         /** Between TheSportsDB requests; and how long they all stop after it refuses one. */
         const val GAP_MS = 3_000L
         const val PAUSE_MS = 3 * 60_000L
-        val PLACEHOLDER = Regex("^(ended|finished|full time|ft)\\b|^no (event|events|programme|program|game|match)\\b|^(tba|tbc|to be announced|off air|closedown|stand ?by)\\b|^event (ended|finished)", RegexOption.IGNORE_CASE)
+        val PLACEHOLDER = Regex("^(ended|finished|full time|ft)\\b|^no (live |scheduled )?(event|events|programme|programmes|program|programs|game|games|match|matches|fixture|fixtures|coverage|broadcast|stream)\\b|^nothing (on|scheduled|live)\\b|^(tba|tbc|to be announced|off air|closedown|stand ?by|coming soon|check back)\\b|^event (ended|finished|over)|\\bno (fixtures|events|games|matches) today\\b", RegexOption.IGNORE_CASE)
         val MATCH = Regex("(.+?)\\s+(?:vs?\\.?|@|-v-)\\s+(.+)", RegexOption.IGNORE_CASE)
+        // (Built once: clean() runs for every event channel's guide entry, several times each, as Live now fills.)
+        val LEADING_TIME = Regex("^\\d{1,2}[:.]\\d{2}\\s*(am|pm)?\\s*[-–:|]?\\s*", RegexOption.IGNORE_CASE)
+        val NAMED_TWICE = Regex("^(\\S+)\\b(?:\\s+\\S+){0,2}?\\s+\\1\\b")
+        val SPACES = Regex("\\s+")
+        val AWAY_BREAK = Regex("\\s+|\\(|-")
+        val CLUB_MARKS = setOf("fc", "afc", "cf", "sc")
         fun r(words: String) = Regex("\\b($words)\\b", RegexOption.IGNORE_CASE)
         val SPORTS = listOf(
             r("tennis|atp|wta|wimbledon|roland garros|us open tennis") to Sport("Tennis", "🎾", listOf(0xFF8BC34A, 0xFF33691E)),
@@ -157,4 +180,18 @@ class SportsEvents @Inject constructor(private val http: HttpJson) {
             r("efl|epl|spfl|premier league|championship|league one|league two|fa cup|carabao|uefa|champions league|europa|conference league|la liga|serie a|bundesliga|ligue 1|mls|football|soccer|scottish cup|nifl|vs?") to Sport("Football", "⚽", listOf(0xFF26A69A, 0xFF004D40)),
         )
     }
+}
+
+/**
+ * The sports Live now sorts events into ([SportsEvents.sport]'s names), and whether each is wanted: Settings → Playback
+ * → Live now sports switches off the ones you're not interested in (kept with the appearance settings, so it syncs).
+ */
+object LiveSports {
+    val names = listOf(
+        "Football", "American football", "Basketball", "Hockey", "Baseball", "Tennis", "Golf", "Motor racing", "Motorbikes",
+        "Fight", "Rugby", "Cricket", "Darts", "Snooker", "Horse racing", "Cycling",
+    )
+    fun key(name: String) = "live:sport:" + name.lowercase()
+    /** An event of [sport] goes in Live now (unknown sport: yes). */
+    fun wanted(sport: String?) = sport == null || AppColors.palette.shows(key(sport))
 }

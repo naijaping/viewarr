@@ -7,6 +7,8 @@ import io.github.petebutty.viewarr.ui.common.Press
 import io.github.petebutty.viewarr.ui.common.RemoteAction
 import io.github.petebutty.viewarr.ui.common.RemoteKeys
 import io.github.petebutty.viewarr.ui.common.TapHold
+import io.github.petebutty.viewarr.data.settings.BtnAction
+import io.github.petebutty.viewarr.data.settings.BtnPress
 
 /** What a film player (the built-in one or mpv) gives the shared remote handling. */
 interface VodRemote {
@@ -26,8 +28,6 @@ class VodHooks(
     val buttons: List<PlayerButton>,
     val press: (PlayerButton) -> Unit,
     /** Editing the controls' buttons (hold OK on one): show / hide, and move one place (-1 / 1). */
-    val toggleButton: (PlayerButton) -> Unit = {},
-    val moveButton: (PlayerButton, Int) -> Unit = { _, _ -> },
     /** Settings → Remote → Left / Right. */
     val seekMs: Long,
     val showOsd: () -> Unit,
@@ -36,36 +36,22 @@ class VodHooks(
     val toggleDetails: () -> Unit,
     val showDetails: () -> Unit,
     val stop: () -> Unit,
-    /** How Back works: 0 its steps then the corner, 2 hold: corner, 3 its steps then the corner, hold: stop (both players). */
+    /** How Back works: 0 its steps then the corner, 3 its steps then the corner, hold: stop (both players). */
     val backMode: Int = 0,
-    /** Nothing open on the player (no controls, details, seek marker): Back's last step is next. */
-    val atTop: () -> Boolean = { false },
-    val minimise: () -> Unit = {},
     /** Back's usual step (what the player's BackHandler does): close what's open, else the last step. */
     val stepBack: () -> Unit = {},
     /**
      * Settings → Remote buttons for films: what a button that works anywhere (colours, Info, Play / pause, Stop,
      * Rewind / Fast forward) has been changed to (null: as standard, or not one of those).
      */
-    val tableAction: (KeyEvent) -> io.github.petebutty.viewarr.data.settings.BtnAction? = { null },
+    val tableAction: (KeyEvent) -> BtnAction? = { null },
     /** What OK, hold OK, the arrows or Menu have been changed to, with nothing open on the player (null: as standard). */
-    val mapped: (io.github.petebutty.viewarr.data.settings.BtnPress) -> io.github.petebutty.viewarr.data.settings.BtnAction? = { null },
+    val mapped: (BtnPress) -> BtnAction? = { null },
     /** The TV guide (the film stops, its place kept), and search over the page (the film goes to the corner). */
     val openGuide: () -> Unit = {},
     val search: () -> Unit = {},
-    /** The live TV shortcuts under the controls: how many, and opening one (the film goes to the corner). */
-    val shortcutCount: () -> Int = { 0 },
-    val pickShortcut: (Int) -> Unit = {},
-    /** The rows under a shortcut (their sizes), and opening a card (row, card). */
-    val rowSizes: (Int) -> List<Int> = { emptyList() },
-    val pickCard: (Int, Int) -> Unit = { _, _ -> },
-    /** Holding OK on a card (row, card): its quicker action, if it has one. */
-    val holdCard: (Int, Int) -> Unit = { _, _ -> },
     /** Skip intro / credits showing (or an intro just skipped by itself): OK skips it (or goes back). True if used. */
     val skipOk: () -> Boolean = { false },
-    /** The shortcuts' Move (index, -1 / 1), and whether one has a hold menu (Viewarr's own Refresh doesn't). */
-    val moveShortcut: (Int, Int) -> Unit = { _, _ -> },
-    val canHoldShortcut: (Int) -> Boolean = { true },
 )
 
 /**
@@ -75,13 +61,13 @@ class VodHooks(
 class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
     private val ok = TapHold()
     private val menuKey = TapHold()
-    // "Stop · hold Back: corner": a tap takes Back's usual step (on release); a hold shrinks to the corner at once.
+    // A tap of Back takes its usual step (on release); a hold closes the player.
     private var backDown = false
     private var lastKey = 0
 
-    private val leaves = setOf(io.github.petebutty.viewarr.data.settings.BtnAction.Guide, io.github.petebutty.viewarr.data.settings.BtnAction.Search,
-        io.github.petebutty.viewarr.data.settings.BtnAction.MainMenu, io.github.petebutty.viewarr.data.settings.BtnAction.Settings,
-        io.github.petebutty.viewarr.data.settings.BtnAction.Stop)
+    private val leaves = setOf(BtnAction.Guide, BtnAction.Search,
+        BtnAction.MainMenu, BtnAction.Settings,
+        BtnAction.Stop)
 
     /** True when the event was used. */
     fun handle(e: KeyEvent, p: VodRemote, h: VodHooks): Boolean {
@@ -91,24 +77,6 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
         val repeat = e.nativeKeyEvent.repeatCount
         // Gliding into the corner: the film has let go (OK would open its controls in the corner, Right skip it).
         if (VodHost.leaving) return a != RemoteAction.Back
-        if (a == RemoteAction.Back && h.backMode == 2) {
-            // Every Back press is decided here: a hold goes to the corner whatever is open (the corner closes it);
-            // a tap takes Back's usual step (controls, details… then stop).
-            when {
-                down && repeat == 0 -> backDown = true
-                down && backDown -> {
-                    backDown = false
-                    // The rest of this press is swallowed at the root once the player has let go of the remote.
-                    VodHost.swallowBack = true
-                    h.minimise()
-                }
-                !down && backDown -> { backDown = false; h.stepBack() }
-                // The release of a hold that already sent the film to the corner can still land here (the player
-                // hadn't let go of the remote yet): that press is over, so the root mustn't swallow the next one.
-                !down -> VodHost.swallowBack = false
-            }
-            return true
-        }
         if (a == RemoteAction.Back && h.backMode == 3) {
             // Since 0.28.3, the same for films and live TV: a tap takes Back's step (what's open closes, then the
             // corner); a hold closes the player.
@@ -148,16 +116,13 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
                 e, h.buttons,
                 beginScrub = { dir, rep -> scrub.begin(p.positionMs); scrub.step(dir, rep, p.durationMs); h.showOsd() },
                 press = h.press,
-                toggleButton = h.toggleButton, moveButton = h.moveButton,
+                
                 // (Up from the seek bar used to pause and show the synopsis: Play / Pause does that now, so Up does
                 // nothing there.)
                 upFromBar = {},
                 leftFromFirst = { VodHost.openMenu() },
                 downSizes = FilmShortcuts.downSizes(menu),
                 pickDown = { r, c -> FilmShortcuts.pickDown(menu, r, c) },
-                shortcutCount = h.shortcutCount(), pickShortcut = h.pickShortcut,
-                rowSizes = h.rowSizes, pickCard = h.pickCard, holdCard = h.holdCard,
-                moveShortcut = h.moveShortcut, canHold = h.canHoldShortcut,
             )
         ) return true
         // Tap OK: the controls (Play/Pause on the remote pauses). Hold OK: nothing unless set. (Either as changed in
@@ -165,8 +130,8 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
         if (a == RemoteAction.Ok) {
             when (ok.feed(e)) {
                 // Long OK: only what it's set to in Settings → Remote buttons (its own audio / subtitles pop-up is gone: the info bar has them).
-                Press.Hold -> { h.mapped(io.github.petebutty.viewarr.data.settings.BtnPress.OkHold)?.let { perform(it, p, h) } }
-                Press.Tap -> if (!h.skipOk()) h.mapped(io.github.petebutty.viewarr.data.settings.BtnPress.Ok)?.let { perform(it, p, h) } ?: run { menu.show(); h.showOsd() }
+                Press.Hold -> { h.mapped(BtnPress.OkHold)?.let { perform(it, p, h) } }
+                Press.Tap -> if (!h.skipOk()) h.mapped(BtnPress.Ok)?.let { perform(it, p, h) } ?: run { menu.show(); h.showOsd() }
                 null -> Unit
             }
             return true
@@ -175,16 +140,16 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
         if (a == RemoteAction.Menu) {
             // (The controls don't use Menu: a changed Menu stays off while they're open, as the other moving keys do;
             // its own audio & subtitles still opens.)
-            if (menu.open && h.mapped(io.github.petebutty.viewarr.data.settings.BtnPress.Menu) != null) return true
-            if (menuKey.feed(e) == Press.Tap) h.mapped(io.github.petebutty.viewarr.data.settings.BtnPress.Menu)?.let { perform(it, p, h) } ?: h.openTracks(false)
+            if (menu.open && h.mapped(BtnPress.Menu) != null) return true
+            if (menuKey.feed(e) == Press.Tap) h.mapped(BtnPress.Menu)?.let { perform(it, p, h) } ?: h.openTracks(false)
             return true
         }
         // The arrows, changed (nothing open on the player here): their new action, once per press.
         val arrow = when (a) {
-            RemoteAction.Up -> io.github.petebutty.viewarr.data.settings.BtnPress.Up
-            RemoteAction.Down -> io.github.petebutty.viewarr.data.settings.BtnPress.Down
-            RemoteAction.Left -> io.github.petebutty.viewarr.data.settings.BtnPress.Left
-            RemoteAction.Right -> io.github.petebutty.viewarr.data.settings.BtnPress.Right
+            RemoteAction.Up -> BtnPress.Up
+            RemoteAction.Down -> BtnPress.Down
+            RemoteAction.Left -> BtnPress.Left
+            RemoteAction.Right -> BtnPress.Right
             else -> null
         }
         arrow?.let(h.mapped)?.let { act ->
@@ -206,28 +171,28 @@ class VodKeys(private val scrub: Scrubber, private val menu: PlayerMenu) {
     }
 
     /** A button's action from the table, on the film. */
-    private fun perform(act: io.github.petebutty.viewarr.data.settings.BtnAction, p: VodRemote, h: VodHooks) {
+    private fun perform(act: BtnAction, p: VodRemote, h: VodHooks) {
         // Leaving the player: the rest of this press (repeats, its release) is eaten at the root, not handed to the page.
         if (act in leaves) VodHost.eatKey = lastKey
         when (act) {
-            io.github.petebutty.viewarr.data.settings.BtnAction.Controls -> { menu.show(); h.showOsd() }
-            io.github.petebutty.viewarr.data.settings.BtnAction.AudioSubs -> h.openTracks(null)
-            io.github.petebutty.viewarr.data.settings.BtnAction.Details -> h.toggleDetails()
-            io.github.petebutty.viewarr.data.settings.BtnAction.PlayPause -> { p.togglePause(); h.showOsd() }
-            io.github.petebutty.viewarr.data.settings.BtnAction.SkipBack -> { p.skip(-h.seekMs); h.showOsd() }
-            io.github.petebutty.viewarr.data.settings.BtnAction.SkipForward -> { p.skip(h.seekMs); h.showOsd() }
-            io.github.petebutty.viewarr.data.settings.BtnAction.Stop -> h.stop()
-            io.github.petebutty.viewarr.data.settings.BtnAction.Guide -> h.openGuide()
-            io.github.petebutty.viewarr.data.settings.BtnAction.Search -> h.search()
-            io.github.petebutty.viewarr.data.settings.BtnAction.MainMenu -> VodHost.openMenu()
-            io.github.petebutty.viewarr.data.settings.BtnAction.MediaInfo -> h.press(PlayerButton.Info)
-            io.github.petebutty.viewarr.data.settings.BtnAction.SwitchPlayer -> h.press(PlayerButton.SwitchPlayer)
-            io.github.petebutty.viewarr.data.settings.BtnAction.Settings -> h.press(PlayerButton.Settings)
-            io.github.petebutty.viewarr.data.settings.BtnAction.Transparency -> h.press(PlayerButton.Transparency)
-            io.github.petebutty.viewarr.data.settings.BtnAction.TimeTitle -> h.showOsd()
-            io.github.petebutty.viewarr.data.settings.BtnAction.SeekBar -> { scrub.begin(p.positionMs); h.showOsd() }
+            BtnAction.Controls -> { menu.show(); h.showOsd() }
+            BtnAction.AudioSubs -> h.openTracks(null)
+            BtnAction.Details -> h.toggleDetails()
+            BtnAction.PlayPause -> { p.togglePause(); h.showOsd() }
+            BtnAction.SkipBack -> { p.skip(-h.seekMs); h.showOsd() }
+            BtnAction.SkipForward -> { p.skip(h.seekMs); h.showOsd() }
+            BtnAction.Stop -> h.stop()
+            BtnAction.Guide -> h.openGuide()
+            BtnAction.Search -> h.search()
+            BtnAction.MainMenu -> VodHost.openMenu()
+            BtnAction.MediaInfo -> h.press(PlayerButton.Info)
+            BtnAction.SwitchPlayer -> h.press(PlayerButton.SwitchPlayer)
+            BtnAction.Settings -> h.press(PlayerButton.Settings)
+            BtnAction.Transparency -> h.press(PlayerButton.Transparency)
+            BtnAction.TimeTitle -> h.showOsd()
+            BtnAction.SeekBar -> { scrub.begin(p.positionMs); h.showOsd() }
             // An episode with more after it: the bar with the next episodes; otherwise (a film) the seek bar.
-            io.github.petebutty.viewarr.data.settings.BtnAction.Episodes ->
+            BtnAction.Episodes ->
                 if (NextUp.upcoming.isNotEmpty()) { menu.show(); menu.onBar = false; FilmShortcuts.openEpisodes(menu, only = true); h.showOsd() }
                 else { scrub.begin(p.positionMs); h.showOsd() }
             else -> Unit

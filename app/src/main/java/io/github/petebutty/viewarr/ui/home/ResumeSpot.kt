@@ -2,6 +2,11 @@ package io.github.petebutty.viewarr.ui.home
 
 import android.content.Context
 import androidx.compose.runtime.getValue
+import io.github.petebutty.viewarr.data.local.ChannelListItem
+import io.github.petebutty.viewarr.data.media.DeepLink
+import io.github.petebutty.viewarr.data.session.Session
+import io.github.petebutty.viewarr.data.settings.RemoteSettings
+import io.github.petebutty.viewarr.ui.media.VodHost
 
 /**
  * Where you were when Viewarr went to the background (the Home button, another app), so that if Android clears it
@@ -55,7 +60,7 @@ object ResumeSpot {
  * TV and pauses a film; coming back starts live TV again.
  */
 @androidx.compose.runtime.Composable
-internal fun ResumeEffects(hs: HomeState, remote: io.github.petebutty.viewarr.data.settings.RemoteSettings, session: io.github.petebutty.viewarr.data.session.Session?, playing: io.github.petebutty.viewarr.data.local.ChannelListItem?) {
+internal fun ResumeEffects(hs: HomeState, remote: RemoteSettings, session: Session?, playing: ChannelListItem?) {
     val ctx = androidx.compose.ui.platform.LocalContext.current
     val vm = hs.vm; val playback = hs.playback
     val now by androidx.compose.runtime.rememberUpdatedState(playing)
@@ -68,7 +73,7 @@ internal fun ResumeEffects(hs: HomeState, remote: io.github.petebutty.viewarr.da
         spot ?: return@LaunchedEffect
         hs.startApplied = true
         when {
-            spot.title != null -> io.github.petebutty.viewarr.data.media.DeepLink.handle(android.net.Uri.parse(spot.title))
+            spot.title != null -> DeepLink.handle(android.net.Uri.parse(spot.title))
             spot.channelId != null -> vm.channelById(spot.channelId)?.let { ch -> hs.watchChannel(ch, full = spot.fullscreen) }
             else -> runCatching { Page.valueOf(spot.page) }.getOrNull()?.let { hs.page = it }
         }
@@ -77,15 +82,15 @@ internal fun ResumeEffects(hs: HomeState, remote: io.github.petebutty.viewarr.da
         val leaving = (ctx as? android.app.Activity)?.isFinishing == true
         if (leaving) ResumeSpot.clear(ctx)
         else {
-            val film = io.github.petebutty.viewarr.ui.media.VodHost.source?.takeIf { io.github.petebutty.viewarr.ui.media.VodHost.active }?.item?.invoke()
+            val film = VodHost.source?.takeIf { VodHost.active }?.item?.invoke()
             ResumeSpot.save(ctx, ResumeSpot.Spot(
                 page = hs.page.name,
                 channelId = now?.id,
                 fullscreen = hs.fullscreen,
-                title = film?.let { io.github.petebutty.viewarr.data.media.DeepLink.uriFor(it).toString() },
+                title = film?.let { DeepLink.uriFor(it).toString() },
             ))
         }
-        playback.pause(); io.github.petebutty.viewarr.ui.media.VodHost.remote?.pause()
+        playback.pause(); VodHost.remote?.pause()
     }
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_START) { playback.resume(); if (ResumeSpot.checked) ResumeSpot.clear(ctx) }
 }

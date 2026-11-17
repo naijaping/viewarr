@@ -24,7 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -49,6 +48,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.ui.common.ViewarrPopup
 
 @HiltViewModel
 class UpdateViewModel @Inject constructor(private val updates: UpdateManager) : ViewModel() {
@@ -100,11 +100,7 @@ fun UpdateHost(vm: UpdateViewModel = hiltViewModel()) {
         is UpdateState.Failed -> s.release
         else -> null
     } ?: return
-    // Its own window: it gets the remote's focus even over pages that trap focus (settings, players).
-    androidx.compose.ui.window.Dialog(
-        onDismissRequest = { if (s !is UpdateState.Downloading) vm.later() },
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false),
-    ) {
+    // Its own window (UpdateDialog's ViewarrPopup): it gets the remote's focus even over pages that trap focus.
     UpdateDialog(
         state = s,
         release = release,
@@ -114,7 +110,6 @@ fun UpdateHost(vm: UpdateViewModel = hiltViewModel()) {
         onPermission = { if (!vm.openPermission()) vm.install(release) },
         onLater = vm::later,
     )
-    }
 }
 
 @Composable
@@ -128,10 +123,11 @@ private fun UpdateDialog(
     onLater: () -> Unit,
 ) {
     val first = remember { FocusRequester() }
-    // Refocus whenever the buttons change (e.g. download finished, permission needed).
-    LaunchedEffect(state::class) { awaitFrame(); runCatching { first.requestFocus() } }
-    // Its own window (ViewarrPopup): the remote can't be left on the page behind it.
-    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onLater) {
+    // Its own window (ViewarrPopup): the remote can't be left on the page behind it. Back can't close it while
+    // downloading (it carried on unseen, and a permission step after it had nowhere to show).
+    ViewarrPopup(onClose = { if (state !is UpdateState.Downloading) onLater() }) {
+        // Refocus whenever the buttons change (e.g. download finished, permission needed); in here, once the window exists.
+        LaunchedEffect(state::class) { awaitFrame(); runCatching { first.requestFocus() } }
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(
                 Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp),

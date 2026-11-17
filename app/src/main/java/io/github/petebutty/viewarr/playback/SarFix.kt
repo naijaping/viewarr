@@ -49,3 +49,16 @@ class SarFixVideoRenderer(
         }
     }
 }
+
+/** Box-specific decoder settings. */
+object DecoderQuirks {
+    /**
+     * Amlogic boxes (Ugoos, many Android TV boxes): Media3's asynchronous decoder queueing corrupts some 4K HEVC and can
+     * freeze the picture there (OwnTV found it, GPL-3, ExoRenderers.kt); the older synchronous way is used instead.
+     */
+    val amlogic: Boolean by lazy {
+        val soc = if (android.os.Build.VERSION.SDK_INT >= 31) android.os.Build.SOC_MANUFACTURER.orEmpty() else ""
+        listOf(soc, android.os.Build.HARDWARE.orEmpty(), android.os.Build.BOARD.orEmpty()).any { it.contains("amlogic", true) } ||
+            android.os.Build.HARDWARE.orEmpty().lowercase().let { it.startsWith("aml") || it == "s6" || it.startsWith("sc2") }
+    }
+}

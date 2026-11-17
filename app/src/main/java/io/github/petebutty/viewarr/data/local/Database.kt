@@ -9,7 +9,9 @@ import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.RoomDatabase
 import androidx.room.Transaction
+import androidx.room.TypeConverter
 import kotlinx.coroutines.flow.Flow
+import java.io.ByteArrayOutputStream
 
 @Entity(tableName = "channels", indices = [Index("guideKey"), Index("groupId")])
 data class ChannelEntity(
@@ -60,7 +62,7 @@ class Packed(val bytes: ByteArray) {
         runCatching {
             val inf = java.util.zip.Inflater(true)
             inf.setInput(bytes)
-            val out = java.io.ByteArrayOutputStream(bytes.size * 3)
+            val out = ByteArrayOutputStream(bytes.size * 3)
             val buf = ByteArray(1024)
             while (!inf.finished()) { val n = inf.inflate(buf); if (n == 0 && (inf.needsInput() || inf.needsDictionary())) break; out.write(buf, 0, n) }
             inf.end()
@@ -74,7 +76,7 @@ class Packed(val bytes: ByteArray) {
             if (text.isNullOrBlank()) return null
             val def = java.util.zip.Deflater(java.util.zip.Deflater.BEST_COMPRESSION, true)
             def.setInput(text.toByteArray(Charsets.UTF_8)); def.finish()
-            val out = java.io.ByteArrayOutputStream(text.length)
+            val out = ByteArrayOutputStream(text.length)
             val buf = ByteArray(1024)
             while (!def.finished()) out.write(buf, 0, def.deflate(buf))
             def.end()
@@ -84,8 +86,8 @@ class Packed(val bytes: ByteArray) {
 }
 
 class PackedConverters {
-    @androidx.room.TypeConverter fun toBytes(p: Packed?): ByteArray? = p?.bytes
-    @androidx.room.TypeConverter fun toPacked(b: ByteArray?): Packed? = b?.let(::Packed)
+    @TypeConverter fun toBytes(p: Packed?): ByteArray? = p?.bytes
+    @TypeConverter fun toPacked(b: ByteArray?): Packed? = b?.let(::Packed)
 }
 
 data class ChannelListItem(
@@ -284,9 +286,13 @@ interface GuideDao {
     @Query("SELECT tvgId FROM programs WHERE rowId = :rowId")
     suspend fun tvgIdOf(rowId: Long): String?
 
-    /** Keeps a programme's picture once it's been looked up (the guide grid sends none). */
-    @Query("UPDATE programs SET image = :image WHERE rowId = :rowId")
-    suspend fun setImage(rowId: Long, image: String)
+    /** EPG offset changed: a guide's saved programmes slid later (+) / earlier (−) in place, nothing fetched again. */
+    @Query("UPDATE programs SET startTime = startTime + :by, endTime = endTime + :by WHERE tvgId = :tvgId")
+    suspend fun shiftPrograms(tvgId: String, by: Long): Int
+
+    /** The whole source's EPG offset changed: every saved programme slid. */
+    @Query("UPDATE programs SET startTime = startTime + :by, endTime = endTime + :by")
+    suspend fun shiftAllPrograms(by: Long): Int
 
     @Query("DELETE FROM programs WHERE tvgId = :tvgId AND startTime >= :from AND startTime < :to AND endTime <= :endLimit")
     suspend fun deletePastChunk(tvgId: String, from: Long, to: Long, endLimit: Long)

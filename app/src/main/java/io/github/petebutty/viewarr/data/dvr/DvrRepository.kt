@@ -55,7 +55,7 @@ data class SeriesRule(val tvgId: String, val title: String, val mode: String, va
     val label get() = title.trim('"', '^', '$')
 }
 
-/** Result of a DVR action: null message = success. */
+/** Result of a DVR action: whether it worked, and what to tell the user either way. */
 data class DvrResult(val ok: Boolean, val message: String)
 
 /**
@@ -86,7 +86,7 @@ class DvrRepository @Inject constructor(
     suspend fun refresh() {
         val s = session() ?: return
         _xc.value = s.isDirect
-        if (s.isDirect) { _allowed.value = false; _recordings.value = emptyList(); return }
+        if (s.isDirect) { _allowed.value = false; _recordings.value = emptyList(); _rules.value = emptyList(); return }
         val r = runCatching { http.get("${s.serverUrl}/api/channels/recordings/", headers(s)) }.getOrNull() ?: return
         if (r.code == 403 || r.code == 401) {
             _allowed.value = false
@@ -94,7 +94,7 @@ class DvrRepository @Inject constructor(
         }
         if (!r.ok) return
         _allowed.value = true
-        val list = (r.body as? JsonObject)?.let { it.array("results") } ?: r.body.asArray()
+        val list = (r.body as? JsonObject)?.array("results") ?: r.body.asArray()
         val now = System.currentTimeMillis()
         _recordings.value = list.mapNotNull { parse(it, now) }.sortedBy { it.start }
         val rr = runCatching { http.get("${s.serverUrl}/api/channels/series-rules/", headers(s)) }.getOrNull()

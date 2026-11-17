@@ -1,21 +1,17 @@
 package io.github.petebutty.viewarr.ui.home
 
-import io.github.petebutty.viewarr.ui.common.glass
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -24,7 +20,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -38,15 +33,11 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
-import io.github.petebutty.viewarr.ui.common.MenuItem
-import io.github.petebutty.viewarr.ui.common.ignoreHeldOk
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import io.github.petebutty.viewarr.ui.theme.CornerPicture
-import kotlinx.coroutines.android.awaitFrame
 
 /**
  * The picture in the corner (live TV over another page, or a film), highlighted (Settings → Playback → Highlight the
@@ -107,7 +98,7 @@ internal fun BoxScope.CornerHighlight(
                     // Towards the page (Up from a bottom corner): off the picture; the other way, nothing.
                     Key.DirectionUp -> if (down && top) true else { if (down) back(); true }
                     Key.DirectionDown -> if (down && !top) true else { if (down) back(); true }
-                    // Back (a tap): off the picture, onto the page. (Holding it is the picture's menu.)
+                    // Back (a tap): off the picture, onto the page.
                     Key.Back -> { if (!down) back(); true }
                     // OK on its release (so the press doesn't reach what comes next).
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
@@ -136,32 +127,6 @@ internal fun BoxScope.CornerHighlight(
                         .padding(horizontal = 14.dp, vertical = 6.dp),
                 )
             }
-        }
-    }
-}
-
-/** Holding Back with a picture in the corner: Full screen, Close picture, or Cancel. */
-@Composable
-internal fun CornerPictureMenu(film: Boolean, onFullScreen: () -> Unit, onClosePicture: () -> Unit, onDismiss: () -> Unit) {
-    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
-        val first = remember { FocusRequester() }
-        LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-        // The held Back that opened it: its release mustn't close it straight away.
-        var backDown by remember { mutableStateOf(false) }
-        Column(
-            Modifier.width(400.dp).glass(14.dp)
-                .onPreviewKeyEvent { e ->
-                    if (e.key != Key.Back) return@onPreviewKeyEvent false
-                    if (e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) { backDown = true; false } else !backDown
-                }
-                .ignoreHeldOk()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(if (film) "The film in the corner" else "Live TV in the corner", fontSize = 18.sp, color = AppColors.TextPrimary)
-            MenuItem(text = "Full screen", selected = false, modifier = Modifier.focusRequester(first), onClick = onFullScreen)
-            MenuItem(text = "Close picture", selected = false, onClick = onClosePicture)
-            MenuItem(text = "Cancel", selected = false, onClick = onDismiss)
         }
     }
 }

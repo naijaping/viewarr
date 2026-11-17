@@ -62,6 +62,12 @@ import io.github.petebutty.viewarr.ui.common.stopAt
 import io.github.petebutty.viewarr.ui.common.trapFocus
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
+import io.github.petebutty.viewarr.ui.common.OptionsPopup
+import io.github.petebutty.viewarr.ui.common.PopupOption
+import io.github.petebutty.viewarr.ui.common.movingHint
+import io.github.petebutty.viewarr.ui.common.reorderable
+import io.github.petebutty.viewarr.ui.theme.NoScale
+import io.github.petebutty.viewarr.ui.theme.Tokens
 
 /** One setting: a toggle (two choices called On/Off) or a list of choices. */
 class SettingItem(
@@ -73,7 +79,10 @@ class SettingItem(
     val action: (() -> Unit)? = null,
     /** A slider: Left / Right step through [choices] on the row itself (no list opens). */
     val slider: Boolean = false,
-    /** Reorderable (e.g. Live TV shortcuts): Right picks the row up, Up / Down move it (by -1 / +1), Right or OK puts it down. */
+    /**
+     * Reorderable (e.g. Live TV shortcuts): hold OK → Move (or Right, the Settings shortcut) picks the row up, Up / Down
+     * move it (by -1 / +1), OK, Back, Left or Right put it down (ui/common/Reorder.kt).
+     */
     val reorder: ((Int) -> Unit)? = null,
     /**
      * Shown but can't be changed: another setting decides it (Low-memory mode, the Live TV hub style). The note says
@@ -91,16 +100,14 @@ class SettingItem(
 /** Lock notes, the same words everywhere. */
 object Locks {
     const val LOW_MEMORY = "Off in Low-memory mode. To use it, switch off Settings → Troubleshooting → Low-memory mode."
-    const val LIVE_HUB = "Set by the Live TV hub style. To choose it yourself, set Settings → Menu & navigation → Start → Style to Classic."
-    const val NEEDS_HUB = "Part of the Live TV hub. To use it, set Settings → Menu & navigation → Start → Style to Live TV hub."
 }
 
-/** [header]: drawn above the items (e.g. Remote & navigation's remote picture); not focusable. */
 /** Settings pages over live TV in the top-left window: their list of sections starts below it (the menu sets it). */
 object SettingsLayout {
     var belowPreview by androidx.compose.runtime.mutableStateOf(false)
 }
 
+/** [header]: drawn above the items (e.g. Remote & navigation's remote picture); not focusable. */
 class SettingCategory(val name: String, val blurb: String, val items: List<SettingItem>, val header: (@Composable () -> Unit)? = null)
 
 /**
@@ -116,6 +123,20 @@ fun Modifier.leftReturnsTo(target: () -> FocusRequester?): Modifier = onKeyEvent
  * Full-screen settings: categories on the left, their settings on the right, each with a plain explanation.
  * OK flips a toggle, or opens the list of choices.
  */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+/**
+ * A key per row: its title, with "#2", "#3"… on repeats. Two news feeds can share a name (or a feed and a channel
+ * group), and the list crashed on the second one. The first keeps its plain title, so focus lookups by title still work.
+ */
+internal fun uniqueRowKeys(titles: List<String>): List<String> {
+    val seen = HashMap<String, Int>()
+    return titles.map { t ->
+        val n = (seen[t] ?: 0) + 1
+        seen[t] = n
+        if (n == 1) t else "$t#$n"
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun SettingsPage(
@@ -215,7 +236,10 @@ fun SettingsPage(
         runCatching { rowFocus[key]?.requestFocus() }
         returnTo = null
     }
-    BackHandler { if (choosing != null) closeChoices() else onBack() }
+    // A reorderable row's hold-OK options (its title).
+    var menuFor by remember { mutableStateOf<String?>(null) }
+    // (While a row is carried, Back puts it down: Modifier.reorderable takes the press; this never leaves the page then.)
+    BackHandler { if (moving != null) moving = null else if (choosing != null) closeChoices() else onBack() }
     LaunchedEffect(Unit) {
         awaitFrame()
         // From Search settings: straight onto the setting found (the refocus effect scrolls to it).
@@ -235,7 +259,7 @@ fun SettingsPage(
         if (row == null || runCatching { row.requestFocus() }.isFailure) runCatching { catFocus.getOrNull(category)?.requestFocus() }
     }
     Box(Modifier.fillMaxSize().appBackground(readable = true).onFocusChanged { pageHasFocus = it.hasFocus }.trapFocus()) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 40.dp)) {
+        Row(Modifier.fillMaxSize().padding(horizontal = Tokens.Gutter, vertical = 40.dp)) {
             // (Below the live TV window when one is up: it sits where this column starts.)
             Column(Modifier.width(300.dp).fillMaxHeight().padding(top = if (SettingsLayout.belowPreview) 170.dp else 0.dp)) {
                 Text("Settings", fontSize = 14.sp, color = AppColors.Accent)
@@ -288,7 +312,8 @@ fun SettingsPage(
             Spacer(Modifier.width(40.dp))
             val c = categories[category]
             Column(Modifier.weight(1f).fillMaxHeight().leftReturnsTo { catFocus[category] }) {
-                Text(c.blurb, fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 26.dp, bottom = 14.dp, start = 4.dp))
+                // While a row is carried: the one "moving" hint in place of the blurb.
+                Text(if (moving != null) movingHint() else c.blurb, fontSize = 14.sp, color = if (moving != null) AppColors.Accent else AppColors.TextSecondary, modifier = Modifier.padding(top = 26.dp, bottom = 14.dp, start = 4.dp))
                 // Android TV's own scrolling keeps the focused row about a third of the way down, which pushed a
                 // section's picture (Remote & navigation) half off the top. Here the list only moves when the row
                 // would go off screen, keeping a row's margin; the first row brings the list right back to the top.
@@ -306,20 +331,22 @@ fun SettingsPage(
                     }
                 }
                 val following = remember(gentle) { gentle.followingSetting() }
+                val keys = remember(c.items) { uniqueRowKeys(c.items.map { it.title }) }
                 // A dropdown open: the page holds still while the highlight moves inside it (it followed the highlight
                 // and scrolled the whole page); the dropdown scrolls itself (InlineChoices). Opening one brings it
                 // fully on screen once, below.
                 androidx.compose.runtime.CompositionLocalProvider(androidx.compose.foundation.gestures.LocalBringIntoViewSpec provides (if (choosing != null) HoldStill else following)) {
                 LazyColumn(Modifier.stopAt(androidx.compose.ui.focus.FocusDirection.Down), state = listState, verticalArrangement = Arrangement.spacedBy(6.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
                     c.header?.let { h -> item(key = c.name + "#header") { h() } }
-                    itemsIndexed(c.items, key = { _, it -> c.name + it.title }) { index, item ->
-                        val rowFocusReq = rowFocus.getOrPut(item.title) { FocusRequester() }
+                    itemsIndexed(c.items, key = { i, _ -> c.name + "/" + keys[i] }) { index, item ->
+                        val rowFocusReq = rowFocus.getOrPut(keys[index]) { FocusRequester() }
                         // The row, and its choices opening right under it (a dropdown, as on Windows) when picked.
                         androidx.compose.foundation.layout.Column {
                         SettingRow(
                             item, enabled = choosing == null, focus = rowFocusReq,
                             moving = moving == item.title,
                             onMove = { picked -> moving = if (picked) item.title else null },
+                            onLongClick = if (item.reorder != null && item.locked == null) ({ menuFor = item.title }) else null,
                             onMoved = {
                                 moveAnchor = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
                                 movedTitle = item.title
@@ -361,30 +388,33 @@ fun SettingsPage(
             }
         }
     }
+    // Hold OK on a reorderable row: the standard options (Move picks it up; Cancel).
+    menuFor?.let { t ->
+        OptionsPopup(title = t, options = listOf(PopupOption("Move") { moving = t }), onClose = { menuFor = null })
+    }
 }
 
 @Composable
 private fun SettingRow(
     item: SettingItem, enabled: Boolean, focus: FocusRequester,
     moving: Boolean = false, onMove: (Boolean) -> Unit = {}, onMoved: () -> Unit = {},
+    onLongClick: (() -> Unit)? = null,
     onFocused: () -> Unit = {},
     onClick: () -> Unit,
 ) {
     Surface(
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = Modifier.fillMaxWidth().focusRequester(focus).focusProperties { canFocus = enabled }.onFocusChanged { if (it.isFocused) onFocused() }
-            .then(if (item.reorder == null) Modifier else Modifier.onPreviewKeyEvent { e ->
-                // Right: pick up / put down. While picked up, Up / Down move the row (and nothing else moves focus).
-                if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent moving && e.key != Key.Back
-                when {
-                    e.key == Key.DirectionRight -> { onMove(!moving); true }
-                    moving && e.key == Key.DirectionUp -> { item.reorder.invoke(-1); onMoved(); true }
-                    moving && e.key == Key.DirectionDown -> { item.reorder.invoke(1); onMoved(); true }
-                    moving && e.key == Key.DirectionLeft -> true
-                    moving && e.key == Key.Back -> { onMove(false); true }
-                    else -> false
-                }
-            })
+            // The shared way to move a row (UI review Tier 4, Peter, 2026-11-17): picked up by hold OK → Move or Right
+            // (the Settings lists' shortcut); ▲ ▼ move it; OK, Back, Left or Right put it down.
+            .then(if (item.reorder == null) Modifier else Modifier.reorderable(
+                carried = moving,
+                onMove = { dir -> item.reorder.invoke(dir); onMoved() },
+                onDrop = { onMove(false) },
+                rightToggles = true,
+                onPickUp = { onMove(true) },
+            ))
             .then(if (!item.slider || item.locked != null) Modifier else Modifier.onPreviewKeyEvent { e ->
                 // Slider: Left / Right change the value; Left at the lowest goes back to the categories as usual.
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -395,8 +425,8 @@ private fun SettingRow(
                     else -> false
                 }
             }),
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+        scale = NoScale,
+        shape = ClickableSurfaceDefaults.shape(Tokens.RowShape),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = AppColors.Panel,
             contentColor = AppColors.TextPrimary,
@@ -425,14 +455,15 @@ private fun SettingRow(
                     Text(item.current.label, fontSize = 14.sp, maxLines = 1, modifier = Modifier.width(64.dp).padding(start = 10.dp))
                 }
             }
-            else if (item.isToggle) Toggle(item.current.label == "On")
+            else if (item.isToggle) SettingSwitch(item.current.label == "On")
             else Text(item.current.label, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(260.dp))
         }
     }
 }
 
+/** The green / grey on-off switch at the end of a setting row (also Home page & menu's rows). */
 @Composable
-private fun Toggle(on: Boolean) {
+internal fun SettingSwitch(on: Boolean) {
     Box(
         Modifier.size(width = 48.dp, height = 26.dp)
             // Green / grey so it reads clearly whatever the highlight colour is.

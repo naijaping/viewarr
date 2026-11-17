@@ -3,13 +3,10 @@ package io.github.petebutty.viewarr.ui.player
 import android.graphics.Color as AndroidColor
 import android.view.ViewGroup
 import androidx.annotation.OptIn
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -35,6 +32,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import io.github.petebutty.viewarr.ui.common.glass
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -54,12 +53,11 @@ import io.github.petebutty.viewarr.playback.PlaybackState
 import io.github.petebutty.viewarr.playback.PlaybackViewModel
 import io.github.petebutty.viewarr.ui.guide.displayTitle
 import io.github.petebutty.viewarr.ui.guide.formatNumber
-import io.github.petebutty.viewarr.ui.guide.logoUrl
 import io.github.petebutty.viewarr.ui.theme.AppColors
+import io.github.petebutty.viewarr.ui.theme.UiOpts
 import coil.compose.AsyncImage
 import java.time.Instant
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 private val timeFormat get() = io.github.petebutty.viewarr.ui.theme.Dates.time
 private fun Long.hhmm() = Instant.ofEpochMilli(this).atZone(ZoneId.systemDefault()).format(timeFormat)
@@ -164,6 +162,9 @@ fun PlayerLayer(
             },
             modifier = Modifier.fillMaxSize(),
         )
+        // A channel the built-in player couldn't start, played by mpv instead (over the built-in player's view).
+        val mpvUrl by vm.mpvLive.collectAsStateWithLifecycle()
+        mpvUrl?.let { u -> LiveMpvPicture(u, vm.mpvApiKey(), vm::mpvStarted, vm::mpvFailed, Modifier.fillMaxSize()) }
 
         when (val s = state) {
             PlaybackState.Buffering -> if (fullscreen) {
@@ -182,7 +183,7 @@ fun PlayerLayer(
                 Text(s.message, fontSize = if (fullscreen) 18.sp else 12.sp, color = Color.White)
                 if (fullscreen) {
                     Spacer(Modifier.height(8.dp))
-                    Text("Press OK to try again", fontSize = 14.sp, color = AppColors.TextSecondary)
+                    Text("OK: try again", fontSize = 14.sp, color = AppColors.TextSecondary)
                 }
             }
             else -> Unit
@@ -215,9 +216,8 @@ fun PlayerLayer(
     }
 }
 
-/** Channels' frame rates once known (by uuid), so a channel tuned again has its rate at once. */
 /**
- * Each channel's frame rate once measured, kept on the TV (a channel's rate doesn't change): after the first time, frame
+ * Each channel's frame rate once measured (by uuid), kept on the TV (a channel's rate doesn't change): after the first time, frame
  * rate matching switches the moment it starts, even after Viewarr restarts (it used to measure again every time).
  */
 private object KnownFps {
@@ -250,7 +250,7 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
     // centred at the bottom (the fade and the full-width bar always span the screen).
     val p = AppColors.palette
     val w = p.infoBarWidth
-    val r = when (p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_CORNERS)) { 1 -> 10.dp; 2 -> 28.dp; else -> 18.dp }
+    val r = when (p.opt(UiOpts.INFOBAR_CORNERS)) { 1 -> 10.dp; 2 -> 28.dp; else -> 18.dp }
     val bg = AppColors.tinted(AppColors.Background)
     // Settings → Appearance → Pop-up glass (0–100% see-through): every style follows it, all the way to clear.
     val glassAlpha = p.popupAlpha
@@ -263,29 +263,29 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
     // half see-through at the slider's first step and barely change after; Peter, 2026-11-16.)
     fun more(k: Float) = (if (k >= 1f) 1f - Math.pow(see.toDouble(), k.toDouble()).toFloat()
         else Math.pow(glassAlpha.toDouble(), 1.0 / k).toFloat()).coerceIn(0f, 1f)
-    val outer = when (p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_STYLE)) {
+    val outer = when (p.opt(UiOpts.INFOBAR_STYLE)) {
         // Square glass: the same panel, sharp corners.
         1 -> modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp).glass(radius = 0.dp).padding(horizontal = 24.dp, vertical = 18.dp)
         // Pill: fully rounded ends, floating a little higher.
         2 -> modifier.fillMaxWidth(w).padding(start = 56.dp, end = 56.dp, bottom = 40.dp).glass(radius = 56.dp).padding(horizontal = 40.dp, vertical = 20.dp)
         // Fade: no panel, a dark fade up from the bottom edge, the text straight on the picture.
         3 -> modifier.fillMaxWidth()
-            .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, 0.3f to bg.copy(alpha = more(0.7f)), 1f to bg.copy(alpha = more(2.2f))))
+            .background(Brush.verticalGradient(0f to Color.Transparent, 0.3f to bg.copy(alpha = more(0.7f)), 1f to bg.copy(alpha = more(2.2f))))
             .padding(start = 64.dp, end = 64.dp, top = 64.dp, bottom = 36.dp)
         // Full-width bar: edge to edge along the bottom, square, no border (a classic TV box).
         4 -> modifier.fillMaxWidth().background(bg.copy(alpha = glassAlpha)).padding(horizontal = 64.dp, vertical = 20.dp)
         // Minimal: just the text and buttons, a soft shade behind for reading.
         5 -> modifier.fillMaxWidth(w)
-            .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, 1f to bg.copy(alpha = more(1f))))
+            .background(Brush.verticalGradient(0f to Color.Transparent, 1f to bg.copy(alpha = more(1f))))
             .padding(start = 64.dp, end = 64.dp, top = 28.dp, bottom = 30.dp)
         // Faded glass: the Glass panel (inset, rounded, its width), solid along the bottom and fading to clear at the
         // top, its edge fading with it, so no hard line crosses the picture. (Fade spans the whole screen; this doesn't.)
         6 -> {
-            val shape = androidx.compose.foundation.shape.RoundedCornerShape(r)
+            val shape = RoundedCornerShape(r)
             modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp)
-                .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to bg.copy(alpha = 0f), 0.35f to bg.copy(alpha = more(0.55f)), 1f to bg.copy(alpha = glassAlpha)), shape)
-                .then(if (p.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_BORDER) == 0)
-                    Modifier.border(1.dp, androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.White.copy(alpha = 0f), 1f to Color.White.copy(alpha = 0.28f)), shape) else Modifier)
+                .background(Brush.verticalGradient(0f to bg.copy(alpha = 0f), 0.35f to bg.copy(alpha = more(0.55f)), 1f to bg.copy(alpha = glassAlpha)), shape)
+                .then(if (p.opt(UiOpts.BANNER_BORDER) == 0)
+                    Modifier.border(1.dp, Brush.verticalGradient(0f to Color.White.copy(alpha = 0f), 1f to Color.White.copy(alpha = 0.28f)), shape) else Modifier)
                 .padding(start = 24.dp, end = 24.dp, top = 30.dp, bottom = 18.dp)
         }
         // Feathered glass: glass with no edge anywhere, melting into the picture on every side.
@@ -295,13 +295,13 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
         // Side fade: dark behind the text on the left, fading to clear by two thirds across, and up from the bottom;
         // the text and buttons keep to the left part.
         8 -> modifier.fillMaxWidth()
-            .background(androidx.compose.ui.graphics.Brush.horizontalGradient(0f to bg.copy(alpha = more(1.9f)), 0.35f to bg.copy(alpha = more(0.7f)), 0.68f to bg.copy(alpha = 0f)))
-            .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, 1f to bg.copy(alpha = more(0.5f))))
+            .background(Brush.horizontalGradient(0f to bg.copy(alpha = more(1.9f)), 0.35f to bg.copy(alpha = more(0.7f)), 0.68f to bg.copy(alpha = 0f)))
+            .background(Brush.verticalGradient(0f to Color.Transparent, 1f to bg.copy(alpha = more(0.5f))))
             .padding(start = 64.dp, top = 56.dp, bottom = 34.dp)
             .wrapContentWidth(Alignment.Start).fillMaxWidth(0.62f)
         // Outline: almost clear glass with a fine edge in the highlight colour.
         9 -> {
-            val shape = androidx.compose.foundation.shape.RoundedCornerShape(r)
+            val shape = RoundedCornerShape(r)
             modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp)
                 .background(bg.copy(alpha = more(0.35f)), shape)
                 .border(1.dp, AppColors.Accent.copy(alpha = 0.75f), shape)
@@ -313,7 +313,7 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
             .glass(radius = r).padding(horizontal = 22.dp, vertical = 16.dp)
         // Floating card: a more solid card lifted off the picture, a soft shadow under it, sitting higher up.
         11 -> {
-            val shape = androidx.compose.foundation.shape.RoundedCornerShape(maxOf(r, 22.dp))
+            val shape = RoundedCornerShape(maxOf(r, 22.dp))
             modifier.fillMaxWidth(w).padding(start = 64.dp, end = 64.dp, bottom = 52.dp)
                 // (No shadow once it's clear: it left a dark halo round nothing.)
                 .then(if (glassAlpha > 0.05f) Modifier.shadow((28 * glassAlpha.coerceAtMost(1f)).dp, shape, ambientColor = Color.Black, spotColor = Color.Black) else Modifier)
@@ -323,14 +323,14 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
         // Slim strip: a thin full-width band along the bottom, a line in the highlight colour across its top.
         12 -> modifier.fillMaxWidth()
             .background(bg.copy(alpha = more(1.5f)))
-            .drawBehind { drawRect(AppColors.Accent, size = androidx.compose.ui.geometry.Size(size.width, 2.dp.toPx())) }
+            .drawBehind { drawRect(AppColors.Accent, size = Size(size.width, 2.dp.toPx())) }
             .padding(start = 64.dp, end = 64.dp, top = 12.dp, bottom = 12.dp)
         // Frosted: milky light glass (white-tinted, a soft sheen from the top), rather than the dark tint.
         13 -> {
-            val shape = androidx.compose.foundation.shape.RoundedCornerShape(r)
+            val shape = RoundedCornerShape(r)
             modifier.fillMaxWidth(w).padding(start = 40.dp, end = 40.dp, bottom = 28.dp)
                 .background(Color.Black.copy(alpha = more(0.75f)), shape)
-                .background(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.White.copy(alpha = 0.45f * more(1f)), 1f to Color.White.copy(alpha = 0.16f * more(1f))), shape)
+                .background(Brush.verticalGradient(0f to Color.White.copy(alpha = 0.45f * more(1f)), 1f to Color.White.copy(alpha = 0.16f * more(1f))), shape)
                 .border(1.dp, Color.White.copy(alpha = 0.35f), shape)
                 .padding(horizontal = 24.dp, vertical = 18.dp)
         }
@@ -350,12 +350,12 @@ internal fun InfoBarPanel(modifier: Modifier, content: @Composable androidx.comp
 
 /** Feathered glass's panel: the glass colour, faded out towards all four edges (drawn on its own layer so only the
  *  panel fades, not what's drawn over it). */
-private fun androidx.compose.ui.graphics.drawscope.DrawScope.featheredGlass(c: Color) {
+private fun DrawScope.featheredGlass(c: Color) {
     drawIntoCanvas { canvas ->
-        canvas.saveLayer(androidx.compose.ui.geometry.Rect(androidx.compose.ui.geometry.Offset.Zero, size), androidx.compose.ui.graphics.Paint())
+        canvas.saveLayer(androidx.compose.ui.geometry.Rect(Offset.Zero, size), androidx.compose.ui.graphics.Paint())
         drawRect(c)
-        drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(0f to Color.Transparent, 0.07f to Color.Black, 0.93f to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
-        drawRect(androidx.compose.ui.graphics.Brush.verticalGradient(0f to Color.Transparent, 0.3f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent), blendMode = androidx.compose.ui.graphics.BlendMode.DstIn)
+        drawRect(Brush.horizontalGradient(0f to Color.Transparent, 0.07f to Color.Black, 0.93f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
+        drawRect(Brush.verticalGradient(0f to Color.Transparent, 0.3f to Color.Black, 0.88f to Color.Black, 1f to Color.Transparent), blendMode = BlendMode.DstIn)
         canvas.restore()
     }
 }
@@ -394,7 +394,7 @@ internal fun InfoBarTop(
             if (reserveNext || nextLine != null) Text(nextLine ?: " ", fontSize = 14.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         // Settings → Appearance → Info bar → Clock: the time at the right of the top row.
-        if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.INFOBAR_CLOCK) == 1) InfoBarClock()
+        if (AppColors.palette.opt(UiOpts.INFOBAR_CLOCK) == 1) InfoBarClock()
     }
 }
 
@@ -411,9 +411,9 @@ private fun InfoBarClock() {
 /** Where the live stream comes from ("Happy TV", "TRex (backup)"), beside the badges (Settings → Appearance → Info bar: source). */
 @Composable
 internal fun SourceBadge(source: String?) {
-    if (source == null || AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_SOURCE) != 0) return
+    if (source == null || AppColors.palette.opt(UiOpts.BANNER_SOURCE) != 0) return
     Spacer(Modifier.width(8.dp))
-    Text(source, fontSize = 11.sp, color = AppColors.TextSecondary, maxLines = 1,
+    Text(source, fontSize = 11.sp, color = AppColors.TextSecondary, maxLines = 1, softWrap = false,
         modifier = Modifier.border(1.dp, AppColors.TextSecondary.copy(alpha = 0.5f), RoundedCornerShape(3.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
 }
 
@@ -422,8 +422,8 @@ internal fun SourceBadge(source: String?) {
 internal fun QualityBadges(q: StreamQuality?) {
     q ?: return
     val opt = AppColors.palette
-    val badgeStyle = opt.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_BADGES)
-    val showFps = opt.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_FPS) == 0
+    val badgeStyle = opt.opt(UiOpts.BANNER_BADGES)
+    val showFps = opt.opt(UiOpts.BANNER_FPS) == 0
     val res = when {
         q.height <= 0 -> null
         badgeStyle == 2 -> null
@@ -434,7 +434,7 @@ internal fun QualityBadges(q: StreamQuality?) {
     val fps = if (showFps && q.fps > 0) (if (kotlin.math.abs(q.fps - kotlin.math.round(q.fps)) > 0.01f) "%.2f".format(q.fps).trimEnd('0') else "${kotlin.math.round(q.fps).toInt()}") + " fps" else null
     listOfNotNull(res, sound, fps).forEach { b ->
         Spacer(Modifier.width(8.dp))
-        Text(b, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White,
+        Text(b, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, maxLines = 1, softWrap = false,
             modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(3.dp)).padding(horizontal = 5.dp, vertical = 1.dp))
     }
 }
@@ -456,8 +456,8 @@ internal fun InfoBanner(
     guideKnown: Boolean = true,
 ) {
     val opt = AppColors.palette
-    val showNumber = opt.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_NUMBER) == 0
-    val showEpisode = opt.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.BANNER_EPISODE) == 0
+    val showNumber = opt.opt(UiOpts.BANNER_NUMBER) == 0
+    val showEpisode = opt.opt(UiOpts.BANNER_EPISODE) == 0
     fun title(p: GuideProgram) = if (showEpisode) displayTitle(p) else p.title
     InfoBarPanel(modifier) {
         InfoBarTop(
@@ -468,11 +468,14 @@ internal fun InfoBanner(
                 }
             },
             smallLine = {
-                Text(channel.name, fontSize = 14.sp, color = AppColors.TextSecondary)
+                // (Shrinks with "…" in the narrow info bar styles, Corner card / Side fade, so the badges after it
+                // aren't cut off: UI review, 2026-11-17.)
+                Text(channel.name, fontSize = 14.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 if (catchupPosition != null) {
                     Spacer(Modifier.width(10.dp))
                     Text(
                         if (paused) "CATCH-UP · PAUSED" else "CATCH-UP",
+                        maxLines = 1, softWrap = false,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = AppColors.OnAccent,
@@ -493,7 +496,8 @@ internal fun InfoBanner(
                     val total = catchupPosition?.second?.takeIf { it > 0 } ?: (current.endTime - current.startTime)
                     val elapsed = catchupPosition?.first ?: (now - current.startTime)
                     val fraction = (elapsed.toFloat() / total).coerceIn(0f, 1f)
-                    Box(Modifier.width(220.dp).height(4.dp).background(Color(0x44FFFFFF), RoundedCornerShape(2.dp))) {
+                    // (Up to 220 dp, less in a narrow style, so "… min left" still fits after it.)
+                    Box(Modifier.weight(1f, fill = false).width(220.dp).height(4.dp).background(Color(0x44FFFFFF), RoundedCornerShape(2.dp))) {
                         Box(Modifier.fillMaxWidth(fraction).fillMaxHeight().background(AppColors.Accent, RoundedCornerShape(2.dp)))
                     }
                     Spacer(Modifier.width(12.dp))

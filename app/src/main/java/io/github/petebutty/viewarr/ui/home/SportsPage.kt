@@ -1,8 +1,8 @@
 package io.github.petebutty.viewarr.ui.home
 
-import io.github.petebutty.viewarr.ui.common.instantFocusScale
+import io.github.petebutty.viewarr.ui.theme.appBackground
+import android.util.Log
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,26 +13,25 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -45,27 +44,40 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import io.github.petebutty.viewarr.data.local.ChannelListItem
-import io.github.petebutty.viewarr.data.local.GuideProgram
 import io.github.petebutty.viewarr.data.sports.SportFollow
-import io.github.petebutty.viewarr.data.sports.SportGame
-import io.github.petebutty.viewarr.ui.guide.GuideViewModel
+import io.github.petebutty.viewarr.ui.common.AppPill
+import io.github.petebutty.viewarr.ui.common.Carry
+import io.github.petebutty.viewarr.ui.common.OptionsPopup
+import io.github.petebutty.viewarr.ui.common.PopupOption
+import io.github.petebutty.viewarr.ui.common.ReorderAxis
+import io.github.petebutty.viewarr.ui.common.leftOpens
+import io.github.petebutty.viewarr.ui.common.moveOption
+import io.github.petebutty.viewarr.ui.common.movingHint
+import io.github.petebutty.viewarr.ui.common.rememberCarry
+import io.github.petebutty.viewarr.ui.common.reorderable
+import io.github.petebutty.viewarr.ui.player.CardMenu
+import io.github.petebutty.viewarr.ui.player.CardMenuHost
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import io.github.petebutty.viewarr.ui.theme.Dates
-
-/** A game on the Sports page, with the channel it's on (your guide's, else the one the UK listings name). */
-private class GameCard(val game: SportGame, val inGuide: Pair<ChannelListItem, GuideProgram>?, val named: List<String>, val channel: ChannelListItem?)
+import io.github.petebutty.viewarr.ui.theme.NoScale
+import io.github.petebutty.viewarr.ui.theme.Tokens
+import kotlinx.coroutines.delay
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 /**
- * The Sports page (Sports in the menu): what you follow (Settings → Sports) as rows of game panels, each with both
- * teams' badges, like preview pictures. On now first, then a row per team or league. OK on a panel goes to the channel
- * showing it: the one in your guide, else the one the UK Sport on TV plugin names. The top-left window stays clear for
- * live TV, with the highlighted game's details beside it.
+ * The Sports page (Sports in the menu): what you follow (Settings → Sports) as a fixture guide: live now, then a
+ * section per day, then the latest results, one slim line per game (Peter, 2026-11-16: the picture-sized panels showed
+ * two rows a screen). Along the top, All or one team / league. OK on a game goes to the channel showing it (GamePlacer:
+ * the one in your guide, else the one the listings name, an event channel or a team's own; or its page: Settings →
+ * Sports → Game page). The top-left window stays clear for live TV, with the highlighted game's details beside it.
  */
 @Composable
 internal fun SportsPage(
@@ -80,99 +92,143 @@ internal fun SportsPage(
     onOpenMenu: () -> Unit,
     onBack: () -> Unit,
 ) {
-    BackHandler(enabled = focusEnabled) { onBack() }
-    // Every channel's name cleaned up once (not on every move: thousands of channels, for every panel, made moving
-    // along the rows crawl).
-    val byNorm = remember(channels) { channels.map { it.name.lowercase().replace(NON_ALNUM, "") to it } }
-    val exact = remember(byNorm) { byNorm.toMap() }
-    // A channel by the name the listings give ("Sky Sports Main Event", "TNT Sports 1"…): exact first, then close.
-    fun byName(name: String): ChannelListItem? {
-        val n = name.lowercase().replace(NON_ALNUM, "")
-        return exact[n] ?: byNorm.firstOrNull { (cn, c) -> cn.startsWith(n) || (n.startsWith(cn) && c.name.length > 4) }?.second
+    // A filter pill being moved (its team / league id): hold OK on one → Move. (The shared Carry / reorderable, as
+    // every list: ◀ ▶ move it, OK or Back put it down. UI review, Tier 4, 2026-11-17.)
+    val carry = rememberCarry()
+    // (Not while a game's page is open over it: this one won, so Back left Sports for the menu, landing on Music. Nor
+    // while a pill is carried: Back puts it down.)
+    BackHandler(enabled = focusEnabled && hub.openGame == null && !carry.active) { Log.i("Sports", "Back: to the menu"); onBack() }
+    // Hold OK on a game: its options.
+    CardMenuHost()
+    // (The game page keeps clear of the live window by itself: HomeScreen works it out where the page is drawn, so a
+    // game page opened from the info bar never gets a stale value from here. UI review, 2026-11-17.)
+    // The panel a game page or a game's options were opened from: focus goes back to it when they close (it was lost,
+    // then landed on the menu's Music entry: Peter, 2026-11-16).
+    val panelFocus = remember { HashMap<String, FocusRequester>() }
+    var returnTo by remember { mutableStateOf<String?>(null) }
+    // Hold OK on a pill: its options (Move, Stop following), in the shared options pop-up (it was a raw Dialog that
+    // could take the held OK as a choice). Closing it puts the highlight back on the pill (returnTo), or on All after
+    // Stop following.
+    var pillMenu by remember { mutableStateOf<SportFollow?>(null) }
+    val overlayOpen = hub.openGame != null || CardMenu.open != null || pillMenu != null
+    DisposableEffect(hub) {
+        hub.restoreFocus = { returnTo?.let { panelFocus[it] }?.requestFocus() ?: focusRequester.requestFocus() }
+        onDispose { hub.restoreFocus = null }
     }
-    // An event channel named after the match (the EPG & Sports Editor plugin's "Home @ Away", or a provider's
-    // "UEFA 20: 12:45 KuPS vs Gent"), for a game on now or within a few hours.
-    fun eventChannel(g: SportGame): ChannelListItem? {
-        if (g.state == "post" || g.start - System.currentTimeMillis() > 6 * 3_600_000L) return null
-        val a = teamKey(g.home); val b = teamKey(g.away)
-        return channels.firstOrNull { it.name.contains(a, true) && it.name.contains(b, true) }
+    LaunchedEffect(overlayOpen) {
+        if (overlayOpen) return@LaunchedEffect
+        val key = returnTo ?: return@LaunchedEffect
+        // At once (before anything else can take it and switch the page), then a few frames more if it isn't there yet.
+        repeat(6) { n -> if (n > 0) withFrameNanos { }; if (runCatching { panelFocus[key]!!.requestFocus() }.isSuccess) return@LaunchedEffect }
     }
-    // Where OK goes: the game in your guide (the Sports Editor's Pregame / Live listings count), else the channel the
-    // UK Sport on TV plugin names, else an event channel named after the match.
-    fun cardOf(g: SportGame, ch: Pair<ChannelListItem, GuideProgram>?): GameCard {
-        val named = hub.tv[g.id].orEmpty().filter { it != GuideViewModel.NOT_ON_UK_TV }
-        return GameCard(g, ch, named, ch?.first ?: named.firstNotNullOfOrNull { byName(it) } ?: eventChannel(g))
+    // Where each game is on, and why (GamePlacer: shared with Live now). Made once per channel list, not on every move.
+    val placer = remember(channels) { GamePlacer(channels) }
+    // The team / league picked along the top (null: everything you follow).
+    var filter by remember { mutableStateOf<String?>(null) }
+    pillMenu?.let { f ->
+        OptionsPopup(
+            title = f.name,
+            options = listOf(
+                carry.moveOption(f.shortcutId),
+                PopupOption("Stop following") {
+                    if (filter == f.shortcutId) filter = null
+                    hub.sportsVm.unfollow(f)
+                    onToast("Stopped following ${f.name}")
+                    returnTo = "f-null"
+                },
+            ),
+            onClose = { pillMenu = null },
+        )
     }
-    // Worked out again only when the games, their channels or your follows change, not as the highlight moves.
-    val gamesNow = hub.games.toMap()
-    val tvNow = hub.tv.toMap()
-    val rows: List<Pair<String, List<GameCard>>> = remember(follows, gamesNow, tvNow, byNorm) {
+    // A fixture guide: live now, then a section per day, then the latest results; one line per game, once each.
+    // Worked out again only when the games, their channels, your follows or the filter change, not as the highlight
+    // moves. (Keyed on the hub's version, not copies of its maps: those were made and compared on every move.)
+    val sections: List<Pair<String, List<GameCard>>> = remember(follows, hub.version, placer, filter) {
+        val gamesNow = hub.games
+        val chosen = follows.filter { filter == null || it.shortcutId == filter }
+        val cards = chosen.flatMap { gamesNow[it.shortcutId].orEmpty() }.distinctBy { it.first.id }.map { (g, c) -> placer.place(hub, g, c) }
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
         buildList {
-            val onNow = follows.flatMap { gamesNow[it.shortcutId].orEmpty() }.filter { it.first.state == "in" }.distinctBy { it.first.id }
-            if (onNow.isNotEmpty()) add("On now" to onNow.map { (g, c) -> cardOf(g, c) })
-            // (A row's games once each: a game listed twice crashed the row.)
-            follows.forEach { f ->
-                val list = gamesNow[f.shortcutId].orEmpty()
-                val ordered = list.filter { it.first.state != "post" } + list.filter { it.first.state == "post" }.reversed().take(3)
-                if (ordered.isNotEmpty() && none { it.first == f.name }) add(f.name to ordered.distinctBy { it.first.id }.map { (g, c) -> cardOf(g, c) })
-            }
+            cards.filter { it.game.state == "in" }.sortedBy { it.game.start }.takeIf { it.isNotEmpty() }?.let { add("Live now" to it) }
+            cards.filter { it.game.state == "pre" }.sortedBy { it.game.start }
+                .groupBy { Instant.ofEpochMilli(it.game.start).atZone(zone).toLocalDate() }
+                .forEach { (day, list) -> add(dayTitle(day, today) to list) }
+            cards.filter { it.game.state == "post" }.sortedByDescending { it.game.start }.take(if (filter == null) 12 else 6)
+                .takeIf { it.isNotEmpty() }?.let { add("Results" to it) }
         }
     }
     var hover by remember { mutableStateOf<GameCard?>(null) }
     // The page's own highlight: put on the first game when it opens, and back there if it's ever lost while the page
     // is up (rows reload as games and channels come in, and a page behind used to take it: it came and went).
     var pageHasFocus by remember { mutableStateOf(false) }
-    LaunchedEffect(focusEnabled, rows.isNotEmpty(), pageHasFocus) {
-        if (!focusEnabled || rows.isEmpty() || pageHasFocus) return@LaunchedEffect
-        androidx.compose.runtime.withFrameNanos { }
-        kotlinx.coroutines.delay(120)
-        if (!pageHasFocus) runCatching { focusRequester.requestFocus() }
+    // (Not while a game's page or options are open over it; after, the game they were opened from.)
+    LaunchedEffect(focusEnabled, sections.isNotEmpty(), pageHasFocus, overlayOpen) {
+        if (!focusEnabled || sections.isEmpty() || pageHasFocus || overlayOpen) return@LaunchedEffect
+        withFrameNanos { }
+        delay(120)
+        if (!pageHasFocus) runCatching { returnTo?.let { panelFocus[it] }?.requestFocus() ?: focusRequester.requestFocus() }
+            .onFailure { runCatching { focusRequester.requestFocus() } }
     }
-    Column(Modifier.fillMaxSize().background(AppColors.Background).onFocusChanged { pageHasFocus = it.hasFocus }) {
-        // The header: the top-left window's place (live TV) and the highlighted game beside it.
-        Row(Modifier.fillMaxWidth().height(232.dp)) {
-            Spacer(Modifier.width(if (besidePreview) 356.dp else 48.dp))
-            Column(Modifier.padding(top = 26.dp, end = 48.dp)) {
-                Text("Sports", fontSize = 14.sp, color = AppColors.Accent)
-                Spacer(Modifier.height(8.dp))
-                val c = hover ?: rows.firstOrNull()?.second?.firstOrNull()
-                Text(c?.game?.let { g -> if (g.score != null) "${g.home} ${g.score} ${g.away}" else g.title } ?: "Your teams and leagues",
-                    fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(6.dp))
-                Text(c?.let { whenLine(it) } ?: "Follow teams and leagues in Settings → Sports.", fontSize = 15.sp, color = AppColors.TextSecondary, maxLines = 2)
-                c?.let { Spacer(Modifier.height(4.dp)); Text(it.game.leagueName, fontSize = 13.sp, color = AppColors.TextSecondary) }
-                c?.let { Spacer(Modifier.height(10.dp)); Text(if (it.channel != null) "OK: watch on ${it.channel.name}" else "Not on any of your channels", fontSize = 13.sp, color = if (it.channel != null) AppColors.Accent else AppColors.TextSecondary) }
-            }
-        }
-        if (rows.isEmpty()) Text(
-            if (follows.isEmpty()) "Nothing followed yet: add teams and leagues in Settings → Sports." else "Loading games…",
-            fontSize = 16.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 48.dp, top = 8.dp),
+    // Its own wallpaper, drawn whole: Sports opens over another page (Shows…), which showed through when it had no
+    // background (Peter, 2026-11-17). The same wallpaper as the app's, so it still runs on under the menu.
+    // (Readable: the wallpaper dimmed well down behind the fixture list, as Settings. Peter, 2026-11-17: too see-through.)
+    Column(Modifier.fillMaxSize().appBackground(readable = true).onFocusChanged { pageHasFocus = it.hasFocus }) {
+        SportsHeader(hover ?: sections.firstOrNull()?.second?.firstOrNull(), besidePreview)
+        if (follows.isEmpty()) Text(
+            "Nothing followed yet: add teams and leagues in Settings → Sports.",
+            fontSize = 16.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = Tokens.Gutter, top = 8.dp),
         )
-        else LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            rows.forEachIndexed { r, (title, cards) ->
-                item(key = "row-$title") {
-                    Column {
-                        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Medium, color = Color.White, modifier = Modifier.padding(start = 48.dp, bottom = 8.dp))
-                        LazyRow(contentPadding = PaddingValues(horizontal = 48.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            itemsIndexed(cards, key = { _, c -> "g-$title-${c.game.id}" }) { i, c ->
-                                GamePanel(
-                                    c,
-                                    modifier = (if (r == 0 && i == 0) Modifier.focusRequester(focusRequester) else Modifier)
-                                        .onFocusChanged { if (it.isFocused) hover = c }
-                                        .onPreviewKeyEvent { e ->
-                                            // Left on the first panel of a row: the menu, as on every page.
-                                            if (i == 0 && e.key == Key.DirectionLeft) { if (e.type == KeyEventType.KeyDown) onOpenMenu(); true } else false
-                                        },
-                                ) {
-                                    val ch = c.channel
-                                    when {
-                                        ch != null -> onWatch(ch)
-                                        c.game.state == "post" -> onToast("${c.game.home} ${c.game.score ?: ""} ${c.game.away}")
-                                        c.named.isNotEmpty() -> onToast("${c.game.title}: on ${c.named.joinToString(", ")}, not one of your channels")
-                                        else -> onToast("${c.game.title}: not in your TV guide yet")
-                                    }
-                                }
-                            }
+        // All, then each team / league you follow: OK shows just its games. Fixed above the list (they were its first
+        // item and scrolled away with it: UI review, 2026-11-17).
+        if (follows.size > 1) SportsPills(
+            follows = follows, filter = filter, carry = carry, panelFocus = panelFocus, onOpenMenu = onOpenMenu,
+            onMove = { f, by -> hub.sportsVm.move(f, by) },
+            onOptions = { id -> returnTo = "f-$id"; pillMenu = follows.firstOrNull { it.shortcutId == id } },
+            onPick = { id -> returnTo = "f-$id"; filter = id },
+        )
+        if (follows.isNotEmpty()) LazyColumn(Modifier.fillMaxWidth().weight(1f), contentPadding = PaddingValues(start = Tokens.Gutter, end = Tokens.Gutter, top = 2.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            if (sections.isEmpty()) item(key = "empty") {
+                Text(if (hub.games.isEmpty()) "Loading games…" else "No games coming up", fontSize = 15.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 8.dp))
+            }
+            sections.forEachIndexed { r, (title, cards) ->
+                item(key = "s-$title") {
+                    Text(title.uppercase(), fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp,
+                        color = if (title == "Live now") Color(0xFFFF5A5F) else AppColors.Accent, modifier = Modifier.padding(top = if (r == 0) 6.dp else 12.dp, bottom = 3.dp))
+                }
+                itemsIndexed(cards, key = { _, c -> "g-${c.game.id}" }) { i, c ->
+                    val lineKey = "g-${c.game.id}"
+                    FixtureLine(
+                        c,
+                        modifier = (if (r == 0 && i == 0) Modifier.focusRequester(focusRequester) else Modifier)
+                            .focusRequester(panelFocus.getOrPut(lineKey) { FocusRequester() })
+                            .onFocusChanged { if (it.isFocused) hover = c }
+                            // Left: the menu, as on every page (once per press: holding Left no longer throws it open).
+                            .leftOpens(onMenu = onOpenMenu)
+                            .onPreviewKeyEvent { e ->
+                                // Up from the first game: the pill that's selected (not whichever is nearest on screen: it
+                                // landed on Premier League with All selected).
+                                if (e.key == Key.DirectionUp && r == 0 && i == 0 && follows.size > 1) {
+                                    if (e.type == KeyEventType.KeyDown) runCatching { panelFocus["f-$filter"]?.requestFocus() }; panelFocus["f-$filter"] != null
+                                } else false
+                            },
+                        // Hold OK: the game's options (game page, remind / record, even before the guide lists it).
+                        onLongClick = { returnTo = lineKey; hub.openChannel = c.channel; CardMenu.open = hub.card(c.game, c.inGuide, known = c.channel) },
+                    ) {
+                        val ch = c.channel
+                        // Settings → Sports → Game page on: OK opens the game's page (Watch is on it).
+                        if (hub.gamePages) {
+                            returnTo = lineKey
+                            hub.openChannel = c.channel
+                            hub.openWhy = c.why
+                            hub.openGame = c.game to c.inGuide
+                            return@FixtureLine
+                        }
+                        when {
+                            ch != null -> onWatch(ch)
+                            c.game.state == "post" -> onToast("${c.game.home} ${c.game.score ?: ""} ${c.game.away}")
+                            c.named.isNotEmpty() -> onToast("${c.game.title}: on ${c.named.joinToString(", ")}, not one of your channels")
+                            else -> onToast("${c.game.title}: not in your TV guide yet")
                         }
                     }
                 }
@@ -181,67 +237,150 @@ internal fun SportsPage(
     }
 }
 
-private val NON_ALNUM = Regex("[^a-z0-9]")
-private val TEAM_SPLIT = Regex("[^\\p{L}0-9]+")
-private val SKIP_WORDS = setOf("fc", "afc", "cf", "sc", "united", "city", "town", "athletic", "county", "rovers", "the", "de", "real", "club")
-/** A team's telling word ("Celtic", "Rangers", "Lakers"), as the guide's own game search uses. */
-private fun teamKey(team: String) = team.split(TEAM_SPLIT).filter { it.length > 2 && it.lowercase() !in SKIP_WORDS }.maxByOrNull { it.length } ?: team
-
-/** When it's on and where: "Live 63'  ·  Sky Sports Main Event", "Sat 15:00  ·  TNT Sports 1", "Full time". */
-private fun whenLine(c: GameCard): String {
-    val where = c.channel?.name ?: c.named.firstOrNull()
-    return when (c.game.state) {
-        "in" -> "Live" + (c.game.detail?.let { " $it" } ?: "") + (where?.let { "  ·  $it" } ?: "")
-        "post" -> "Full time  ·  " + Dates.dayTime(c.game.start)
-        else -> Dates.dayTime(c.game.start) + (where?.let { "  ·  $it" } ?: "  ·  not on your channels yet")
+/**
+ * The header: the top-left window's place (live TV or a film in the corner) and the highlighted game [c] beside it.
+ * (Beside the window: tall enough that its picture never covers the pills below. 188 left the "All" pill under it,
+ * more so with the menu open. Without it: room for every line, "OK: watch on …" too; 112 hid it under the pills.
+ * Peter, 2026-11-17.)
+ */
+@Composable
+private fun SportsHeader(c: GameCard?, besidePreview: Boolean) {
+    Row(Modifier.fillMaxWidth().height(if (besidePreview) 214.dp else 150.dp)) {
+        Spacer(Modifier.width(if (besidePreview) Tokens.BesideWindowStart else Tokens.Gutter))
+        Column(Modifier.padding(top = 26.dp, end = Tokens.Gutter)) {
+            Text("Sports", fontSize = 14.sp, color = AppColors.Accent)
+            Spacer(Modifier.height(4.dp))
+            Text(c?.game?.let { g -> if (g.score != null) "${g.home} ${g.score} ${g.away}" else g.title } ?: "Your teams and leagues",
+                fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = Color.White, maxLines = if (besidePreview) 2 else 1, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.height(6.dp))
+            Text(c?.let { whenLine(it) } ?: "Follow teams and leagues in Settings → Sports.", fontSize = 15.sp, color = AppColors.TextSecondary, maxLines = 2)
+            c?.let { Spacer(Modifier.height(4.dp)); Text(it.game.leagueName, fontSize = 13.sp, color = AppColors.TextSecondary) }
+            c?.let { Spacer(Modifier.height(6.dp)); Text(okLine(it), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, color = if (it.channel != null && it.sure) AppColors.Accent else AppColors.TextSecondary) }
+        }
     }
 }
 
-/** A game as a picture-shaped panel: both badges with the score (or the kick-off time) between, live marked. */
+/** What OK (and hold OK, before kick-off) does on the highlighted game. */
+private fun okLine(c: GameCard): String {
+    val ok = if (c.channel != null) "OK: watch on ${c.channel.name}" + (if (!c.sure) " (possible match)" else "") else "Not on any of your channels"
+    return ok + if (c.game.state == "pre") "  ·  Hold OK: remind or record" else ""
+}
+
+/**
+ * The filter pills (All, then each team / league followed), the shared [AppPill]. Hold OK on a team: its options
+ * ([onOptions]: Move, Stop following); Move picks it up ([carry]), ◀ ▶ move it ([onMove], the order is saved as in
+ * Settings → Sports), OK or Back put it down. Left on All: the menu.
+ */
 @Composable
-private fun GamePanel(c: GameCard, modifier: Modifier, onClick: () -> Unit) {
-    val g = c.game
-    val shape = RoundedCornerShape(12.dp)
-    Column(Modifier.width(208.dp)) {
-        Surface(
-            onClick = onClick,
-            modifier = modifier.size(width = 208.dp, height = 117.dp).instantFocusScale(1.05f),
-            scale = io.github.petebutty.viewarr.ui.common.focusScale(1.05f),
-            shape = ClickableSurfaceDefaults.shape(shape),
-            border = ClickableSurfaceDefaults.border(focusedBorder = Border(BorderStroke(3.dp, AppColors.Accent), shape = shape)),
-            colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-        ) {
-            Box(Modifier.fillMaxSize().background(Brush.linearGradient(listOf(Color(0xFF1E2A44), Color(0xFF0F1626))))) {
-                Row(Modifier.fillMaxSize().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Team(g.homeLogo, g.home, Modifier.weight(1f))
-                    Text(
-                        g.score ?: if (g.state == "pre") Dates.dayTime(g.start).substringAfterLast(' ') else "v",
-                        fontSize = if (g.score != null) 18.sp else 13.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                        textAlign = TextAlign.Center, modifier = Modifier.width(50.dp),
-                    )
-                    Team(g.awayLogo, g.away, Modifier.weight(1f))
-                }
-                val tag = when (g.state) { "in" -> "LIVE"; "post" -> "FT"; else -> null }
-                if (tag != null) Text(
-                    tag, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White,
-                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp)
-                        .background(if (g.state == "in") Color(0xFFD9363E) else Color.White.copy(alpha = 0.25f), RoundedCornerShape(4.dp))
-                        .padding(horizontal = 6.dp, vertical = 2.dp),
+private fun SportsPills(
+    follows: List<SportFollow>,
+    filter: String?,
+    carry: Carry,
+    panelFocus: HashMap<String, FocusRequester>,
+    onOpenMenu: () -> Unit,
+    onMove: (SportFollow, Int) -> Unit,
+    onOptions: (String) -> Unit,
+    onPick: (String?) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        LazyRow(contentPadding = PaddingValues(start = Tokens.Gutter, end = Tokens.Gutter, top = 4.dp, bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val picks = listOf<Pair<String?, String>>(null to "All") + follows.map { it.shortcutId to it.name }
+            itemsIndexed(picks, key = { _, p -> "f-${p.first}" }) { i, (id, name) ->
+                val carried = id != null && carry.isCarried(id)
+                AppPill(
+                    text = if (carried) "‹ $name ›" else name, selected = filter == id, carried = carried,
+                    modifier = Modifier.focusRequester(panelFocus.getOrPut("f-$id") { FocusRequester() })
+                        // (Moving off it some other way puts it down.)
+                        .onFocusChanged { if (!it.isFocused && carried) carry.drop() }
+                        .reorderable(
+                            carried = carried,
+                            onMove = { by -> follows.firstOrNull { it.shortcutId == id }?.let { onMove(it, by) } },
+                            onDrop = carry::drop,
+                            axis = ReorderAxis.Horizontal,
+                        )
+                        .leftOpens(enabled = i == 0 && !carry.active, onMenu = onOpenMenu),
+                    // Hold OK: Move, Stop following (Peter, 2026-11-17: remove from here too).
+                    onLongClick = if (id != null) ({ onOptions(id) }) else null,
+                    onClick = { onPick(id) },
                 )
             }
         }
-        Text(whenLine(c), fontSize = 11.sp, color = AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 6.dp).heightIn(min = 16.dp))
+        if (carry.active) Text(movingHint(ReorderAxis.Horizontal), fontSize = 12.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = Tokens.Gutter, bottom = 4.dp))
+    }
+}
+
+/** A day's heading: "Today", "Tomorrow", else "Saturday 21 November". */
+private fun dayTitle(day: LocalDate, today: LocalDate): String = when (day) {
+    today -> "Today"
+    today.plusDays(1) -> "Tomorrow"
+    else -> day.format(DateTimeFormatter.ofPattern(if (day.year == today.year) "EEEE d MMMM" else "EEEE d MMMM yyyy"))
+}
+
+/** When it's on and where: "Live 63'  ·  Sky Sports Main Event", "Sat 15:00  ·  TNT Sports 1", "Full time". */
+private fun whenLine(c: GameCard): String {
+    val where = c.channel?.name?.let { if (c.club) "$it (${ClubChannels.word(c.game)} stream)" else if (!c.sure) "possibly $it" else it } ?: c.named.firstOrNull()
+    return when (c.game.state) {
+        "in" -> "Live" + (c.game.detail?.let { " $it" } ?: "") + (where?.let { "  ·  $it" } ?: "")
+        "post" -> "Full time  ·  " + Dates.dayTime(c.game.start)
+        else -> Dates.dayTime(c.game.start) + (where?.let { "  ·  $it" } ?: if (c.notOnUkTv) "  ·  not on UK TV" else "  ·  not on your channels yet")
+    }
+}
+
+/**
+ * A game as one slim line of the fixture guide: kick-off (or the minute, or FT), both teams with their badges and the
+ * score between, the competition, and where it's on (orange: one of your channels, OK watches it).
+ */
+@Composable
+private fun FixtureLine(c: GameCard, modifier: Modifier, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+    val g = c.game
+    // The standard list-row highlight: accent fill, OnAccent text (it was a navy fill of its own; UI review, Tier 3).
+    var focused by remember { mutableStateOf(false) }
+    val on = AppColors.OnAccent
+    Surface(
+        onClick = onClick,
+        onLongClick = onLongClick,
+        modifier = modifier.fillMaxWidth().height(40.dp).onFocusChanged { focused = it.isFocused },
+        shape = ClickableSurfaceDefaults.shape(Tokens.RowShape),
+        scale = NoScale,
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.White.copy(alpha = 0.04f), focusedContainerColor = AppColors.Accent,
+            pressedContainerColor = AppColors.Accent,
+        ),
+    ) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            val (time, timeColour) = when (g.state) {
+                "in" -> (g.detail ?: "LIVE") to Color(0xFFFF5A5F)
+                "post" -> "FT" to AppColors.TextSecondary
+                else -> Dates.dayTime(g.start).substringAfterLast(' ') to Color.White
+            }
+            val main = if (focused) on else Color.White
+            val dim = if (focused) on else AppColors.TextSecondary
+            Text(time, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = if (focused) on else timeColour, maxLines = 1, modifier = Modifier.width(56.dp))
+            Row(Modifier.weight(1f), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+                Text(g.home, fontSize = 14.sp, color = main, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                Spacer(Modifier.width(8.dp)); Badge(g.homeLogo, g.home)
+            }
+            Text(g.score ?: "v", fontSize = if (g.score != null) 15.sp else 13.sp, fontWeight = FontWeight.Bold,
+                color = if (g.score != null) main else dim, textAlign = TextAlign.Center, modifier = Modifier.width(60.dp))
+            Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                Badge(g.awayLogo, g.away); Spacer(Modifier.width(8.dp))
+                Text(g.away, fontSize = 14.sp, color = main, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(g.leagueName, fontSize = 12.sp, color = dim, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(150.dp).padding(start = 12.dp))
+            val where = c.channel?.name?.let { if (c.club) "$it (${ClubChannels.word(g)})" else if (!c.sure) "Possibly $it" else it }
+                ?: c.named.firstOrNull()
+                ?: when { g.state == "post" -> ""; c.notOnUkTv -> "Not on UK TV"; else -> "—" }
+            Text(where, fontSize = 13.sp, fontWeight = if (c.channel != null && c.sure) FontWeight.Medium else FontWeight.Normal,
+                color = if (focused) on else if (c.channel != null && c.sure) AppColors.Accent else AppColors.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.End, modifier = Modifier.width(200.dp).padding(start = 12.dp))
+        }
     }
 }
 
 @Composable
-private fun Team(logo: String?, name: String, modifier: Modifier) {
-    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.size(40.dp), contentAlignment = Alignment.Center) {
-            if (logo != null) AsyncImage(model = logo, contentDescription = name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
-            else Text(name.take(3).uppercase(), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(name, fontSize = 11.sp, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+private fun Badge(logo: String?, name: String) {
+    Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+        if (logo != null) AsyncImage(model = logo, contentDescription = name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+        else Text(name.take(3).uppercase(), fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
     }
 }

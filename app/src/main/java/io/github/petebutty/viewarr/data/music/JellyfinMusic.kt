@@ -1,6 +1,10 @@
 package io.github.petebutty.viewarr.data.music
 
 import io.github.petebutty.viewarr.data.accounts.MediaServerAuth
+import io.github.petebutty.viewarr.data.media.FilterGroup
+import io.github.petebutty.viewarr.data.media.FilterValue
+import io.github.petebutty.viewarr.data.media.LibraryQuery
+import io.github.petebutty.viewarr.data.media.SortOption
 import io.github.petebutty.viewarr.data.remote.services.HttpJson
 import io.github.petebutty.viewarr.data.remote.services.MediaServerService
 import io.github.petebutty.viewarr.data.remote.services.array
@@ -9,6 +13,7 @@ import io.github.petebutty.viewarr.data.remote.services.int
 import io.github.petebutty.viewarr.data.remote.services.long
 import io.github.petebutty.viewarr.data.remote.services.str
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import java.net.URLEncoder
 
 private fun enc(s: String) = URLEncoder.encode(s, "UTF-8")
@@ -65,7 +70,7 @@ class JellyfinMusicSource private constructor(
         val sid = j.str("Id").orEmpty()
         return Song(
             id = "$id:$sid", title = j.str("Name") ?: "Unknown",
-            artist = j.array("Artists").firstOrNull()?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content } ?: j.str("AlbumArtist") ?: "",
+            artist = j.array("Artists").firstOrNull()?.let { (it as? JsonPrimitive)?.content } ?: j.str("AlbumArtist") ?: "",
             album = j.str("Album") ?: "", albumId = j.str("AlbumId")?.let { "$id:$it" }, track = j.int("IndexNumber"), disc = j.int("ParentIndexNumber"),
             durationSec = ((j.long("RunTimeTicks") ?: 0L) / 10_000_000L).toInt(), art = art(j.str("AlbumId") ?: sid), year = j.int("ProductionYear"),
             streamUrl = "${s.serverUrl}/Audio/$sid/stream?static=true&api_key=${enc(s.token)}", source = id,
@@ -135,23 +140,23 @@ class JellyfinMusicSource private constructor(
     // ---- The Albums grid
 
     override suspend fun albumOptions() = listOf(
-        io.github.petebutty.viewarr.data.media.SortOption("title", "Title", false), io.github.petebutty.viewarr.data.media.SortOption("artist", "Artist", false),
-        io.github.petebutty.viewarr.data.media.SortOption("added", "Date added"), io.github.petebutty.viewarr.data.media.SortOption("played", "Recently played"),
-        io.github.petebutty.viewarr.data.media.SortOption("plays", "Most played"), io.github.petebutty.viewarr.data.media.SortOption("year", "Year"),
-        io.github.petebutty.viewarr.data.media.SortOption("jf.CommunityRating", "Rating"), io.github.petebutty.viewarr.data.media.SortOption("random", "Random"),
+        SortOption("title", "Title", false), SortOption("artist", "Artist", false),
+        SortOption("added", "Date added"), SortOption("played", "Recently played"),
+        SortOption("plays", "Most played"), SortOption("year", "Year"),
+        SortOption("jf.CommunityRating", "Rating"), SortOption("random", "Random"),
     ) to listOf(
-        io.github.petebutty.viewarr.data.media.FilterGroup("favourites", "Favourites", toggle = true),
-        io.github.petebutty.viewarr.data.media.FilterGroup("genre", "Genre"),
-        io.github.petebutty.viewarr.data.media.FilterGroup("decade", "Decade"),
+        FilterGroup("favourites", "Favourites", toggle = true),
+        FilterGroup("genre", "Genre"),
+        FilterGroup("decade", "Decade"),
     )
 
     override suspend fun albumFilterValues(group: String) = when (group) {
-        "genre" -> genres().map { (g, _) -> io.github.petebutty.viewarr.data.media.FilterValue(g, g) }
+        "genre" -> genres().map { (g, _) -> FilterValue(g, g) }
         "decade" -> decades()
         else -> emptyList()
     }
 
-    override suspend fun browseAlbums(q: io.github.petebutty.viewarr.data.media.LibraryQuery, size: Int, offset: Int): List<Album> {
+    override suspend fun browseAlbums(q: LibraryQuery, size: Int, offset: Int): List<Album> {
         val by = when (q.sort) {
             "artist" -> "AlbumArtist,SortName"; "added" -> "DateCreated"; "played" -> "DatePlayed"; "plays" -> "PlayCount"
             "year" -> "ProductionYear,SortName"; "random" -> "Random"; "jf.CommunityRating" -> "CommunityRating,SortName"; else -> "SortName"

@@ -10,7 +10,6 @@ import io.github.petebutty.viewarr.data.session.Session
 import io.github.petebutty.viewarr.data.session.SessionStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement

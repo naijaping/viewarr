@@ -9,7 +9,6 @@ import android.view.Surface
 import android.view.TextureView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -32,10 +31,8 @@ import androidx.compose.ui.Modifier
 import io.github.petebutty.viewarr.ui.common.glass
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -58,6 +55,19 @@ import io.github.petebutty.viewarr.ui.common.trapFocus
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
+import io.github.petebutty.viewarr.data.media.FoundMarkers
+import io.github.petebutty.viewarr.data.media.PlayerArt
+import io.github.petebutty.viewarr.data.net.Reach
+import io.github.petebutty.viewarr.data.settings.AutoNext
+import io.github.petebutty.viewarr.data.settings.Deinterlace
+import io.github.petebutty.viewarr.data.settings.PictureSize
+import io.github.petebutty.viewarr.data.settings.PlayerEngine
+import io.github.petebutty.viewarr.data.settings.StatsOverlay
+import io.github.petebutty.viewarr.data.settings.SubtitleBackground
+import io.github.petebutty.viewarr.data.settings.VideoView
+import io.github.petebutty.viewarr.playback.FrameRateMatcher
+import io.github.petebutty.viewarr.ui.player.StreamQuality
+import io.github.petebutty.viewarr.playback.AvSync
 
 private const val TAG = "Mpv"
 
@@ -70,10 +80,12 @@ fun MpvPlayer(
     stream: VodStream,
     onClose: () -> Unit,
     onProgress: (state: String, positionMs: Long, durationMs: Long) -> Unit = { _, _, _ -> },
-    /** Hold-OK menu → "Switch to the built-in player": carry on there from this position. */
-    /** Swap players for this film: where it is, and the audio / subtitle tracks in use (ordinals; subtitles -1 = off). */
+    /**
+     * Hold-OK menu → "Switch to the built-in player": carry on there from this position, with the audio / subtitle
+     * tracks in use (ordinals; subtitles -1 = off).
+     */
     onSwitchPlayer: ((positionMs: Long, audio: Int?, subtitles: Int?) -> Unit)? = null,
-    art: io.github.petebutty.viewarr.data.media.PlayerArt? = null,
+    art: PlayerArt? = null,
 ) {
     val context = LocalContext.current
     val settings = LocalPlayback.current
@@ -82,9 +94,9 @@ fun MpvPlayer(
     val skipModes by androidx.compose.runtime.rememberUpdatedState(settings.skipIntro to settings.skipCredits)
     // The next episode's countdown over the end of this one (Settings → Playback → Episodes); 0: off.
     val nextCountdown by androidx.compose.runtime.rememberUpdatedState(
-        if (settings.autoNext == io.github.petebutty.viewarr.data.settings.AutoNext.On) maxOf(io.github.petebutty.viewarr.ui.theme.AppColors.palette.upNextSeconds * 1_000L, 1L) else 0L)
+        if (settings.autoNext == AutoNext.On) maxOf(AppColors.palette.upNextSeconds * 1_000L, 1L) else 0L)
     // Its server's markers, else ones the community intro databases had (they can arrive a moment after it starts).
-    val skipMarkers by androidx.compose.runtime.rememberUpdatedState(stream.markers.ifEmpty { io.github.petebutty.viewarr.data.media.FoundMarkers.byUrl[stream.url].orEmpty() })
+    val skipMarkers by androidx.compose.runtime.rememberUpdatedState(stream.markers.ifEmpty { FoundMarkers.byUrl[stream.url].orEmpty() })
     val seekSec = LocalRemote.current.seek.ms / 1000.0
     val main = remember { Handler(Looper.getMainLooper()) }
     var restoreMode by remember { mutableStateOf<Int?>(null) }
@@ -99,21 +111,13 @@ fun MpvPlayer(
     var cacheWait by remember { mutableStateOf(false) }
     var ended by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
-    var osdUntil by remember { mutableLongStateOf(System.currentTimeMillis() + io.github.petebutty.viewarr.ui.theme.AppColors.palette.controlsMs) }
+    var osdUntil by remember { mutableLongStateOf(System.currentTimeMillis() + AppColors.palette.controlsMs) }
     // What's open over the film: shared with the other player (FilmControls.kt), kept under the old names here.
     val panels = remember { FilmPanels() }
     var tracksOpen by panels::tracksOpen
-    // The Transparency panel over the film (the same as live TV's), from its button.
-    var transOpen by panels::transOpen
-    // The Audio sync choices over the film, from its button.
-    var syncOpen by panels::syncOpen
-    // The TV settings panel over the film (frame rate matching, picture size…), from its button.
-    var tvOpen by panels::tvOpen
     // Audio & subtitles opened from the Subtitles button: start on the subtitles.
     var tracksSubs by panels::tracksSubs
     val menu = remember { PlayerMenu() }
-    // What's playing (poster, synopsis): the Info button, the Details button, or a moment after pausing.
-    var detailsOn by panels::detailsOn
     val focus = remember { FocusRequester() }
     var hasFocus by remember { mutableStateOf(false) }
     var subText by remember { mutableStateOf("") }
@@ -130,15 +134,23 @@ fun MpvPlayer(
     }
 
     DisposableEffect(mpv) {
+        // Set when this player goes: events already queued for the main thread then do nothing (a late end-of-file
+        // used to close the next episode's player, or skip it).
+        val gone = booleanArrayOf(false)
+        fun post(block: () -> Unit) { main.post { if (!gone[0]) block() } }
         val observer = object : MPVLib.EventObserver {
+            // The last time-pos sent on (mpv's own thread): only quarter-second steps are posted, not every frame.
+            private var sentPos = -1.0
             override fun eventProperty(property: String) {}
             override fun eventProperty(property: String, value: Long) {}
             override fun eventProperty(property: String, value: Boolean) {
-                main.post {
+                post {
                     when (property) {
                         "pause" -> {
                             paused = value
-                            onProgress(if (value) "paused" else "playing", (position * 1000).toLong(), (duration * 1000).toLong())
+                            // (Not at 0: mpv reports pause as soon as it's watched, paused while Match frame rate
+                            // switches the TV, which sent a pause and a start to Trakt / Plex on every start.)
+                            if (position > 0) onProgress(if (value) "paused" else "playing", (position * 1000).toLong(), (duration * 1000).toLong())
                         }
                         "paused-for-cache", "seeking" -> {
                             buffering = value
@@ -154,10 +166,10 @@ fun MpvPlayer(
                 }
             }
             override fun eventProperty(property: String, value: String) {
-                if (property == "sub-text") main.post { subText = value }
+                if (property == "sub-text") post { subText = value }
                 // Picture subtitles can't be drawn on the direct-to-screen picture: switch this film to the GPU way.
-                if (property == "current-tracks/sub/codec" && value in IMAGE_SUBS) main.post {
-                    if (!direct) return@post
+                if (property == "current-tracks/sub/codec" && value in IMAGE_SUBS) post switch@{
+                    if (!direct) return@switch
                     direct = false
                     Log.i(TAG, "picture subtitles ($value): switching to GPU output")
                     runCatching { mpv.setPropertyString("hwdec", "mediacodec-copy") }
@@ -165,10 +177,14 @@ fun MpvPlayer(
                 }
             }
             override fun eventProperty(property: String, value: Double) {
-                main.post {
+                // (Every frame from mpv: only a quarter-second step redraws the controls, not 25–60 a second.)
+                if (property == "time-pos") {
+                    if (kotlin.math.abs(value - sentPos) < 0.25 && value >= sentPos) return
+                    sentPos = value
+                }
+                post {
                     when (property) {
-                        // (Every frame from mpv: only a quarter-second step redraws the controls, not 25–60 a second.)
-                        "time-pos" -> { if (kotlin.math.abs(value - position) >= 0.25 || value < position) position = value; if (value > 0) buffering = false }
+                        "time-pos" -> { position = value; if (value > 0) buffering = false }
                         "duration" -> duration = value
                         "demuxer-cache-time" -> cachedTo = value
                     }
@@ -176,7 +192,7 @@ fun MpvPlayer(
             }
             override fun event(eventId: Int) {
                 // MPV_EVENT_END_FILE = 7: if nothing ever played, the stream failed to open.
-                if (eventId == 7) main.post { if (position <= 0.0 && !ended) error = "Couldn't play this. Press Back and try another source." }
+                if (eventId == 7) post { if (position <= 0.0 && !ended) error = "Couldn't play this. Press Back and try another source." }
             }
         }
         mpv.addObserver(observer)
@@ -194,8 +210,9 @@ fun MpvPlayer(
         // Audio & subtitles picked on the film's page (mpv numbers each kind's tracks from 1).
         stream.audioTrack?.let { mpv.setOptionString("aid", "${it + 1}") }
         stream.subtitleTrack?.let { mpv.setOptionString("sid", if (it < 0) "no" else "${it + 1}") }
-        mpv.command(arrayOf("loadfile", io.github.petebutty.viewarr.data.net.Reach.map(stream.url)))
+        mpv.command(arrayOf("loadfile", Reach.map(stream.url)))
         onDispose {
+            gone[0] = true
             if (!ended && position > 0) onProgress("stopped", (position * 1000).toLong(), (duration * 1000).toLong())
             mpv.removeObserver(observer)
             runCatching { mpv.detachSurface() }
@@ -206,8 +223,8 @@ fun MpvPlayer(
     // Settings → Playback → Match frame rate: switch the TV once mpv knows the video's rate; switch back on exit.
     val activity = context as? android.app.Activity
     // The info bar's Audio sync (mpv's own audio delay; later is positive, as in AvSync).
-    LaunchedEffect(mpv, io.github.petebutty.viewarr.playback.AvSync.ms) {
-        runCatching { mpv.setPropertyDouble("audio-delay", io.github.petebutty.viewarr.playback.AvSync.ms / 1000.0) }
+    LaunchedEffect(mpv, AvSync.ms) {
+        runCatching { mpv.setPropertyDouble("audio-delay", AvSync.ms / 1000.0) }
     }
     // (Once per film: keyed on the setting too, changing it from the TV settings panel ran this again, un-pausing a
     // paused film and switching the TV mid-playback.)
@@ -220,7 +237,7 @@ fun MpvPlayer(
                 delay(250)
                 val fps = runCatching { mpv.getPropertyDouble("container-fps") }.getOrNull()
                 if (fps != null && fps > 0) {
-                    val previous = io.github.petebutty.viewarr.playback.FrameRateMatcher.match(activity, fps.toFloat())
+                    val previous = FrameRateMatcher.match(activity, fps.toFloat())
                     if (previous != null) { restoreMode = previous; delay(2_000) }
                     return@LaunchedEffect
                 }
@@ -264,12 +281,12 @@ fun MpvPlayer(
             runCatching { mpv.command(arrayOf("ao-reload")) }
         }
     }
-    DisposableEffect(Unit) { onDispose { restoreMode?.let { m -> activity?.let { io.github.petebutty.viewarr.playback.FrameRateMatcher.restore(it, m) } } } }
+    DisposableEffect(Unit) { onDispose { restoreMode?.let { m -> activity?.let { FrameRateMatcher.restore(it, m) } } } }
     // Settings → Playback → Show playback info.
     var stats by remember { mutableStateOf("") }
     LaunchedEffect(mpv, settings.stats, menu.infoOn) {
         // Settings → Show playback info, or the Media info button.
-        if (settings.stats != io.github.petebutty.viewarr.data.settings.StatsOverlay.On && !menu.infoOn) { stats = ""; return@LaunchedEffect }
+        if (settings.stats != StatsOverlay.On && !menu.infoOn) { stats = ""; return@LaunchedEffect }
         while (true) {
             stats = runCatching {
                 fun p(k: String) = mpv.getPropertyString(k)
@@ -305,9 +322,13 @@ fun MpvPlayer(
     val mini = VodHost.mini || VodHost.behind
     // Repaint the clock for the auto-hiding controls.
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(Unit) { while (true) { delay(500); now = System.currentTimeMillis() } }
+    // (In the corner the controls can't show: the clock rests.)
+    LaunchedEffect(Unit) { while (true) { delay(500); if (!VodHost.mini && !VodHost.behind) now = System.currentTimeMillis() } }
+    // The controls are up, and playing has begun: the ticks (the clock, time-pos) redraw nothing unless these change.
+    val osdVisible by remember { androidx.compose.runtime.derivedStateOf { paused || buffering || now < osdUntil || scrub.active || menu.open } }
+    val hasPosition by remember { androidx.compose.runtime.derivedStateOf { position > 0 } }
 
-    fun showOsd() { osdUntil = System.currentTimeMillis() + io.github.petebutty.viewarr.ui.theme.AppColors.palette.controlsMs }
+    fun showOsd() { osdUntil = System.currentTimeMillis() + AppColors.palette.controlsMs }
     // Back, one step at a time (FilmControls.kt filmBackStep): what's open closes, then the mini player.
     fun backStep() = filmBackStep(panels, menu, scrub, skip, onClose, hideOsd = { osdUntil = 0L }, showOsd = ::showOsd)
     BackHandler(enabled = !mini) { backStep() }
@@ -339,14 +360,14 @@ fun MpvPlayer(
     val switchPlayer = onSwitchPlayer?.let { f -> { picks().let { (a, t) -> f((position * 1000).toLong(), a, t) } } }
     // The info bar, the remote, the timers and focus: shared with the built-in player (FilmShared.kt).
     val wiring = rememberFilmWiring(remote, panels, menu, scrub, skip, (seekSec * 1000).toLong(), switchPlayer, onClose, showOsd = ::showOsd,
-        osdShowing = { System.currentTimeMillis() < osdUntil }, backStep = ::backStep)
+        backStep = ::backStep)
     val buttons = wiring.buttons
     FilmEffects(panels, menu, scrub, paused, mini, hasFocus, focus, hideOsd = { osdUntil = 0L })
 
     Box(Modifier.filmKeys(focus, panels, mini, { hasFocus = it }, wiring, remote)) {
         // Settings → Playback → Video view: Standard draws into a SurfaceView with a buffer fixed at the screen's
         // size, so moving or shrinking the view (the corner) never changes what mpv draws into (no reconfiguring).
-        if (settings.videoView == io.github.petebutty.viewarr.data.settings.VideoView.Standard) AndroidView(
+        if (settings.videoView == VideoView.Standard) AndroidView(
             factory = { ctx ->
                 android.view.SurfaceView(ctx).apply {
                     val dm = ctx.resources.displayMetrics
@@ -408,16 +429,16 @@ fun MpvPlayer(
             textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             style = androidx.compose.ui.text.TextStyle(shadow = androidx.compose.ui.graphics.Shadow(Color.Black, blurRadius = 6f)),
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 64.dp, start = 120.dp, end = 120.dp)
-                .then(if (settings.subtitleBackground == io.github.petebutty.viewarr.data.settings.SubtitleBackground.Box) Modifier.background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(4.dp)).padding(horizontal = 10.dp, vertical = 4.dp) else Modifier),
+                .then(if (settings.subtitleBackground == SubtitleBackground.Box) Modifier.background(Color.Black.copy(alpha = 0.75f), RoundedCornerShape(4.dp)).padding(horizontal = 10.dp, vertical = 4.dp) else Modifier),
         )
         // Until the first picture: the loading screen (backdrop, breathing logo); then the controls carry the logo.
         var started by remember(stream) { mutableStateOf(false) }
-        if (!buffering && position > 0) started = true
-        val state = FilmState((position * 1000).toLong(), (duration * 1000).toLong(), (cachedTo * 1000).toLong(), paused, buffering, started,
-            osdVisible = paused || buffering || now < osdUntil || scrub.active || menu.open,
+        if (!buffering && hasPosition) started = true
+        val state = FilmState({ (position * 1000).toLong() }, (duration * 1000).toLong(), { (cachedTo * 1000).toLong() }, paused, buffering, started,
+            osdVisible = osdVisible,
             // The badges: the film's own picture, frame rate and sound, as mpv reads them.
             quality = runCatching {
-                io.github.petebutty.viewarr.ui.player.StreamQuality(
+                StreamQuality(
                     mpv.getPropertyInt("height") ?: 0,
                     (mpv.getPropertyDouble("container-fps") ?: 0.0).toFloat(),
                     mpv.getPropertyInt("audio-params/channel-count") ?: 0,
@@ -427,6 +448,8 @@ fun MpvPlayer(
             holdOsd = { show -> osdUntil = if (show) Long.MAX_VALUE else 0L }) {
             MpvTrackPicker(mpv, subtitlesFirst = tracksSubs, onSwitchPlayer = switchPlayer, onClose = { tracksOpen = false; takeFilmFocus(focus) }, modifier = Modifier.align(Alignment.CenterEnd))
         }
+        // Hold OK on a bar button: the Info bar buttons list (FilmControls.kt).
+        FilmBarEditor(panels, menu, canSwitch = switchPlayer != null, mini = mini, focus = focus)
         if (!mini && stats.isNotEmpty()) Text(
             stats, fontSize = 13.sp, color = Color.White,
             modifier = Modifier.align(Alignment.TopStart).padding(24.dp).background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp)).padding(12.dp),
@@ -507,17 +530,17 @@ private fun configure(mpv: MpvHandle, context: android.content.Context, stream: 
     }
     opt("sub-scale", s.subtitleSize.scale.toString())
     opt("sub-color", "#%08X".format(s.subtitleColour.argb))
-    if (s.subtitleBackground == io.github.petebutty.viewarr.data.settings.SubtitleBackground.Box) {
+    if (s.subtitleBackground == SubtitleBackground.Box) {
         opt("sub-border-style", "opaque-box")
         opt("sub-back-color", "#C0000000")
     }
     // Video
     when (s.pictureSize) {
-        io.github.petebutty.viewarr.data.settings.PictureSize.Fit -> Unit
-        io.github.petebutty.viewarr.data.settings.PictureSize.Zoom -> opt("panscan", "1.0")
-        io.github.petebutty.viewarr.data.settings.PictureSize.Stretch -> opt("keepaspect", "no")
+        PictureSize.Fit -> Unit
+        PictureSize.Zoom -> opt("panscan", "1.0")
+        PictureSize.Stretch -> opt("keepaspect", "no")
     }
-    if (s.deinterlace == io.github.petebutty.viewarr.data.settings.Deinterlace.Auto) opt("deinterlace", "auto")
+    if (s.deinterlace == Deinterlace.Auto) opt("deinterlace", "auto")
     // Audio extras
     if (s.audioDelay.ms != 0) opt("audio-delay", (s.audioDelay.ms / 1000.0).toString())
     if (s.volumeBoost.percent != 100) { opt("volume-max", "200"); opt("volume", s.volumeBoost.percent.toString()) }
@@ -531,8 +554,7 @@ private fun configure(mpv: MpvHandle, context: android.content.Context, stream: 
 /**
  * libmpv 0.5.x is one process-wide player with static calls; this wraps it so the screen code reads like an object.
  * Only one MpvPlayer is ever on screen, and it destroys mpv when it leaves.
- */
-/**
+ *
  * The one mpv (libmpv is a single global instance: asking for a second while one is alive ends the app). A new handle
  * destroys the one before it first (the next episode's player is made before the old one's clean-up runs); a handle
  * that's been replaced, or destroyed, ignores every call, its own late clean-up included, so it can't touch the new one.
@@ -627,7 +649,7 @@ private fun MpvTrackPicker(mpv: MpvHandle, subtitlesFirst: Boolean = false, onSw
 fun PlayerHost(
     stream: VodStream,
     onClose: () -> Unit,
-    art: io.github.petebutty.viewarr.data.media.PlayerArt? = null,
+    art: PlayerArt? = null,
     onProgress: (state: String, positionMs: Long, durationMs: Long) -> Unit = { _, _, _ -> },
 ) {
     // The engine from Settings, swappable for this film from the hold-OK menu (picks up at the same moment).
@@ -637,13 +659,13 @@ fun PlayerHost(
     val switch: (Long, Int?, Int?) -> Unit = { pos, audio, subs ->
         // Same moment, same soundtrack and subtitles.
         current = current.copy(startMs = pos, audioTrack = audio ?: current.audioTrack, subtitleTrack = subs ?: current.subtitleTrack)
-        engine = if (engine == io.github.petebutty.viewarr.data.settings.PlayerEngine.Mpv) io.github.petebutty.viewarr.data.settings.PlayerEngine.Builtin
-        else io.github.petebutty.viewarr.data.settings.PlayerEngine.Mpv
+        engine = if (engine == PlayerEngine.Mpv) PlayerEngine.Builtin
+        else PlayerEngine.Mpv
     }
     androidx.compose.runtime.key(engine) {
         when (engine) {
-            io.github.petebutty.viewarr.data.settings.PlayerEngine.Mpv -> MpvPlayer(current, onClose, onProgress, switch, art)
-            io.github.petebutty.viewarr.data.settings.PlayerEngine.Builtin -> VodPlayer(current, onClose, onProgress, switch, art)
+            PlayerEngine.Mpv -> MpvPlayer(current, onClose, onProgress, switch, art)
+            PlayerEngine.Builtin -> VodPlayer(current, onClose, onProgress, switch, art)
         }
     }
 }

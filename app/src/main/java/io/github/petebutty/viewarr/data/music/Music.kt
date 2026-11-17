@@ -2,14 +2,24 @@ package io.github.petebutty.viewarr.data.music
 
 import io.github.petebutty.viewarr.data.accounts.AccountStore
 import io.github.petebutty.viewarr.data.accounts.Accounts
+import io.github.petebutty.viewarr.data.media.FilterGroup
+import io.github.petebutty.viewarr.data.media.FilterValue
+import io.github.petebutty.viewarr.data.media.LibraryOptions
+import io.github.petebutty.viewarr.data.media.LibraryQuery
+import io.github.petebutty.viewarr.data.media.SortOption
 import io.github.petebutty.viewarr.data.remote.services.HttpJson
 import io.github.petebutty.viewarr.data.remote.services.MediaServerService
 import io.github.petebutty.viewarr.data.remote.services.PlexService
 import io.github.petebutty.viewarr.data.remote.services.str
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
+import java.net.URLEncoder
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -57,11 +67,11 @@ interface MusicSource {
      * title, artist, added, played, plays, year, random; filters: genre, decade, favourites); a source's own extras
      * (Plex's moods and styles…) have ids with a dot and are offered when it's the only source in use.
      */
-    suspend fun albumOptions(): Pair<List<io.github.petebutty.viewarr.data.media.SortOption>, List<io.github.petebutty.viewarr.data.media.FilterGroup>>
+    suspend fun albumOptions(): Pair<List<SortOption>, List<FilterGroup>>
     /** One filter's choices. Genres are named the same on every source (their id is the name); decades are "1990". */
-    suspend fun albumFilterValues(group: String): List<io.github.petebutty.viewarr.data.media.FilterValue>
+    suspend fun albumFilterValues(group: String): List<FilterValue>
     /** Albums with a sort and filters, [size] from [offset]. */
-    suspend fun browseAlbums(q: io.github.petebutty.viewarr.data.media.LibraryQuery, size: Int, offset: Int): List<Album>
+    suspend fun browseAlbums(q: LibraryQuery, size: Int, offset: Int): List<Album>
 
     /** The id prefix ("nd", "plex-<machine>", "jf", "emby"). */
     val id: String
@@ -92,15 +102,17 @@ interface MusicSource {
     suspend fun starredIds(): Set<String> = emptySet()
 }
 
+private val LRC_TIME = Regex("""\[(\d+):(\d+(?:\.\d+)?)]""")
+private val LRC_META = Regex("""\[[a-z]+:.*]""")
+
 /** LRC lines ("[01:23.45] words") as lyric lines; plain lines when there are no times. */
 internal fun parseLrc(text: String): Lyrics? {
-    val tag = Regex("""\[(\d+):(\d+(?:\.\d+)?)]""")
     val lines = ArrayList<LyricLine>()
     var timed = false
     text.lines().forEach { raw ->
-        val times = tag.findAll(raw).toList()
-        val words = raw.replace(tag, "").trim()
-        if (times.isEmpty()) { if (raw.isNotBlank() && !raw.trim().matches(Regex("""\[[a-z]+:.*]"""))) lines += LyricLine(null, raw.trim()) }
+        val times = LRC_TIME.findAll(raw).toList()
+        val words = raw.replace(LRC_TIME, "").trim()
+        if (times.isEmpty()) { if (raw.isNotBlank() && !raw.trim().matches(LRC_META)) lines += LyricLine(null, raw.trim()) }
         else times.forEach { m -> timed = true; lines += LyricLine((m.groupValues[1].toLong() * 60_000 + (m.groupValues[2].toDouble() * 1000).toLong()), words) }
     }
     if (lines.isEmpty()) return null
@@ -120,10 +132,12 @@ class MusicLibrary @Inject constructor(
     private val mediaServers: MediaServerService,
     private val subsonic: SubsonicClient,
 ) {
-    private var cachedFor: Accounts? = null
-    private var cached: List<MusicSource> = emptyList()
+    @Volatile private var cachedFor: Accounts? = null
+    @Volatile private var cached: List<MusicSource> = emptyList()
     /** A server couldn't be reached when the list was made: look again after this (ms), not just when accounts change. */
-    private var retryAt = Long.MAX_VALUE
+    @Volatile private var retryAt = Long.MAX_VALUE
+    /** One rebuild at a time: Music home loads rows side by side, and each would otherwise ask every server again. */
+    private val rebuild = Mutex()
 
     /** The sources in use (those not switched off), in order of preference. */
     suspend fun sources(): List<MusicSource> {
@@ -137,10 +151,17 @@ class MusicLibrary @Inject constructor(
         // The switches themselves don't change which sources exist.
         val a = store.current().copy(musicOff = emptySet())
         if (a == cachedFor && System.currentTimeMillis() < retryAt) return cached
+        return rebuild.withLock {
+            // Another row may have just made it while this one waited.
+            if (a == cachedFor && System.currentTimeMillis() < retryAt) cached else buildSources(a)
+        }
+    }
+
+    private suspend fun buildSources(a: Accounts): List<MusicSource> {
         var unreachable = false
         // A server's music libraries, or null if it has none; a server that doesn't answer is tried again later.
-        suspend fun <T> look(f: suspend () -> T): T? = runCatching { kotlinx.coroutines.withTimeout(8_000) { f() } }
-            .onFailure { if (it !is kotlinx.coroutines.CancellationException || it is kotlinx.coroutines.TimeoutCancellationException) unreachable = true }.getOrNull()
+        suspend fun <T> look(f: suspend () -> T): T? = runCatching { withTimeout(8_000) { f() } }
+            .onFailure { if (it !is CancellationException || it is TimeoutCancellationException) unreachable = true }.getOrNull()
         val list = buildList {
             a.navidrome?.let { add(NavidromeSource(subsonic, it)) }
             val plexes = (listOfNotNull(a.plex) + a.plexMore.filter { m -> m.machineId != a.plex?.machineId }).filter { it.machineId !in a.plexOff }
@@ -153,9 +174,10 @@ class MusicLibrary @Inject constructor(
             a.jellyfin?.let { j -> look { JellyfinMusicSource.find(http, mediaServers, a.deviceId, j, emby = false) } }?.let(::addAll)
             a.emby?.let { e -> look { JellyfinMusicSource.find(http, mediaServers, a.deviceId, e, emby = true) } }?.let(::addAll)
         }
-        cachedFor = a
+        // The key last, so a reader that sees it also sees its list.
         cached = list
         retryAt = if (unreachable) System.currentTimeMillis() + 60_000 else Long.MAX_VALUE
+        cachedFor = a
         return list
     }
 
@@ -201,20 +223,20 @@ class MusicLibrary @Inject constructor(
     // ---- Sorting and filtering albums (the Albums grid)
 
     /** What the albums can be sorted / filtered by: one source, all it offers; several, what they share. */
-    suspend fun albumOptions(): io.github.petebutty.viewarr.data.media.LibraryOptions {
+    suspend fun albumOptions(): LibraryOptions {
         val per = coroutineScope { sources().map { s -> async { runCatching { s.albumOptions() }.getOrNull() } }.awaitAll().filterNotNull() }
-        if (per.isEmpty()) return io.github.petebutty.viewarr.data.media.LibraryOptions(emptyList(), emptyList(), false, "title")
+        if (per.isEmpty()) return LibraryOptions(emptyList(), emptyList(), false, "title")
         val sorts = if (per.size == 1) per[0].first else per[0].first.filter { s -> '.' !in s.id && per.all { p -> p.first.any { it.id == s.id } } }
         val filters = if (per.size == 1) per[0].second else per[0].second.filter { f -> '.' !in f.id && per.all { p -> p.second.any { it.id == f.id } } }
-        return io.github.petebutty.viewarr.data.media.LibraryOptions(sorts, filters, letters = true, titleSort = "title", directions = true)
+        return LibraryOptions(sorts, filters, letters = true, titleSort = "title", directions = true)
     }
 
     /** A filter's choices from every source in use, one of each. */
-    suspend fun albumFilterValues(group: String): List<io.github.petebutty.viewarr.data.media.FilterValue> = merged(null) { it.albumFilterValues(group) }
+    suspend fun albumFilterValues(group: String): List<FilterValue> = merged(null) { it.albumFilterValues(group) }
         .distinctBy { norm(it.label) }.let { v -> if (group == "decade") v.sortedByDescending { it.id.toIntOrNull() ?: 0 } else v.sortedBy { it.label.lowercase() } }
 
     /** A page of albums with [q] from every source, merged in [q]'s order (one copy of each album). */
-    suspend fun browseAlbums(q: io.github.petebutty.viewarr.data.media.LibraryQuery, size: Int, offsets: Map<String, Int> = emptyMap()): Pair<List<Album>, Map<String, Int>> {
+    suspend fun browseAlbums(q: LibraryQuery, size: Int, offsets: Map<String, Int> = emptyMap()): Pair<List<Album>, Map<String, Int>> {
         val srcs = sources().filter { offsets[it.id] != -1 }
         val per = coroutineScope { srcs.map { s -> async { s.id to runCatching { s.browseAlbums(q, size, offsets[s.id] ?: 0) }.getOrDefault(emptyList()) } }.awaitAll() }
         val base: Comparator<Album>? = when (q.sort) {
@@ -275,7 +297,7 @@ class MusicLibrary @Inject constructor(
     suspend fun lyrics(song: Song, lrclib: Boolean): Lyrics? {
         source(song.id)?.let { s -> runCatching { s.lyrics(song) }.getOrNull()?.takeIf { it.lines.isNotEmpty() }?.let { return it } }
         if (!lrclib) return null
-        fun e(v: String) = java.net.URLEncoder.encode(v, "UTF-8")
+        fun e(v: String) = URLEncoder.encode(v, "UTF-8")
         val r = runCatching {
             http.get("https://lrclib.net/api/get?artist_name=${e(song.artist)}&track_name=${e(song.title)}&album_name=${e(song.album)}&duration=${song.durationSec}")
         }.getOrNull()?.takeIf { it.ok } ?: return null
@@ -335,7 +357,8 @@ class MusicLibrary @Inject constructor(
     }
 
     companion object {
-        fun norm(s: String) = s.lowercase().replace(Regex("[^\\p{L}\\p{N}]"), "")
+        private val NOT_LETTER_OR_DIGIT = Regex("[^\\p{L}\\p{N}]")
+        fun norm(s: String) = s.lowercase().replace(NOT_LETTER_OR_DIGIT, "")
         fun sortKey(s: String) = s.lowercase().removePrefix("the ").trim()
     }
 }

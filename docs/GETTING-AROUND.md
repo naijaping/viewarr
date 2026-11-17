@@ -8,7 +8,7 @@ Viewarr has one menu, on the left, made of glass. Whatever is playing keeps goin
 
 The menu is see-through on every page. It slides the page and the picture aside rather than covering them.
 
-- **Left** opens the menu from the first poster of any page. In the TV guide, Left goes back a programme and on into catch-up; **Menu (≡)** opens the menu, and with nothing playing so does Back on what's on now (with the TiviMate preset, Left on what's on now opens the channel groups and **hold Left** goes into catch-up).
+- **Left** opens the menu from the first poster of any page. In the TV guide, Left goes back a programme and on into catch-up; **Menu (≡)** opens the menu, and with nothing playing so does Back on what's on now (with the Classic preset, Left on what's on now opens the channel groups and **hold Left** goes into catch-up).
 - **Up / Down** move through the entries, and the page behind changes straight away: Live TV, Live now, Sports, Movies, Shows, your streaming services (such as Netflix or Disney+), Music and Recordings.
 - **Right** (or **OK**) goes into the highlighted entry:
   - **Live TV**: its channel groups. Moving through them changes the guide behind as you go; OK picks one and takes you into the guide.
@@ -18,7 +18,7 @@ The menu is see-through on every page. It slides the page and the picture aside 
 - **Left** on an entry opens its own list (channel groups, libraries…); **Left** again goes back to the main list.
 - **Back** closes the menu from any list, and you stay on the page you were on.
 
-Going into a list slides the one before it away, one panel at a time, as TiviMate does.
+Going into a list slides the one before it away, one panel at a time.
 
 Other ways to reach the menu:
 

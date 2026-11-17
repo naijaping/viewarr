@@ -36,12 +36,14 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.repository.GuideRepository
+import io.github.petebutty.viewarr.ui.setup.WizardField
 
 /** The Live TV sources saved on this TV (several Dispatcharr instances, IPTV logins, playlists) and switching. */
 @HiltViewModel
 class LiveSourcesViewModel @Inject constructor(
     private val store: SessionStore,
-    private val guide: io.github.petebutty.viewarr.data.repository.GuideRepository,
+    private val guide: GuideRepository,
 ) : ViewModel() {
     /** The active source's groups (name, channels) and which are hidden. */
     fun groups() = guide.allGroups()
@@ -106,14 +108,11 @@ private fun RenameSourceDialog(current: String, fallback: String, onDone: (Strin
     var name by remember { mutableStateOf(current) }
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-    androidx.compose.ui.window.Dialog(onDismissRequest = onCancel) {
-        Column(
-            Modifier.width(520.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Text("Name this source", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
-            Text("For example \"Living room\" or \"Backup provider\". Leave it empty for \"$fallback\".", fontSize = 13.sp, color = AppColors.TextSecondary)
-            io.github.petebutty.viewarr.ui.setup.WizardField(
+    // (The shared pop-up: was a raw Dialog. Peter, 2026-11-17.)
+    io.github.petebutty.viewarr.ui.common.PopupPanel(onClose = onCancel, width = io.github.petebutty.viewarr.ui.theme.Tokens.PopupWide) {
+        io.github.petebutty.viewarr.ui.common.PopupTitle("Name this source", "For example \"Living room\" or \"Backup provider\". Leave it empty for \"$fallback\".")
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            WizardField(
                 name, { name = it }, "Name", first,
                 androidx.compose.ui.text.input.KeyboardType.Text, androidx.compose.ui.text.input.ImeAction.Done,
                 onIme = { onDone(name.trim().ifBlank { null }) },
@@ -137,12 +136,10 @@ private fun GroupsDialog(vm: LiveSourcesViewModel, onClose: () -> Unit) {
     var hidden by remember { mutableStateOf(vm.hidden()) }
     val first = remember { FocusRequester() }
     LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
-        Column(
-            Modifier.width(560.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            Text("Choose groups", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
+    // (The shared pop-up: was a raw Dialog. Peter, 2026-11-17.)
+    io.github.petebutty.viewarr.ui.common.PopupPanel(onClose = onClose, width = io.github.petebutty.viewarr.ui.theme.Tokens.PopupWide) {
+        io.github.petebutty.viewarr.ui.common.PopupTitle("Choose groups")
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             val shownChannels = all.filter { it.first !in hidden }.sumOf { it.second }
             Text("${all.size - hidden.count { h -> all.any { it.first == h } }} of ${all.size} groups, $shownChannels channels. Hidden groups' channels and TV guide aren't kept on the TV.",
                 fontSize = 13.sp, color = AppColors.TextSecondary)
@@ -152,7 +149,7 @@ private fun GroupsDialog(vm: LiveSourcesViewModel, onClose: () -> Unit) {
                 MenuItem(text = "Hide all", selected = false, onClick = { hidden = all.map { it.first }.toSet() }, modifier = Modifier.weight(1f))
             }
             if (all.isEmpty()) Text("No groups yet: they're listed once the source has loaded.", fontSize = 13.sp, color = AppColors.TextSecondary)
-            androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 420.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 300.dp), verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 items(all.size) { i ->
                     val (name, count) = all[i]
                     val on = name !in hidden

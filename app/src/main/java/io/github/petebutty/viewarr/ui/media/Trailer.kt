@@ -52,6 +52,8 @@ import io.github.petebutty.viewarr.ui.common.trapFocus
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
+import io.github.petebutty.viewarr.data.settings.LocalRemote
+import io.github.petebutty.viewarr.ui.common.BackLayer
 
 /** Small windows don't need more than 480p; less to download and decode on a weak box. */
 private const val PREVIEW_HEIGHT = 480
@@ -73,6 +75,10 @@ private fun trailerPlayer(context: android.content.Context, small: Boolean): Exo
         )
         .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
         .build()
+        // Never the TV's refresh rate for a trailer (a preview on a poster or title page, or the full-screen one): the
+        // player's own frame-rate hint switched some TVs' mode, a blank screen and a flicker each time. Frame rate
+        // matching is for films and live TV only (Settings → Video). (Peter, 2026-11-17.)
+        .also { it.videoChangeFrameRateStrategy = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF }
 
 /**
  * Picture-in-picture trailer for the focused poster. Starts once the poster has been focused for the chosen time
@@ -82,13 +88,12 @@ private fun trailerPlayer(context: android.content.Context, small: Boolean): Exo
 @Composable
 fun TrailerPreview(item: MediaItem?, active: Boolean, trailers: TrailerRepository, modifier: Modifier = Modifier) {
     val pb = LocalPlayback.current
-    if (pb.trailerPreview == TrailerPreview.Off || !io.github.petebutty.viewarr.ui.theme.AppColors.palette.heavyExtras) return
+    if (pb.trailerPreview == TrailerPreview.Off || !AppColors.palette.heavyExtras) return
     val context = LocalContext.current
-    val player = remember { trailerPlayer(context, small = true) }
     var showing by remember { mutableStateOf(false) }
     var currentId by remember { mutableStateOf<String?>(null) }
-    DisposableEffect(player) {
-        val listener = object : Player.Listener {
+    val listener = remember {
+        object : Player.Listener {
             override fun onRenderedFirstFrame() { showing = true }
             override fun onPlaybackStateChanged(state: Int) { if (state == Player.STATE_ENDED) showing = false }
             override fun onPlayerError(error: PlaybackException) {
@@ -97,14 +102,15 @@ fun TrailerPreview(item: MediaItem?, active: Boolean, trailers: TrailerRepositor
                 currentId?.let(trailers::markDead)
             }
         }
-        player.addListener(listener)
-        onDispose { player.removeListener(listener); player.release() }
     }
+    // Made for the first trailer that plays, not before: the hero is on several pages at once, and each held an idle
+    // ExoPlayer (its threads, buffers and picture) whether a trailer ever played or not.
+    var player by remember { mutableStateOf<ExoPlayer?>(null) }
+    DisposableEffect(Unit) { onDispose { player?.let { it.removeListener(listener); it.release() } } }
     val sound = pb.trailerSound == TrailerSound.On
     LaunchedEffect(item?.key, active, pb.trailerDelay, sound) {
         showing = false
-        player.stop()
-        player.clearMediaItems()
+        player?.run { stop(); clearMediaItems() }
         currentId = null
         if (item == null || !active) return@LaunchedEffect
         // The hero itself already waited 250 ms for focus to settle.
@@ -113,17 +119,20 @@ fun TrailerPreview(item: MediaItem?, active: Boolean, trailers: TrailerRepositor
         val streams = trailers.resolve(id, PREVIEW_HEIGHT) ?: return@LaunchedEffect
         val source = trailers.mediaSource(streams, withAudio = sound) ?: return@LaunchedEffect
         currentId = id
-        player.volume = if (sound) 1f else 0f
-        player.setMediaSource(source)
-        player.prepare()
-        player.playWhenReady = true
+        val p = player ?: trailerPlayer(context, small = true).also { it.addListener(listener); player = it }
+        p.volume = if (sound) 1f else 0f
+        p.setMediaSource(source)
+        p.prepare()
+        p.playWhenReady = true
     }
     val alpha by animateFloatAsState(if (showing && active) 1f else 0f, tween(350), label = "trailer")
     Box(modifier.graphicsLayer { this.alpha = alpha }.background(Color.Black)) {
-        AndroidView(
-            factory = { ctx -> TextureView(ctx).also { player.setVideoTextureView(it) } },
-            modifier = Modifier.fillMaxSize(),
-        )
+        player?.let { p ->
+            AndroidView(
+                factory = { ctx -> TextureView(ctx).also { p.setVideoTextureView(it) } },
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }
 
@@ -138,9 +147,9 @@ fun TrailerPlayer(item: MediaItem, trailers: TrailerRepository, onClose: () -> U
     var aspect by remember { mutableFloatStateOf(16f / 9f) }
     var paused by remember { mutableStateOf(false) }
     val focus = remember { FocusRequester() }
-    val seekMs = io.github.petebutty.viewarr.data.settings.LocalRemote.current.seek.ms
+    val seekMs = LocalRemote.current.seek.ms
     BackHandler(onBack = onClose)
-    io.github.petebutty.viewarr.ui.common.BackLayer()
+    BackLayer()
     DisposableEffect(Unit) {
         FullTrailer.active = true
         onDispose { FullTrailer.active = false }

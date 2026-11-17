@@ -1,9 +1,12 @@
 package io.github.petebutty.viewarr.data.sync
 
 import android.content.Context
+import android.os.Build
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import androidx.datastore.core.DataStore
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.doublePreferencesKey
@@ -30,20 +33,22 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -127,8 +132,17 @@ class SettingsSync @Inject constructor(
         if (started) return
         started = true
         scope.launch {
-            sessions.session.filterNotNull().map { it }.distinctUntilChanged { a, b -> a.serverUrl == b.serverUrl && a.username == b.username && a.apiKey == b.apiKey }
-                .collect { s -> if (!s.isDirect) runCatching { onSignedIn(s) }.onFailure { Log.w(TAG, "sync check failed", it) } }
+            // A check that couldn't finish (Dispatcharr not answering, sign-ins unreadable for a moment) is tried again a
+            // few times, further apart each time, then left for the next start. A new sign-in replaces the waiting one.
+            sessions.session.filterNotNull().distinctUntilChanged { a, b -> a.serverUrl == b.serverUrl && a.username == b.username && a.apiKey == b.apiKey }
+                .collectLatest { s ->
+                    if (s.isDirect) return@collectLatest
+                    for (wait in CHECK_RETRY_WAITS) {
+                        delay(wait)
+                        val done = runCatching { onSignedIn(s) }.onFailure { Log.w(TAG, "sync check failed", it) }.getOrDefault(false)
+                        if (done) break
+                    }
+                }
         }
         scope.launch {
             val changes: List<Flow<Any?>> = stores.values.map { it.data } + listOf(accounts.accounts, context.syncStore.data, accounts.setupComplete)
@@ -144,6 +158,11 @@ class SettingsSync @Inject constructor(
     suspend fun acceptOffer(): Boolean = lock.withLock {
         val copy = pending ?: return@withLock false
         val s = sessions.session.first() ?: return@withLock false
+        // This TV's sign-ins can't be read just now: restoring over them (or marking it done) waits; the offer stays.
+        if (accounts.currentReadable() == null) {
+            _message.value = "This TV's sign-ins can't be read just now. Try again in a moment."
+            return@withLock false
+        }
         val restored = apply(copy, s)
         setMode(SyncMode.On)
         _offer.value = null
@@ -172,7 +191,8 @@ class SettingsSync @Inject constructor(
     /** Settings → "Restore from Dispatcharr": reads the saved copy now and offers it. */
     suspend fun checkNow(): String {
         val s = sessions.session.first()?.takeIf { !it.isDirect } ?: return "Sign in to Dispatcharr first."
-        val copy = runCatching { fetch(s) }.getOrNull() ?: return "Nothing saved on Dispatcharr yet."
+        val copy = copyResult(s).getOrElse { return "Couldn't read the saved copy from Dispatcharr. Try again in a moment." }
+            ?: return "Nothing saved on Dispatcharr yet."
         pending = copy
         _offer.value = offerOf(copy)
         return ""
@@ -233,7 +253,7 @@ class SettingsSync @Inject constructor(
     }
 
     /** The saved copy on Dispatcharr for [s]'s user, or null. */
-    suspend fun savedCopy(s: Session): JsonObject? = runCatching { fetch(s) }.getOrNull()
+    suspend fun savedCopy(s: Session): JsonObject? = copyResult(s).getOrNull()
 
     /** A saved copy as a snapshot (sign-ins decrypted with that user's key); null if there's nothing usable. */
     fun snapshotOf(copy: JsonObject, s: Session): JsonObject? {
@@ -288,11 +308,19 @@ class SettingsSync @Inject constructor(
 
     // ---------------------------------------------------------------- signing in
 
-    private suspend fun onSignedIn(s: Session) {
+    /**
+     * Offers / picks up the saved copy. True when that's settled; false when it couldn't be found out (try later).
+     * Only Dispatcharr saying there's no copy (404) counts as "nothing saved": any other answer leaves the choice
+     * unmade, or a 500 or a proxy's 502 switched saving on and overwrote the copy that should have been offered.
+     */
+    private suspend fun onSignedIn(s: Session): Boolean {
         val mode = currentMode()
-        if (mode == SyncMode.Off) return
-        val copy = fetch(s)
-        val me = accounts.current().deviceId
+        if (mode == SyncMode.Off) return true
+        // Sign-ins unreadable for a moment: the blank stand-in's device id isn't this TV's, and anything applied now
+        // couldn't be checked against what's here. Wait for the retry.
+        val mine = accounts.currentReadable() ?: run { Log.w(TAG, "sign-ins unreadable; sync check put off"); return false }
+        val copy = copyResult(s).getOrElse { Log.w(TAG, "saved copy unavailable: ${it.message}"); return false }
+        val me = mine.deviceId
         when (mode) {
             SyncMode.Unset -> when {
                 copy == null || copy.str("deviceId") == me -> setMode(SyncMode.On)
@@ -315,6 +343,7 @@ class SettingsSync @Inject constructor(
             }
             SyncMode.Off -> Unit
         }
+        return true
     }
 
     private fun offerOf(copy: JsonObject) = SyncOffer(
@@ -330,17 +359,30 @@ class SettingsSync @Inject constructor(
         // Never save a half-set-up TV over a good copy (e.g. right after signing out and back in).
         if (accounts.setupComplete.first() == false) return@withLock
         val s = sessions.session.first()?.takeIf { !it.isDirect } ?: return@withLock
+        // Sign-ins saved but unreadable for a moment: what we'd see is a blank copy, and sending it would sign every
+        // other TV out. Nothing is saved until they read again (the hash isn't updated, so the next change sends it).
+        val mine = accounts.currentReadable() ?: run { Log.w(TAG, "sign-ins unreadable; save skipped"); return@withLock }
         val signIns = context.syncStore.data.first()[SIGN_INS] ?: true
         val prefs = exportPrefs()
-        val acct = if (signIns) accountsJson() else null
+        val acct = if (signIns) accountsJson(mine) else null
         val hash = sha256(prefs.toString() + "|" + (acct ?: "-"))
         if (!force && hash == context.syncStore.data.first()[LAST_HASH]) return@withLock
+        // Never a blind overwrite: if another TV (or an admin) saved after this one last picked the copy up, theirs
+        // would be lost. That's left alone and picked up at the next start instead. Asked for outright (switching
+        // saving on, restoring a backup: [force]), this TV's copy wins. Can't read the copy at all: try next change.
+        val server = copyResult(s).getOrElse { Log.w(TAG, "save put off: ${it.message}"); return@withLock }
+        if (!force && server != null && server.str("deviceId") != mine.deviceId &&
+            (server.long("savedAt") ?: 0) > (context.syncStore.data.first()[APPLIED_AT] ?: 0)) {
+            Log.w(TAG, "save skipped: ${server.str("device") ?: "another TV"} saved since this TV last picked up the copy")
+            _message.value = "Not saved: ${server.str("device") ?: "another TV"} changed the settings since. They'll be picked up when Viewarr next starts."
+            return@withLock
+        }
         val now = System.currentTimeMillis()
         val body = buildJsonObject {
             put("v", 1)
             put("savedAt", now)
             put("device", deviceName())
-            put("deviceId", accounts.current().deviceId)
+            put("deviceId", mine.deviceId)
             put("prefs", prefs)
             acct?.let { put("signIns", encrypt(it, s)) }
         }
@@ -360,13 +402,11 @@ class SettingsSync @Inject constructor(
 
     // ---------------------------------------------------------------- reading / applying
 
-    private suspend fun fetch(s: Session): JsonObject? {
-        val r = http.get(url(s), headers(s))
-        return if (r.code in 200..299) r.body as? JsonObject else null
-    }
-
     /** Applies a saved copy. True when its sign-ins were restored too. */
     private suspend fun apply(copy: JsonObject, s: Session): Boolean {
+        // This TV's sign-ins unreadable for a moment: nothing is applied (the stamp below would be measured against a
+        // blank copy, and the next save would then send it). The callers' checks normally stop it before here.
+        val mine = accounts.currentReadable() ?: run { Log.w(TAG, "sign-ins unreadable; copy not applied"); return false }
         (copy["prefs"] as? JsonObject)?.let { importPrefs(it) }
         var restored = false
         copy.str("signIns")?.let { enc ->
@@ -388,14 +428,19 @@ class SettingsSync @Inject constructor(
         }
         // What this TV now has is what the server has: don't send it straight back.
         val signIns = context.syncStore.data.first()[SIGN_INS] ?: true
-        val hash = sha256(exportPrefs().toString() + "|" + (if (signIns) accountsJson() else "-"))
+        val now = accounts.currentReadable() ?: mine
+        val hash = sha256(exportPrefs().toString() + "|" + (if (signIns) accountsJson(now) else "-"))
         context.syncStore.edit { it[LAST_HASH] = hash; it[APPLIED_AT] = copy.long("savedAt") ?: System.currentTimeMillis() }
         return restored
     }
 
-    /** The sign-ins as JSON, without this TV's own device id. */
-    private suspend fun accountsJson(): String {
-        val full = json.encodeToJsonElement(Accounts.serializer(), accounts.current()).jsonObject
+    /**
+     * The sign-ins as JSON, without this TV's own device id. Unreadable for a moment: a failure, never a blank copy
+     * (a backup or profile copy made from that would quietly lose every sign-in).
+     */
+    private suspend fun accountsJson(a: Accounts? = null): String {
+        val acct = a ?: accounts.currentReadable() ?: error("This TV's sign-ins can't be read just now. Try again in a moment.")
+        val full = json.encodeToJsonElement(Accounts.serializer(), acct).jsonObject
         return JsonObject(full.filterKeys { it != "deviceId" }).toString()
     }
 
@@ -432,7 +477,7 @@ class SettingsSync @Inject constructor(
         else -> null
     }
 
-    private fun setValue(p: androidx.datastore.preferences.core.MutablePreferences, key: String, e: kotlinx.serialization.json.JsonElement) {
+    private fun setValue(p: MutablePreferences, key: String, e: JsonElement) {
         val o = e as? JsonObject ?: return
         val v = o["v"] ?: return
         when (o.str("t")) {
@@ -481,9 +526,9 @@ class SettingsSync @Inject constructor(
     /** The TV's name as set in Android TV's settings (e.g. "Living room TV"), else its maker and model. */
     private fun deviceName(): String =
         listOf("device_name", "bluetooth_name").firstNotNullOfOrNull { k ->
-            runCatching { android.provider.Settings.Global.getString(context.contentResolver, k) }.getOrNull()?.takeIf { it.isNotBlank() }
-                ?: runCatching { android.provider.Settings.Secure.getString(context.contentResolver, k) }.getOrNull()?.takeIf { it.isNotBlank() }
-        } ?: (android.os.Build.MANUFACTURER.replaceFirstChar { it.uppercase() } + " " + android.os.Build.MODEL)
+            runCatching { Settings.Global.getString(context.contentResolver, k) }.getOrNull()?.takeIf { it.isNotBlank() }
+                ?: runCatching { Settings.Secure.getString(context.contentResolver, k) }.getOrNull()?.takeIf { it.isNotBlank() }
+        } ?: (Build.MANUFACTURER.replaceFirstChar { it.uppercase() } + " " + Build.MODEL)
 
     private fun sha256(s: String) = MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 
@@ -494,6 +539,8 @@ class SettingsSync @Inject constructor(
         val SIGN_INS = booleanPreferencesKey("sign_ins")
         val LAST_HASH = stringPreferencesKey("last_hash")
         val APPLIED_AT = longPreferencesKey("applied_at")
+        /** The sign-in check: at once, then again after 30 s, 2 min, 10 min and 30 min; after that, next start. */
+        val CHECK_RETRY_WAITS = listOf(0L, 30_000L, 120_000L, 600_000L, 1_800_000L)
 
         /**
          * Settings that belong to the box itself, never copied between TVs. The remote's buttons too (Settings →

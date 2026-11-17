@@ -1,11 +1,10 @@
 package io.github.petebutty.viewarr.di
 
-import android.content.Context
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
-import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import io.github.petebutty.viewarr.data.net.Reach
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
@@ -28,8 +27,10 @@ object AppModule {
     fun okHttp(): OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
+        // (No overall call timeout here: this client also fetches update APKs, M3U playlists, Xtream lists and the guide,
+        // which can rightly take minutes. HttpJson puts a 30 s one on its own calls.)
         // Home or away: a server's away address when its home one can't be reached.
-        .addInterceptor(io.github.petebutty.viewarr.data.net.Reach.Interceptor)
+        .addInterceptor(Reach.Interceptor)
         .build()
 
     // The guide's databases (one per Live TV source): see GuideDatabases.

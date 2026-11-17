@@ -17,7 +17,7 @@ fun UpdatesSettingsScreen(onBack: () -> Unit, vm: UpdateViewModel = hiltViewMode
     val state by vm.state.collectAsStateWithLifecycle()
     val prefs by vm.prefs.collectAsStateWithLifecycle()
     val status = when (val s = state) {
-        UpdateState.Idle -> "Press OK to check"
+        UpdateState.Idle -> "OK: check"
         UpdateState.Checking -> "Checking…"
         UpdateState.UpToDate -> "You're up to date"
         is UpdateState.Available -> "Viewarr ${s.release.version} is available"
@@ -37,7 +37,7 @@ fun UpdatesSettingsScreen(onBack: () -> Unit, vm: UpdateViewModel = hiltViewMode
         ),
         SettingItem(
             title = "Check automatically",
-            description = "Checks when Viewarr starts (at most twice a day) and offers new versions.",
+            description = "Checks when Viewarr starts or comes back on screen (at most every 30 minutes) and offers new versions.",
             choices = Switch.entries,
             current = if (prefs.auto) Switch.On else Switch.Off,
             onSelect = { vm.setAuto(it == Switch.On) },

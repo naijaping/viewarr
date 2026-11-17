@@ -1,6 +1,10 @@
 package io.github.petebutty.viewarr.data.session
 
 import android.content.Context
+import android.util.Log
+import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -8,6 +12,9 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.first
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.URI
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,7 +43,7 @@ data class Session(
     /** How it's listed: "Dispatcharr · 192.168.0.10 (alex)", "IPTV · provider.tv (user)", "Playlist · host". */
     val label: String get() {
         name?.takeIf { it.isNotBlank() }?.let { return it }
-        val host = runCatching { java.net.URI(if ("://" in serverUrl) serverUrl else "http://$serverUrl").host }.getOrNull() ?: serverUrl
+        val host = runCatching { URI(if ("://" in serverUrl) serverUrl else "http://$serverUrl").host }.getOrNull() ?: serverUrl
         return when {
             isM3u -> "Playlist · $host"
             isXc -> "IPTV · $host ($username)"
@@ -50,12 +57,7 @@ private val Context.sessionDataStore by preferencesDataStore(name = "session")
 @Singleton
 class SessionStore @Inject constructor(@ApplicationContext private val context: Context) {
 
-    val session: Flow<Session?> = context.sessionDataStore.data.map { prefs ->
-        val url = prefs[SERVER_URL] ?: return@map null
-        val user = prefs[USERNAME] ?: return@map null
-        val key = prefs[API_KEY]?.let(KeystoreCipher::decrypt) ?: return@map null
-        Session(url, user, key, prefs[XC_PASSWORD]?.let(KeystoreCipher::decrypt), prefs[XC_TZ], prefs[M3U] == true, prefs[M3U_EPG], prefs[NAME])
-    }
+    val session: Flow<Session?> = context.sessionDataStore.data.map { prefs -> activeOf(prefs) }
 
     /**
      * Every Live TV source signed in to on this TV (Dispatcharr instances, IPTV logins, playlists), one of them
@@ -65,11 +67,7 @@ class SessionStore @Inject constructor(@ApplicationContext private val context: 
     val saved: Flow<List<Session>> = context.sessionDataStore.data.map { prefs ->
         val list = prefs[SAVED]?.let(KeystoreCipher::decrypt)?.let { decode(it) }.orEmpty()
         // Sessions from before the list existed: the active one is the list.
-        val active = prefs[SERVER_URL]?.let { url ->
-            val user = prefs[USERNAME] ?: return@let null
-            val key = prefs[API_KEY]?.let(KeystoreCipher::decrypt) ?: return@let null
-            Session(url, user, key, prefs[XC_PASSWORD]?.let(KeystoreCipher::decrypt), prefs[XC_TZ], prefs[M3U] == true, prefs[M3U_EPG], prefs[NAME])
-        }
+        val active = activeOf(prefs)
         if (active != null && list.none { it.id == active.id }) list + active else list
     }
 
@@ -85,9 +83,9 @@ class SessionStore @Inject constructor(@ApplicationContext private val context: 
         }
     }
 
-    private fun encode(list: List<Session>): String = org.json.JSONArray().apply {
+    private fun encode(list: List<Session>): String = JSONArray().apply {
         list.forEach { s ->
-            put(org.json.JSONObject().apply {
+            put(JSONObject().apply {
                 put("url", s.serverUrl); put("user", s.username); put("key", s.apiKey)
                 s.xcPassword?.let { put("xc", it) }; s.xcTimezone?.let { put("tz", it) }
                 put("m3u", s.isM3u); s.m3uEpg?.let { put("epg", it) }; s.name?.let { put("name", it) }
@@ -96,7 +94,7 @@ class SessionStore @Inject constructor(@ApplicationContext private val context: 
     }.toString()
 
     private fun decode(json: String): List<Session> = runCatching {
-        val a = org.json.JSONArray(json)
+        val a = JSONArray(json)
         (0 until a.length()).map { i ->
             val o = a.getJSONObject(i)
             Session(
@@ -112,25 +110,40 @@ class SessionStore @Inject constructor(@ApplicationContext private val context: 
             // Also into the saved list (replacing the same source's old details), so it can be switched back to.
             // The source active until now goes in the list first, if it isn't there yet (signed in before the list
             // existed): adding another mustn't lose it.
-            val previous = it[SERVER_URL]?.let { url ->
-                val user = it[USERNAME] ?: return@let null
-                val key = it[API_KEY]?.let(KeystoreCipher::decrypt) ?: return@let null
-                Session(url, user, key, it[XC_PASSWORD]?.let(KeystoreCipher::decrypt), it[XC_TZ], it[M3U] == true, it[M3U_EPG], it[NAME])
-            }
-            val stored = it[SAVED]?.let(KeystoreCipher::decrypt)?.let { j -> decode(j) }.orEmpty()
+            val previous = activeOf(it)
+            val raw = it[SAVED]
+            val plain = raw?.let(KeystoreCipher::decrypt)
+            // Saved list there but unreadable for a moment (the key store, at boot): it's left as it is rather than
+            // rewritten with just this source and the last one, which lost every other saved source. Signing in still works.
+            val readable = raw == null || plain != null
+            val stored = plain?.let { j -> decode(j) }.orEmpty()
             val old = if (previous != null && stored.none { s -> s.id == previous.id }) stored + previous else stored
             val named = if (session.name == null) session.copy(name = old.firstOrNull { s -> s.id == session.id }?.name) else session
-            val list = if (old.any { s -> s.id == session.id }) old.map { s -> if (s.id == session.id) named else s } else old + named
-            it[SAVED] = KeystoreCipher.encrypt(encode(list))
-            it[SERVER_URL] = session.serverUrl
-            it[USERNAME] = session.username
-            it[API_KEY] = KeystoreCipher.encrypt(session.apiKey)
-            if (session.xcPassword != null) it[XC_PASSWORD] = KeystoreCipher.encrypt(session.xcPassword) else it.remove(XC_PASSWORD)
-            if (session.xcTimezone != null) it[XC_TZ] = session.xcTimezone else it.remove(XC_TZ)
-            if (session.isM3u) it[M3U] = true else it.remove(M3U)
-            if (session.m3uEpg != null) it[M3U_EPG] = session.m3uEpg else it.remove(M3U_EPG)
-            if (named.name != null) it[NAME] = named.name else it.remove(NAME)
+            if (readable) {
+                val list = if (old.any { s -> s.id == session.id }) old.map { s -> if (s.id == session.id) named else s } else old + named
+                it[SAVED] = KeystoreCipher.encrypt(encode(list))
+            } else Log.w("SessionStore", "saved sources unreadable; list left as it is")
+            writeActive(it, named)
         }
+    }
+
+    /** The active source as stored (null if there's none, or its key can't be read). */
+    private fun activeOf(prefs: Preferences): Session? {
+        val url = prefs[SERVER_URL] ?: return null
+        val user = prefs[USERNAME] ?: return null
+        val key = prefs[API_KEY]?.let(KeystoreCipher::decrypt) ?: return null
+        return Session(url, user, key, prefs[XC_PASSWORD]?.let(KeystoreCipher::decrypt), prefs[XC_TZ], prefs[M3U] == true, prefs[M3U_EPG], prefs[NAME])
+    }
+
+    private fun writeActive(prefs: MutablePreferences, session: Session) {
+        prefs[SERVER_URL] = session.serverUrl
+        prefs[USERNAME] = session.username
+        prefs[API_KEY] = KeystoreCipher.encrypt(session.apiKey)
+        if (session.xcPassword != null) prefs[XC_PASSWORD] = KeystoreCipher.encrypt(session.xcPassword) else prefs.remove(XC_PASSWORD)
+        if (session.xcTimezone != null) prefs[XC_TZ] = session.xcTimezone else prefs.remove(XC_TZ)
+        if (session.isM3u) prefs[M3U] = true else prefs.remove(M3U)
+        if (session.m3uEpg != null) prefs[M3U_EPG] = session.m3uEpg else prefs.remove(M3U_EPG)
+        if (session.name != null) prefs[NAME] = session.name else prefs.remove(NAME)
     }
 
     /** Gives a saved source your own name (null: back to the one from its address). */
@@ -159,12 +172,23 @@ class SessionStore @Inject constructor(@ApplicationContext private val context: 
 
     /** Signs out of the active source: it leaves the saved list; another saved one (if any) becomes active. */
     suspend fun clear() {
-        val active = session.first()
-        val rest = saved.first().filter { it.id != active?.id }
-        context.sessionDataStore.edit { it.clear() }
-        if (rest.isNotEmpty()) {
-            save(rest.last())
-            context.sessionDataStore.edit { it[SAVED] = KeystoreCipher.encrypt(encode(rest)) }
+        // One edit: as two (clear, then save the next one) everything watching briefly saw no source at all, which
+        // looked like a full sign-out (onboarding, access checks…).
+        context.sessionDataStore.edit { prefs ->
+            val active = activeOf(prefs)
+            val raw = prefs[SAVED]
+            val plain = raw?.let(KeystoreCipher::decrypt)
+            val stored = plain?.let { decode(it) }.orEmpty()
+            // (As [saved]: a source from before the list existed is in it too.)
+            val all = if (active != null && stored.none { it.id == active.id }) stored + active else stored
+            val rest = all.filter { it.id != active?.id }
+            prefs.clear()
+            // Saved list there but unreadable for a moment: kept as it was (the active one is signed out of, not lost).
+            if (raw != null && plain == null) { prefs[SAVED] = raw; return@edit }
+            if (rest.isNotEmpty()) {
+                writeActive(prefs, rest.last())
+                prefs[SAVED] = KeystoreCipher.encrypt(encode(rest))
+            }
         }
     }
 
@@ -174,7 +198,7 @@ class SessionStore @Inject constructor(@ApplicationContext private val context: 
         val API_KEY = stringPreferencesKey("api_key_enc")
         val XC_PASSWORD = stringPreferencesKey("xc_password_enc")
         val XC_TZ = stringPreferencesKey("xc_timezone")
-        val M3U = androidx.datastore.preferences.core.booleanPreferencesKey("m3u")
+        val M3U = booleanPreferencesKey("m3u")
         val M3U_EPG = stringPreferencesKey("m3u_epg")
         val SAVED = stringPreferencesKey("saved_sources_enc")
         val NAME = stringPreferencesKey("source_name")

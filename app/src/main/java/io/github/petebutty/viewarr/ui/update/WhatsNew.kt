@@ -31,6 +31,7 @@ import io.github.petebutty.viewarr.ui.common.MenuItem
 import io.github.petebutty.viewarr.ui.common.trapFocus
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
+import io.github.petebutty.viewarr.ui.common.ViewarrPopup
 
 /**
  * "What's new": once, the first time an updated Viewarr opens. A few key points (assets/whats_new.txt), not the
@@ -63,25 +64,28 @@ fun WhatsNewHost() {
     // Stays until you press Got it (or Back). Presses in the first moment are ignored, so an OK meant for the
     // screen underneath can't close it before it's been read.
     var ready by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { awaitFrame(); runCatching { ok.requestFocus() }; kotlinx.coroutines.delay(1_500); ready = true }
-    androidx.activity.compose.BackHandler { if (ready) show = false }
-    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
-        Column(
-            Modifier.width(560.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus(),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("What's new in Viewarr ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = AppColors.Accent)
-            Text(heading, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 4.dp))
-            points.forEach { p ->
-                Row {
-                    Text("•", fontSize = 14.sp, color = AppColors.Accent, modifier = Modifier.width(18.dp))
-                    Text(p, fontSize = 14.sp, lineHeight = 19.sp, color = AppColors.TextPrimary)
+    // Its own window like the other root pop-ups (ViewarrPopup): a page that grabs focus afterwards can't take the remote.
+    ViewarrPopup(onClose = { if (ready) show = false }) {
+        // Focus asked for in here, once the window exists.
+        LaunchedEffect(Unit) { awaitFrame(); runCatching { ok.requestFocus() }; kotlinx.coroutines.delay(1_500); ready = true }
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.6f)), contentAlignment = Alignment.Center) {
+            Column(
+                Modifier.width(560.dp).background(AppColors.Panel, RoundedCornerShape(14.dp)).padding(24.dp).trapFocus(),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text("What's new in Viewarr ${BuildConfig.VERSION_NAME}", fontSize = 12.sp, color = AppColors.Accent)
+                Text(heading, fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, modifier = Modifier.padding(bottom = 4.dp))
+                points.forEach { p ->
+                    Row {
+                        Text("•", fontSize = 14.sp, color = AppColors.Accent, modifier = Modifier.width(18.dp))
+                        Text(p, fontSize = 14.sp, lineHeight = 19.sp, color = AppColors.TextPrimary)
+                    }
                 }
-            }
-            Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                MenuItem(text = "Got it", selected = false, onClick = { if (ready) show = false }, modifier = Modifier.weight(1f).focusRequester(ok))
-                // Everything in this version (and before): Settings → About → Changelog too.
-                MenuItem(text = "Full changelog", selected = false, onClick = { if (ready) { show = false; Changelog.open = true } }, modifier = Modifier.weight(1f))
+                Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    MenuItem(text = "Got it", selected = false, onClick = { if (ready) show = false }, modifier = Modifier.weight(1f).focusRequester(ok))
+                    // Everything in this version (and before): Settings → About → Changelog too.
+                    MenuItem(text = "Full changelog", selected = false, onClick = { if (ready) { show = false; Changelog.open = true } }, modifier = Modifier.weight(1f))
+                }
             }
         }
     }

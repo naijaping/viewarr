@@ -35,9 +35,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -67,7 +65,11 @@ import io.github.petebutty.viewarr.ui.common.ignoreHeldOk
 import io.github.petebutty.viewarr.ui.common.trapFocus
 import io.github.petebutty.viewarr.ui.guide.displayTitle
 import io.github.petebutty.viewarr.ui.guide.formatNumber
+import io.github.petebutty.viewarr.ui.common.OptionsPopup
+import io.github.petebutty.viewarr.ui.common.PopupOption
 import io.github.petebutty.viewarr.ui.theme.AppColors
+import io.github.petebutty.viewarr.ui.theme.NoScale
+import io.github.petebutty.viewarr.ui.theme.Tokens
 import kotlinx.coroutines.android.awaitFrame
 
 /** Most windows at once: four is what TV boxes can usually decode together. */
@@ -96,7 +98,7 @@ private class Tile(channel: ChannelListItem, val player: ExoPlayer?, val main: B
 @Composable
 fun MultiView(
     vm: PlaybackViewModel,
-    /** Channels to open with besides the one playing (e.g. none). */
+    /** What's on a channel now (each window's programme line). */
     programFor: (ChannelListItem) -> GuideProgram?,
     now: Long,
     /** Leaves multi-view, full screen on this channel. */
@@ -217,28 +219,26 @@ fun MultiView(
             }
         }
 
+        // Hold OK on a window: its options, in the shared options pop-up (its own panel and buttons until the UI
+        // review, 2026-11-17). Each choice closes it (onClose), then the highlight goes back to the window.
         options?.let { i ->
             val t = tiles.getOrNull(i)
             if (t == null) { options = null; return@let }
-            BackHandler { options = null }
-            val first = remember { FocusRequester() }
-            LaunchedEffect(Unit) { awaitFrame(); runCatching { first.requestFocus() } }
-            Column(
-                Modifier.align(Alignment.Center).width(360.dp).ignoreHeldOk().trapFocus()
-                    .background(AppColors.Panel, RoundedCornerShape(12.dp)).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(t.channel.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                OptionButton("Full screen", Modifier.focusRequester(first)) { options = null; exit(i) }
-                OptionButton("Change channel") { options = null; picking = i }
-                if (!t.main) OptionButton("Remove this window") {
-                    options = null
-                    tiles.removeAt(i).player?.release()
-                    selected = (i - 1).coerceAtLeast(0)
-                    focusTo = selected
-                }
-                OptionButton("Back to one channel") { options = null; exit(0) }
-            }
+            OptionsPopup(
+                title = t.channel.name,
+                width = Tokens.PopupNarrow,
+                options = listOfNotNull(
+                    PopupOption("Full screen") { exit(i) },
+                    PopupOption("Change channel") { picking = i },
+                    if (t.main) null else PopupOption("Remove this window") {
+                        tiles.removeAt(i).player?.release()
+                        selected = (i - 1).coerceAtLeast(0)
+                        focusTo = selected
+                    },
+                    PopupOption("Back to one channel") { exit(0) },
+                ),
+                onClose = { options = null },
+            )
         }
 
         picking?.let { i ->
@@ -280,7 +280,7 @@ private fun TileView(
         modifier = modifier
             .onPreviewKeyEvent { e -> if (io.github.petebutty.viewarr.ui.common.RemoteKeys.action(e) == io.github.petebutty.viewarr.ui.common.RemoteAction.Menu && e.type == KeyEventType.KeyDown) { onOptions(); true } else false }
             .border(3.dp, if (selected) AppColors.Accent else Color(0x33FFFFFF), RoundedCornerShape(8.dp)),
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
+        scale = NoScale,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Black, focusedContainerColor = Color.Black, pressedContainerColor = Color.Black),
     ) {
@@ -320,7 +320,7 @@ private fun TileView(
                         (program?.let { "  ·  " + displayTitle(it) } ?: ""),
                     fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
-                if (selected) Text("OK full screen  ·  Hold OK for options", fontSize = 11.sp, color = Color(0xCCFFFFFF))
+                if (selected) Text("OK: full screen  ·  Hold OK: options", fontSize = 11.sp, color = Color(0xCCFFFFFF))
                 program?.takeIf { it.endTime > it.startTime }?.let { p ->
                     val f = ((now - p.startTime).toFloat() / (p.endTime - p.startTime)).coerceIn(0f, 1f)
                     Box(Modifier.padding(top = 4.dp).fillMaxWidth().background(Color(0x44FFFFFF))) {
@@ -337,7 +337,7 @@ private fun AddWindow(modifier: Modifier, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         modifier = modifier,
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
+        scale = NoScale,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = AppColors.Panel.copy(alpha = 0.6f), contentColor = AppColors.TextSecondary,
@@ -348,21 +348,5 @@ private fun AddWindow(modifier: Modifier, onClick: () -> Unit) {
             Text("+", fontSize = 48.sp)
             Text("Add a channel", fontSize = 16.sp)
         }
-    }
-}
-
-@Composable
-private fun OptionButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
-        scale = ClickableSurfaceDefaults.scale(scale = 1f, focusedScale = 1f, pressedScale = 1f),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = AppColors.PanelAlt, contentColor = AppColors.TextPrimary,
-            focusedContainerColor = AppColors.Accent, focusedContentColor = AppColors.OnAccent,
-        ),
-    ) {
-        Text(text, fontSize = 15.sp, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
     }
 }

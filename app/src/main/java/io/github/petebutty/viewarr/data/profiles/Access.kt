@@ -1,6 +1,7 @@
 package io.github.petebutty.viewarr.data.profiles
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -8,7 +9,6 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.petebutty.viewarr.data.remote.services.HttpJson
 import io.github.petebutty.viewarr.data.remote.services.child
 import io.github.petebutty.viewarr.data.remote.services.int
-import io.github.petebutty.viewarr.data.remote.services.str
 import io.github.petebutty.viewarr.data.session.Session
 import io.github.petebutty.viewarr.data.session.SessionStore
 import kotlinx.coroutines.CoroutineScope
@@ -130,8 +130,8 @@ class AccessLoader @Inject constructor(
                 // The only sign-in on this TV: back to signing in. Others saved (profiles): never switch to one of them
                 // by itself (that could hand a locked or PIN profile someone else's): the usual limits, until whoever
                 // is here picks a profile or signs in again.
-                if (sessions.saved.first().none { it.id != s.id }) { android.util.Log.i("Access", "key refused: signing out"); sessions.clear() }
-                else { android.util.Log.i("Access", "key refused: limits applied"); Perms.from(null).let { d -> apply(false, d.locks + Lock.LIVETV, false) } }
+                if (sessions.saved.first().none { it.id != s.id }) { Log.i("Access", "key refused: signing out"); sessions.clear() }
+                else { Log.i("Access", "key refused: limits applied"); Perms.from(null).let { d -> apply(false, d.locks + Lock.LIVETV, false) } }
                 return
             }
         }

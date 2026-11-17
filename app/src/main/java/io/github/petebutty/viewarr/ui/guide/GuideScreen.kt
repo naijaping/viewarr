@@ -1,6 +1,5 @@
 package io.github.petebutty.viewarr.ui.guide
 
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.geometry.CornerRadius
@@ -9,8 +8,12 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -56,6 +59,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -63,10 +67,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Text
+import io.github.petebutty.viewarr.data.dvr.DvrRecording
+import io.github.petebutty.viewarr.data.dvr.DvrState
 import io.github.petebutty.viewarr.data.local.ChannelListItem
 import io.github.petebutty.viewarr.data.local.GuideProgram
 import io.github.petebutty.viewarr.data.repository.SyncState
+import io.github.petebutty.viewarr.ui.common.GroupNames
+import io.github.petebutty.viewarr.ui.common.NewsTicker
+import io.github.petebutty.viewarr.ui.common.RemoteAction
+import io.github.petebutty.viewarr.ui.common.RemoteKeys
+import io.github.petebutty.viewarr.ui.common.Ticker
 import io.github.petebutty.viewarr.ui.theme.AppColors
+import io.github.petebutty.viewarr.ui.theme.Dates
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+import io.github.petebutty.viewarr.ui.theme.Wallpaper
+import kotlinx.coroutines.android.awaitFrame
+import kotlinx.coroutines.delay
 import coil.compose.AsyncImage
 import java.time.Instant
 import java.time.ZoneId
@@ -78,14 +94,14 @@ private const val PAGE = 7
 private val CellText = TextStyle(color = Color.White, fontSize = 13.sp)
 private val CellTextFocused = CellText.copy(fontWeight = FontWeight.SemiBold)
 
-private val timeFormat get() = io.github.petebutty.viewarr.ui.theme.Dates.time
-private val dateFormat get() = io.github.petebutty.viewarr.ui.theme.Dates.dayTime
+private val timeFormat get() = Dates.time
+private val dateFormat get() = Dates.dayTime
 private fun Long.local() = Instant.ofEpochMilli(this).atZone(ZoneId.systemDefault())
 
 @Composable
 fun GuideScreen(
     vm: GuideViewModel,
-    recordings: List<io.github.petebutty.viewarr.data.dvr.DvrRecording> = emptyList(),
+    recordings: List<DvrRecording> = emptyList(),
     /** What's playing: live on this channel, or this catch-up programme. Drawn with an accent outline. */
     playingChannelId: Int? = null,
     playingCatchupRowId: Long? = null,
@@ -101,6 +117,8 @@ fun GuideScreen(
      */
     onPastEnd: (up: Boolean) -> Boolean = { false },
 ) {
+    // (Redrawn when a guide offset changes: the marks in the channel column.)
+    vm.shiftVersion.collectAsStateWithLifecycle().value
     val okPending = remember { mutableStateOf(false) }
     val remote = LocalRemote.current
     val channels by vm.channels.collectAsStateWithLifecycle()
@@ -122,11 +140,13 @@ fun GuideScreen(
     // Scrolled in the same frame as the highlight moves: the effect below runs a frame later, which showed the
     // highlight a row out first, so holding Down flickered between two rows ("ghosting" through the guide fast).
     // The effect stays for the first open (nothing laid out yet) and is a no-op otherwise.
-    androidx.compose.runtime.SideEffect {
+    SideEffect {
         val visible = listState.layoutInfo.visibleItemsInfo
         if (visible.isNotEmpty()) {
             val top = maxOf(0, cursor.row - maxOf(visible.size - 1, 1) / 2)
-            if (top != listState.firstVisibleItemIndex) listState.requestScrollToItem(top)
+            // (And whole rows: a part-scroll, the top row half under the times, was never put right as only the
+            // row was compared. Peter, 2026-11-17.)
+            if (top != listState.firstVisibleItemIndex || listState.firstVisibleItemScrollOffset != 0) listState.requestScrollToItem(top)
         }
     }
     LaunchedEffect(cursor.row, channels.size) {
@@ -134,15 +154,15 @@ fun GuideScreen(
         val visible = listState.layoutInfo.visibleItemsInfo
         val first = visible.firstOrNull()?.index ?: 0
         val shown = maxOf(visible.size, 1)
-        // The highlighted channel kept in the middle of the list (as TiviMate), the list moving under it, rather than
+        // The highlighted channel kept in the middle of the list (as classic IPTV apps), the list moving under it, rather than
         // only once it reaches the bottom; near the top and the end the list stops and the highlight moves instead.
         // (The last row is usually only partly on screen, so it isn't counted.)
         val whole = maxOf(shown - 1, 1)
         val top = maxOf(0, target - whole / 2)
-        if (visible.isEmpty() || top != first) listState.scrollToItem(top)
+        if (visible.isEmpty() || top != first || listState.firstVisibleItemScrollOffset != 0) listState.scrollToItem(top)
         // First time (nothing laid out yet, so the middle wasn't known): once it is, centre it exactly, still a jump.
         if (visible.isEmpty()) {
-            kotlinx.coroutines.android.awaitFrame()
+            awaitFrame()
             val v = listState.layoutInfo.visibleItemsInfo
             val t = maxOf(0, target - (maxOf(v.size, 1) - 1).coerceAtLeast(1) / 2)
             if (v.isNotEmpty() && t != (v.firstOrNull()?.index ?: 0)) listState.scrollToItem(t)
@@ -150,9 +170,9 @@ fun GuideScreen(
     }
 
     // Left in the guide: the Viewarr preset carries on back through the programmes into catch-up (tap or hold; it stops
-    // at the start); TiviMate's goes back a programme, or on what's on now opens the channel groups, and holding Left
+    // at the start); classic IPTV apps' goes back a programme, or on what's on now opens the channel groups, and holding Left
     // goes into catch-up. (Older choices are kept as the Viewarr way.)
-    val guideLeft = if (remote.guideLeft == GuideLeft.NowMenu) GuideLeft.NowMenu else GuideLeft.AlwaysPast
+    val nowMenu = remote.guideLeft == GuideLeft.NowMenu
     Column(
         Modifier
             .fillMaxSize()
@@ -160,16 +180,7 @@ fun GuideScreen(
             .focusRequester(focusRequester)
             .focusable(enabled = focusEnabled)
             .onPreviewKeyEvent { e ->
-                if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.EdgeMenu) {
-                    // Back through the programmes and into catch-up; holding Left scrolls fast and stops at the
-                    // start (a scroll can't overshoot into the menu). A fresh press at the start opens the menu.
-                    // A tap that can't go further only because the earlier programmes are still being fetched
-                    // carries on browsing (it moves once they're in) instead of opening the menu; otherwise at the
-                    // start the menu opens straight away.
-                    if (e.type == KeyEventType.KeyDown && !vm.moveLeft() && e.nativeKeyEvent.repeatCount == 0 && !vm.loadingPast) onOpenMenu()
-                    return@onPreviewKeyEvent true
-                }
-                if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.NowMenu) {
+                if (e.key == Key.DirectionLeft && nowMenu) {
                     // Tap: back one programme, or the menu when already on what's on now. Hold: back through the guide;
                     // but a hold on what's on now (going into catch-up) steps back just one programme (it raced past
                     // several, stepping on every repeat; Peter, 2026-11-15). Already in the past, a hold scrolls on.
@@ -189,38 +200,9 @@ fun GuideScreen(
                     }
                     return@onPreviewKeyEvent true
                 }
-                if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.AlwaysPast) {
-                    if (e.type == KeyEventType.KeyDown) vm.moveLeft()
-                    return@onPreviewKeyEvent true
-                }
-                if (e.key == Key.DirectionLeft && guideLeft == GuideLeft.MenuTapPastHold) {
-                    // Tap opens the menu; holding Left browses back through the guide.
-                    when {
-                        e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 -> leftPending.value = true
-                        e.type == KeyEventType.KeyDown -> {
-                            leftPending.value = false
-                            vm.moveLeft()
-                        }
-                        e.type == KeyEventType.KeyUp && leftPending.value -> {
-                            leftPending.value = false
-                            onOpenMenu()
-                        }
-                    }
-                    return@onPreviewKeyEvent true
-                }
                 if (e.key == Key.DirectionLeft) {
-                    // Short press browses back through the guide; holding Left opens the categories menu.
-                    when {
-                        e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0 -> leftPending.value = true
-                        e.type == KeyEventType.KeyDown && leftPending.value -> {
-                            leftPending.value = false
-                            onOpenMenu()
-                        }
-                        e.type == KeyEventType.KeyUp && leftPending.value -> {
-                            leftPending.value = false
-                            vm.moveLeft()
-                        }
-                    }
+                    // (The Viewarr way: back through the programmes, tap or hold.)
+                    if (e.type == KeyEventType.KeyDown) vm.moveLeft()
                     return@onPreviewKeyEvent true
                 }
                 // OK: a tap selects (play / info); holding it opens the record options.
@@ -240,19 +222,19 @@ fun GuideScreen(
                 }
                 if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 // Buttons through RemoteKeys, so ones taught in Settings → Remote work here too.
-                val action = io.github.petebutty.viewarr.ui.common.RemoteKeys.action(e)
+                val action = RemoteKeys.action(e)
                 // Past the last channel / above the first: Settings → Live TV → TV guide → End of a list (Jump: 1, Stop: 2).
-                val ends = if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.LIST_ENDS) == 0) 1 else 2
+                val ends = if (AppColors.palette.opt(UiOpts.LIST_ENDS) == 0) 1 else 2
                 val fresh = e.nativeKeyEvent.repeatCount == 0
                 when {
                     e.key == Key.DirectionUp -> { if (!vm.moveVertical(-1, ends, fresh) && fresh) onPastEnd(true) }
                     e.key == Key.DirectionDown -> { if (!vm.moveVertical(1, ends, fresh) && fresh) onPastEnd(false) }
-                    action == io.github.petebutty.viewarr.ui.common.RemoteAction.ChannelUp || e.key == Key.PageUp ->
+                    action == RemoteAction.ChannelUp || e.key == Key.PageUp ->
                         vm.moveVertical(if (remote.channelKeys == ChannelKeys.Reversed) PAGE else -PAGE, ends, fresh)
-                    action == io.github.petebutty.viewarr.ui.common.RemoteAction.ChannelDown || e.key == Key.PageDown ->
+                    action == RemoteAction.ChannelDown || e.key == Key.PageDown ->
                         vm.moveVertical(if (remote.channelKeys == ChannelKeys.Reversed) -PAGE else PAGE, ends, fresh)
-                    e.key == Key.DirectionRight || action == io.github.petebutty.viewarr.ui.common.RemoteAction.FastForward -> vm.moveRight()
-                    action == io.github.petebutty.viewarr.ui.common.RemoteAction.Rewind -> vm.moveLeft()
+                    e.key == Key.DirectionRight || action == RemoteAction.FastForward -> vm.moveRight()
+                    action == RemoteAction.Rewind -> vm.moveLeft()
                     // (Record: Settings → Remote buttons, handled above the guide.)
                     else -> return@onPreviewKeyEvent false
                 }
@@ -260,29 +242,29 @@ fun GuideScreen(
             },
     ) {
         // The highlighted programme's picture (looked up once you rest on it a moment), else the channel logo.
-        val art by androidx.compose.runtime.produceState<String?>(null, focused?.rowId, io.github.petebutty.viewarr.ui.theme.AppColors.palette.guideArt) {
+        val art by produceState<String?>(null, focused?.rowId, AppColors.palette.guideArt) {
             // The guide's own picture first (from Dispatcharr / the guide source), else a lookup by title.
             // Settings → Appearance → Programme pictures off (or low-memory mode): none at all.
-            if (!io.github.petebutty.viewarr.ui.theme.AppColors.palette.guideArt) { value = null; return@produceState }
+            if (!AppColors.palette.guideArt) { value = null; return@produceState }
             focused?.image?.let { value = it; return@produceState }
             val t = focused?.title ?: run { value = null; return@produceState }
-            kotlinx.coroutines.delay(350)
+            delay(350)
             // Dispatcharr's own picture for it (the grid the guide syncs from leaves pictures out), else TMDB by title.
             value = focused?.let { vm.pictureFor(it) } ?: vm.artFor(t)
         }
         // Its title logo (TMDB), shown instead of the title text when there is one.
-        val titleLogo by androidx.compose.runtime.produceState<String?>(null, focused?.rowId, io.github.petebutty.viewarr.ui.theme.AppColors.palette.guideTitleLogos) {
+        val titleLogo by produceState<String?>(null, focused?.rowId, AppColors.palette.guideTitleLogos) {
             // Settings → Appearance → Programme title logos (off, or low-memory mode: the name only).
-            if (!io.github.petebutty.viewarr.ui.theme.AppColors.palette.guideTitleLogos) { value = null; return@produceState }
+            if (!AppColors.palette.guideTitleLogos) { value = null; return@produceState }
             value = null // (the last programme's logo mustn't sit over this one while it's looked up)
             // Switched off for this channel's group (Settings → Appearance → Title logos by group).
-            if (selectedChannel?.groupName?.let { !io.github.petebutty.viewarr.ui.theme.AppColors.palette.shows("logo:$it") } == true) { value = null; return@produceState }
+            if (selectedChannel?.groupName?.let { !AppColors.palette.shows("logo:$it") } == true) { value = null; return@produceState }
             val t = focused?.title ?: run { value = null; return@produceState }
-            kotlinx.coroutines.delay(350)
+            delay(350)
             value = vm.logoFor(t)
         }
         // "What's selected" wallpaper: the highlighted programme's picture.
-        androidx.compose.runtime.LaunchedEffect(art) { art?.let { io.github.petebutty.viewarr.ui.theme.Wallpaper.selected = it } }
+        LaunchedEffect(art) { art?.let { Wallpaper.selected = it } }
         InfoPanel(selectedChannel, focused, now, serverUrl, art, titleLogo)
         Spacer(Modifier.height(10.dp))
 
@@ -292,7 +274,8 @@ fun GuideScreen(
                     when (val s = sync) {
                         is SyncState.Running -> s.message
                         is SyncState.Failed -> s.message
-                        SyncState.Idle -> "No channels yet."
+                        // (Where to fix it, not just that it's empty. UI review, Tier 2.)
+                        SyncState.Idle -> "No channels yet. Add a live TV source in Settings → Accounts & sources."
                     },
                     color = AppColors.TextSecondary,
                     fontSize = 18.sp,
@@ -305,7 +288,7 @@ fun GuideScreen(
             val gridWidth = maxWidth - ChannelColumn
             // Scheduled / in-progress Dispatcharr recordings, per channel: drawn as a red dot on the programme.
             val recordedByChannel = remember(recordings) {
-                recordings.filter { it.state == io.github.petebutty.viewarr.data.dvr.DvrState.Scheduled || it.state == io.github.petebutty.viewarr.data.dvr.DvrState.Recording }
+                recordings.filter { it.state == DvrState.Scheduled || it.state == DvrState.Recording }
                     .groupBy({ it.channelId }, { it.start..it.end })
             }
 
@@ -330,6 +313,7 @@ fun GuideScreen(
                             serverUrl = serverUrl,
                             textMeasurer = textMeasurer,
                             gridWidth = gridWidth,
+                            shiftMin = vm.totalShiftMin(channel),
                         )
                     }
                 }
@@ -346,7 +330,7 @@ fun GuideScreen(
             }
         }
         // Settings → Appearance → News ticker → In the TV guide.
-        if (io.github.petebutty.viewarr.ui.common.Ticker.inGuide) io.github.petebutty.viewarr.ui.common.NewsTicker(Modifier.fillMaxWidth().padding(top = 6.dp))
+        if (Ticker.inGuide) NewsTicker(Modifier.fillMaxWidth().padding(top = 6.dp))
     }
 }
 
@@ -384,7 +368,7 @@ private fun InfoPanel(channel: ChannelListItem?, program: GuideProgram?, now: Lo
             }
         }
         // (A logo that fails to load gives the name back, rather than no title at all.)
-        var logoFailed by androidx.compose.runtime.remember(titleLogo) { androidx.compose.runtime.mutableStateOf(false) }
+        var logoFailed by remember(titleLogo) { mutableStateOf(false) }
         Column(Modifier.weight(1f).padding(start = 24.dp, top = 4.dp)) {
             Row(verticalAlignment = Alignment.Top) {
                 // The show's logo (TMDB) in place of its name when it has one; the name otherwise.
@@ -407,7 +391,7 @@ private fun InfoPanel(channel: ChannelListItem?, program: GuideProgram?, now: Lo
                     modifier = Modifier.weight(1f),
                 )
                 channel?.groupName?.let {
-                    Text(it, fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 16.dp))
+                    Text(GroupNames.display(it), fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 16.dp))
                 }
             }
             if (program != null) {
@@ -473,7 +457,7 @@ private fun TimeHeader(now: Long, windowStart: Long, sync: SyncState, gridWidth:
         val shownDay = windowStart.local().toLocalDate()
         val otherDay = shownDay != now.local().toLocalDate()
         Text(
-            if (otherDay) windowStart.local().format(io.github.petebutty.viewarr.ui.theme.Dates.day) else now.local().format(dateFormat),
+            if (otherDay) windowStart.local().format(Dates.day) else now.local().format(dateFormat),
             fontSize = 13.sp,
             color = if (otherDay) AppColors.Accent else AppColors.TextPrimary,
             modifier = Modifier.align(Alignment.CenterStart),
@@ -485,7 +469,7 @@ private fun TimeHeader(now: Long, windowStart: Long, sync: SyncState, gridWidth:
             while (t < windowStart + GuideViewModel.VISIBLE_MS) {
                 // Midnight along the top: the new day's name with it ("Sat 00:00").
                 Text(
-                    (if (t.local().hour == 0 && t.local().minute == 0) t.local().format(io.github.petebutty.viewarr.ui.theme.Dates.shortDay) + "  " else "") + t.local().format(timeFormat),
+                    (if (t.local().hour == 0 && t.local().minute == 0) t.local().format(Dates.shortDay) + "  " else "") + t.local().format(timeFormat),
                     fontSize = 13.sp,
                     color = AppColors.TextSecondary,
                     modifier = Modifier.align(Alignment.CenterStart).offset(x = xOf(t, windowStart, gridWidth) + 4.dp),
@@ -519,6 +503,7 @@ private fun GuideRow(
     serverUrl: String,
     textMeasurer: TextMeasurer,
     gridWidth: Dp = 0.dp,
+    shiftMin: Int = 0,
 ) {
     val guideAlpha = AppColors.palette.guideAlpha
     val windowEnd = windowStart + GuideViewModel.VISIBLE_MS
@@ -528,12 +513,12 @@ private fun GuideRow(
                 .width(ChannelColumn)
                 .fillMaxHeight()
                 .padding(end = 4.dp)
-                .background(if (selected) AppColors.RowSelected else AppColors.CellFuture.copy(alpha = AppColors.palette.guideAlpha), RoundedCornerShape(if (AppColors.palette.squareCorners) 0.dp else 6.dp))
+                .background(if (selected) AppColors.RowSelected else AppColors.CellFuture.copy(alpha = guideAlpha), RoundedCornerShape(if (AppColors.palette.squareCorners) 0.dp else 6.dp))
                 .padding(end = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Start,
         ) {
-            if (io.github.petebutty.viewarr.ui.theme.AppColors.palette.showNumbers) Text(
+            if (AppColors.palette.showNumbers) Text(
                 channel.number?.let(::formatNumber).orEmpty(),
                 fontSize = 13.sp,
                 color = if (selected) AppColors.TextPrimary else AppColors.TextSecondary,
@@ -541,8 +526,8 @@ private fun GuideRow(
                 maxLines = 1,
             )
             // (In from the tile's rounded edge, numbers or not: flush against it, wide logos looked cut off on the left.)
-            Box(Modifier.padding(start = if (io.github.petebutty.viewarr.ui.theme.AppColors.palette.showNumbers) 0.dp else 8.dp).width(56.dp).fillMaxHeight().padding(vertical = 5.dp).clipToBounds(), contentAlignment = Alignment.Center) {
-                if ((channel.logoId != null || channel.logoUrl != null) && io.github.petebutty.viewarr.ui.theme.AppColors.palette.channelLogos) {
+            Box(Modifier.padding(start = if (AppColors.palette.showNumbers) 0.dp else 8.dp).width(56.dp).fillMaxHeight().padding(vertical = 5.dp).clipToBounds(), contentAlignment = Alignment.Center) {
+                if ((channel.logoId != null || channel.logoUrl != null) && AppColors.palette.channelLogos) {
                     AsyncImage(
                         model = channelLogo(serverUrl, channel),
                         contentDescription = null,
@@ -560,11 +545,13 @@ private fun GuideRow(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(start = 8.dp).weight(1f),
             )
-            if (channel.catchupDays > 0 && AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CATCHUP_ICONS) != 2) CatchupIcon(Modifier.padding(start = 4.dp).size(14.dp))
+            // Its guide moved (Guide time offset / Guide times): shown so it's never forgotten.
+            if (shiftMin != 0) Text(shiftLabel(shiftMin), fontSize = 11.sp, color = AppColors.Accent, maxLines = 1, modifier = Modifier.padding(start = 4.dp))
+            if (channel.catchupDays > 0 && AppColors.palette.opt(UiOpts.CATCHUP_ICONS) != 2) CatchupIcon(Modifier.padding(start = 4.dp).size(14.dp))
         }
         val catchupFrom = if (channel.catchupDays > 0) now - channel.catchupDays * 86_400_000L else null
         val onAccent = AppColors.OnAccent
-        val programmeIcons = AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.CATCHUP_ICONS) == 0
+        val programmeIcons = AppColors.palette.opt(UiOpts.CATCHUP_ICONS) == 0
         val accent = AppColors.Accent
         val iconColor = AppColors.TextSecondary
         val square = AppColors.palette.squareCorners
@@ -573,26 +560,38 @@ private fun GuideRow(
         // the channel list's does. Only the row with the highlight animates (read in drawing, so only it redraws).
         // (Only when its name doesn't fit its block: a name that fits leaves the row still, with nothing redrawn.)
         val focusedP = focusedRowId?.let { id -> programs.firstOrNull { it.rowId == id } }
-        val gridPx = with(androidx.compose.ui.platform.LocalDensity.current) { gridWidth.toPx() }
+        val density = LocalDensity.current
+        val gridPx = with(density) { gridWidth.toPx() }
         val overflows = focusedP != null && gridPx > 0f && run {
             val visibleMs = minOf(focusedP.endTime, windowEnd) - maxOf(focusedP.startTime, windowStart)
-            val cellPx = visibleMs * gridPx / GuideViewModel.VISIBLE_MS - with(androidx.compose.ui.platform.LocalDensity.current) { 22.dp.toPx() }
+            val cellPx = visibleMs * gridPx / GuideViewModel.VISIBLE_MS - with(density) { 22.dp.toPx() }
             textMeasurer.measure(text = guideTitle(focusedP), style = CellTextFocused, maxLines = 1, softWrap = false).size.width > cellPx
         }
-        val marquee = if (overflows) {
-            val t = androidx.compose.animation.core.rememberInfiniteTransition(label = "guideMarquee")
-            t.animateFloat(
-                initialValue = 0f, targetValue = 1f,
-                animationSpec = androidx.compose.animation.core.infiniteRepeatable(androidx.compose.animation.core.tween(9_000, easing = androidx.compose.animation.core.LinearEasing)),
-                label = "guideMarqueePhase",
-            )
+        // The scrolling name, measured once (not every frame), at a steady speed: a short pause, along, a pause, back.
+        // It's drawn on its own layer over the row, so only it redraws as it moves (the whole row's text was measured
+        // and drawn again every frame, too much for a frame on some boxes: it juddered).
+        val marqueeText = if (overflows && focusedP != null) remember(focusedP.rowId, focusedP.title) {
+            textMeasurer.measure(text = guideTitle(focusedP), style = CellTextFocused.copy(color = AppColors.OnAccent), maxLines = 1, softWrap = false)
         } else null
-        Canvas(Modifier.weight(1f).fillMaxHeight()) {
+        // Where it goes (set while the row draws): its left edge, the room it has, the row's height.
+        val marqueeAt = remember { FloatArray(3) }
+        // A clock (ms since the name started scrolling): the layer works out where the name is from its real room, so
+        // every name moves at the same speed (each used to take a time worked out from a guess at its block's width).
+        val marquee = if (marqueeText != null) {
+            val clock = remember(focusedP?.rowId) { mutableLongStateOf(0L) }
+            LaunchedEffect(focusedP?.rowId) {
+                val start = withFrameMillis { it }
+                while (true) withFrameMillis { clock.longValue = it - start }
+            }
+            clock
+        } else null
+        Box(Modifier.weight(1f).fillMaxHeight()) {
+        Canvas(Modifier.matchParentSize()) {
             val pxPerMs = size.width / GuideViewModel.VISIBLE_MS
             val gap = 2.dp.toPx()
             val pad = 8.dp.toPx()
             val radius = if (square) CornerRadius.Zero else CornerRadius(6.dp.toPx())
-            val outline = androidx.compose.ui.graphics.drawscope.Stroke(1.dp.toPx())
+            val outline = Stroke(1.dp.toPx())
             val ordered = if (focusedRowId == null) programs else programs.sortedBy { it.rowId == focusedRowId }
             for (p in ordered) {
                 if (p.endTime <= windowStart || p.startTime >= windowEnd) continue
@@ -635,7 +634,7 @@ private fun GuideRow(
                 if (isPlaying && !isFocused) {
                     val w = 2.5.dp.toPx()
                     drawRoundRect(accent, topLeft = Offset(x0 + w / 2, w / 2), size = Size(x1 - x0 - w, size.height - w), cornerRadius = radius,
-                        style = androidx.compose.ui.graphics.drawscope.Stroke(w))
+                        style = Stroke(w))
                 }
                 val replayable = catchupFrom != null && p.startTime < now && p.startTime >= catchupFrom
                 val iconSide = 12.dp.toPx()
@@ -645,17 +644,10 @@ private fun GuideRow(
                     textX += iconSide + 5.dp.toPx()
                 }
                 val textWidth = (x1 - textX - pad).toInt()
-                val full = if (isFocused && marquee != null && textWidth > 12)
-                    textMeasurer.measure(text = guideTitle(p), style = CellTextFocused.copy(color = AppColors.OnAccent), maxLines = 1, softWrap = false)
-                else null
-                if (full != null && full.size.width > textWidth) {
-                    // Too long for its block: scrolled through, then back to the start.
-                    val m = marquee!!.value
-                    val travel = (full.size.width - textWidth).toFloat()
-                    val shift = travel * when { m < 0.2f -> 0f; m < 0.8f -> (m - 0.2f) / 0.6f; else -> 1f }
-                    clipRect(left = textX, top = 0f, right = textX + textWidth, bottom = size.height) {
-                        drawText(full, topLeft = Offset(textX - shift, (size.height - full.size.height) / 2f))
-                    }
+                val scrolls = isFocused && marqueeText != null && textWidth > 12 && marqueeText.size.width > textWidth
+                if (scrolls) {
+                    // Too long for its block: drawn by the layer above (only it redraws as it moves).
+                    marqueeAt[0] = textX; marqueeAt[1] = textWidth.toFloat(); marqueeAt[2] = size.height
                 } else if (textWidth > 12) {
                     val layout = textMeasurer.measure(
                         text = guideTitle(p),
@@ -672,6 +664,22 @@ private fun GuideRow(
                     drawCircle(RecordRed, dot, Offset(x1 - pad - dot, size.height / 2f))
                 }
             }
+        }
+        // The scrolling name, on its own layer.
+        if (marqueeText != null && marquee != null) Canvas(Modifier.matchParentSize()) {
+            val textX = marqueeAt[0]; val textWidth = marqueeAt[1]
+            if (textWidth <= 0f) return@Canvas
+            val travel = (marqueeText.size.width - textWidth).coerceAtLeast(0f)
+            // 60 units a second for every name: a 1.2 s pause, along, 1.2 s at the end, back to the start.
+            val speed = 60.dp.toPx() / 1000f
+            val pause = 1_200L
+            val scrollMs = (travel / speed).toLong().coerceAtLeast(1L)
+            val t = marquee.longValue % (pause + scrollMs + pause)
+            val shift = when { t < pause -> 0f; t < pause + scrollMs -> (t - pause) * speed; else -> travel }
+            clipRect(left = textX, top = 0f, right = textX + textWidth, bottom = size.height) {
+                drawText(marqueeText, topLeft = Offset(textX - shift, (size.height - marqueeText.size.height) / 2f))
+            }
+        }
         }
     }
 }
@@ -716,7 +724,7 @@ private fun xOf(t: Long, windowStart: Long, gridWidth: Dp): Dp =
 
 /** A programme's name in the guide and the channel list: with its series / episode or not (Appearance → Live TV). */
 fun guideTitle(p: GuideProgram): String =
-    if (io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.GUIDE_EPISODE) == 0) displayTitle(p) else p.title
+    if (AppColors.palette.opt(UiOpts.GUIDE_EPISODE) == 0) displayTitle(p) else p.title
 
 fun displayTitle(p: GuideProgram): String {
     val se = when {
@@ -728,10 +736,10 @@ fun displayTitle(p: GuideProgram): String {
     return p.title + if (sep.isEmpty()) se else sep + se.removePrefix(". ")
 }
 
-fun logoUrl(serverUrl: String, logoId: Int) = "${serverUrl.trimEnd('/')}/api/channels/logos/$logoId/cache/"
+private fun logoUrl(serverUrl: String, logoId: Int) = "${serverUrl.trimEnd('/')}/api/channels/logos/$logoId/cache/"
 
 /** A channel's logo: the provider's own address (IPTV provider) or Dispatcharr's cached logo. */
-fun channelLogo(serverUrl: String, channel: io.github.petebutty.viewarr.data.local.ChannelListItem): String? =
+fun channelLogo(serverUrl: String, channel: ChannelListItem): String? =
     channel.logoUrl ?: channel.logoId?.let { logoUrl(serverUrl, it) }
 
 fun formatNumber(n: Double): String = if (n % 1.0 == 0.0) n.toLong().toString() else n.toString()

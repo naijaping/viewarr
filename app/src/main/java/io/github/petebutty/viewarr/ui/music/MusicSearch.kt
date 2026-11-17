@@ -63,8 +63,8 @@ fun MusicSearchResults(query: String, canFocus: Boolean, onOpen: (MusicCard) -> 
                     Surface(
                         onClick = { vm.play(r.songs, i) },
                         modifier = free.width(260.dp),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                        scale = io.github.petebutty.viewarr.ui.theme.NoScale,
+                        shape = ClickableSurfaceDefaults.shape(io.github.petebutty.viewarr.ui.theme.Tokens.RowShape),
                         colors = ClickableSurfaceDefaults.colors(
                             containerColor = AppColors.Panel, contentColor = AppColors.TextPrimary,
                             focusedContainerColor = AppColors.Accent, focusedContentColor = AppColors.OnAccent,
@@ -87,5 +87,6 @@ fun MusicSearchResults(query: String, canFocus: Boolean, onOpen: (MusicCard) -> 
 
 @Composable
 private fun Heading(text: String) {
-    Text(text, fontSize = 16.sp, color = AppColors.TextPrimary, modifier = Modifier.padding(top = 14.dp, bottom = 6.dp))
+    // (The one row title style.)
+    io.github.petebutty.viewarr.ui.media.RowTitle(text, Modifier.padding(top = 14.dp))
 }

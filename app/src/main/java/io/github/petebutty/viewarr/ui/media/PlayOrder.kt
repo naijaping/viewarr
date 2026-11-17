@@ -1,5 +1,8 @@
 package io.github.petebutty.viewarr.ui.media
 
+import io.github.petebutty.viewarr.ui.theme.AppColors
+import io.github.petebutty.viewarr.ui.theme.UiOpts
+
 /**
  * Settings → Playback → Streams → Play order: where Play looks, in turn, for a film or episode. Standard: your own
  * servers (Plex, Jellyfin, Emby), then IPTV (your provider's films and series), then your addons.
@@ -20,5 +23,5 @@ object PlayOrder {
     fun label(o: List<Source>) = o.joinToString(", then ") { when (it) { Source.Servers -> "your servers"; Source.Iptv -> "IPTV"; Source.Addons -> "addons" } }
         .replaceFirstChar { it.uppercase() }
 
-    fun current(): List<Source> = orders.getOrElse(io.github.petebutty.viewarr.ui.theme.AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.PLAY_ORDER)) { orders[0] }
+    fun current(): List<Source> = orders.getOrElse(AppColors.palette.opt(UiOpts.PLAY_ORDER)) { orders[0] }
 }

@@ -1,7 +1,7 @@
 # Shown once, the first time a new version opens (not on a fresh install). Keep it to the few things worth knowing.
 # Lines starting with "- " are the points; the first line without "#" or "-" is the heading.
-Smarter source switching, game pages and a news ticker
-- Source switching works with every provider, including ones allowing one line
-- Sports: OK on a game shows line-ups, form and stats; record a whole team
-- A news ticker with your choice of feeds and looks (Settings → Appearance)
-- Programme title logos in the guide, and the menu search box you type straight into
+A new look, My Library, and Live now in the guide
+- A new logo, and the menu takes the page's own background
+- My Library shows your own servers' films and shows (choose its rows in Settings)
+- Live now is a group in the TV guide, with real live sport only
+- EPG offset is a slider per channel, and the guide's Timeline is in its hold-OK menu

@@ -10,10 +10,12 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import java.util.Locale
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Settings → Playback. The first entry of each enum is the default. */
+// Settings → Playback. The first entry of each enum is the default.
+
 /** The first entry is the default (anyone who never chose). Built-in since 0.23: mpv is the backup for unusual files. */
 enum class PlayerEngine(override val label: String) : RemoteChoice {
     Builtin("Built-in (recommended)"),
@@ -236,8 +238,8 @@ data class PlaybackSettings(
     val trailerSound: TrailerSound = TrailerSound.entries.first(),
 ) {
     /** ISO 639-1 code for the chosen audio language, or null for the original track. */
-    fun audioCode(): String? = audioLanguage.code?.let { if (it == "device") java.util.Locale.getDefault().language else it }
-    fun subtitleCode(): String = subtitleLanguage.code.let { if (it == "device" || it == null) java.util.Locale.getDefault().language else it }
+    fun audioCode(): String? = audioLanguage.code?.let { if (it == "device") Locale.getDefault().language else it }
+    fun subtitleCode(): String = subtitleLanguage.code.let { if (it == "device" || it == null) Locale.getDefault().language else it }
 }
 
 val LocalPlayback = staticCompositionLocalOf { PlaybackSettings() }

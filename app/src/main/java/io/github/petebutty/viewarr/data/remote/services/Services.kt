@@ -1,14 +1,24 @@
 package io.github.petebutty.viewarr.data.remote.services
 
+import io.github.petebutty.viewarr.BuildConfig
 import io.github.petebutty.viewarr.data.accounts.AddonInfo
 import io.github.petebutty.viewarr.data.accounts.MediaServerAuth
 import io.github.petebutty.viewarr.data.accounts.PlexAuth
 import io.github.petebutty.viewarr.data.accounts.TraktAuth
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import java.net.SocketTimeoutException
 import java.net.URLEncoder
+import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -87,7 +97,7 @@ class TraktService @Inject constructor(private val http: HttpJson) {
 
     companion object {
         /** Trakt app client id, from secrets.properties at build time (device login needs no secret). Blank = Trakt not offered. */
-        val CLIENT_ID: String = io.github.petebutty.viewarr.BuildConfig.TRAKT_CLIENT_ID
+        val CLIENT_ID: String = BuildConfig.TRAKT_CLIENT_ID
     }
 }
 
@@ -157,9 +167,13 @@ class PlexService @Inject constructor(private val http: HttpJson) {
     private fun xml(deviceId: String, token: String) = headers(deviceId, token) + ("Accept" to "application/xml")
 
     /** One attribute (XML) or field (JSON) from plex.tv's older account endpoints, which answer in either. */
-    private fun field(text: String, name: String): String? =
-        Regex("""\b$name="([^"]*)"""").find(text)?.groupValues?.get(1)?.let(::unescape)
-            ?: Regex(""""$name"\s*:\s*"?([^",}]*)"?""").find(text)?.groupValues?.get(1)
+    private fun field(text: String, name: String): String? {
+        val (xmlAttr, jsonField) = fieldPatterns.getOrPut(name) { Regex("""\b$name="([^"]*)"""") to Regex(""""$name"\s*:\s*"?([^",}]*)"?""") }
+        return xmlAttr.find(text)?.groupValues?.get(1)?.let(::unescape) ?: jsonField.find(text)?.groupValues?.get(1)
+    }
+
+    /** [field]'s two patterns per name, made once (it's called for every attribute of every user and server). */
+    private val fieldPatterns = ConcurrentHashMap<String, Pair<Regex, Regex>>()
 
     private fun unescape(v: String) = v.replace("&quot;", "\"").replace("&apos;", "'").replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&")
 
@@ -190,7 +204,7 @@ class PlexService @Inject constructor(private val http: HttpJson) {
         val body = buildJsonObject {
             put("server_id", machineId)
             put("shared_server", buildJsonObject {
-                put("library_section_ids", kotlinx.serialization.json.JsonArray(sections.map { JsonPrimitive(it) }))
+                put("library_section_ids", JsonArray(sections.map { JsonPrimitive(it) }))
                 put("invited_id", userId.toLongOrNull() ?: error("Plex gave an odd user id ($userId)."))
             })
             put("sharing_settings", buildJsonObject {
@@ -246,19 +260,19 @@ class MediaServerService @Inject constructor(private val http: HttpJson) {
      */
     suspend fun discover(emby: Boolean, alsoTry: List<String> = emptyList()): List<ServerInfo> {
         val candidates = LinkedHashSet<String>()
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             runCatching {
-                java.net.DatagramSocket().use { sock ->
+                DatagramSocket().use { sock ->
                     sock.broadcast = true
                     sock.soTimeout = 500
                     val ask = (if (emby) "who is EmbyServer?" else "who is JellyfinServer?").toByteArray()
-                    sock.send(java.net.DatagramPacket(ask, ask.size, java.net.InetAddress.getByName("255.255.255.255"), 7359))
+                    sock.send(DatagramPacket(ask, ask.size, InetAddress.getByName("255.255.255.255"), 7359))
                     val end = System.currentTimeMillis() + 2_000
                     val buf = ByteArray(4096)
                     while (System.currentTimeMillis() < end) {
-                        val p = java.net.DatagramPacket(buf, buf.size)
-                        try { sock.receive(p) } catch (_: java.net.SocketTimeoutException) { continue }
-                        val j = runCatching { kotlinx.serialization.json.Json.parseToJsonElement(String(p.data, 0, p.length)) }.getOrNull() ?: continue
+                        val p = DatagramPacket(buf, buf.size)
+                        try { sock.receive(p) } catch (_: SocketTimeoutException) { continue }
+                        val j = runCatching { Json.parseToJsonElement(String(p.data, 0, p.length)) }.getOrNull() ?: continue
                         val address = j.str("Address")?.trimEnd('/') ?: continue
                         val port = Regex(":(\\d+)$").find(address)?.groupValues?.get(1) ?: "8096"
                         candidates += address
@@ -269,14 +283,12 @@ class MediaServerService @Inject constructor(private val http: HttpJson) {
         }
         alsoTry.forEach { candidates += "http://$it:8096" }
         val found = LinkedHashMap<String, ServerInfo>()
-        for (c in candidates) {
-            val s = findServer(c, emby) ?: continue
+        fun keep(s: ServerInfo) {
             if (s.product.isBlank() || s.product.contains("Emby", ignoreCase = true) == emby) found.putIfAbsent(s.name, s)
         }
+        for (c in candidates) findServer(c, emby)?.let(::keep)
         // Nothing answered the broadcast (e.g. Docker without UDP 7359 mapped): look for port 8096 on the network.
-        if (found.isEmpty()) lanScan(8096) { url -> findServer(url, emby) }.forEach { s ->
-            if (s.product.isBlank() || s.product.contains("Emby", ignoreCase = true) == emby) found.putIfAbsent(s.name, s)
-        }
+        if (found.isEmpty()) lanScan(8096) { url -> findServer(url, emby) }.forEach(::keep)
         return found.values.toList()
     }
 

@@ -47,13 +47,13 @@ data class EpisodeInfo(
 /** One episode in your Plex library: its item key, resume point and whether it's been watched. */
 data class PlexEpisode(val ratingKey: String, val viewOffsetMs: Long, val watched: Boolean)
 
+/** A shortcut's logo: [square] app icons (streaming services) fill the circle; network logos sit on a light disc. */
+data class ServiceLogo(val url: String, val square: Boolean)
+
 /**
  * A row of titles. Rows with the same [group] are shown as one (e.g. continue watching on every server, or the
  * same library's recently added on two Plex servers); [groupName] is the library name for the merged title.
  */
-/** A shortcut's logo: [square] app icons (streaming services) fill the circle; network logos sit on a light disc. */
-data class ServiceLogo(val url: String, val square: Boolean)
-
 data class MediaRow(val id: String, val title: String, val items: List<MediaItem>, val group: String? = null, val groupName: String? = null)
 
 /**
@@ -85,7 +85,6 @@ enum class LibrarySort(val label: String, val plex: String, val jellyfin: Pair<S
     Rating("Rating", "audienceRating:desc", "CommunityRating,SortName" to "Descending"),
 }
 
-/** A copy of a title on one of the user's own servers (Plex, Jellyfin, Emby). */
 /** A person's page header: photo, life dates and place, and their TMDB biography. */
 data class PersonInfo(
     val name: String,
@@ -99,6 +98,7 @@ data class PersonInfo(
     val loading: Boolean = false,
 )
 
+/** A copy of a title on one of the user's own servers (Plex, Jellyfin, Emby). */
 data class LibraryCopy(val source: String, val detail: String? = null, val ref: String? = null, val version: CopyVersion? = null)
 
 /**

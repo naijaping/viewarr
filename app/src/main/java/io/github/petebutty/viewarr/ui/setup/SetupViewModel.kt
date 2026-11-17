@@ -20,7 +20,6 @@ import io.github.petebutty.viewarr.data.session.SessionStore
 import io.github.petebutty.viewarr.setup.PhoneSetupServer
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
@@ -36,6 +35,15 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import io.github.petebutty.viewarr.data.accounts.AddonInfo
+import io.github.petebutty.viewarr.data.music.MusicLibrary
+import io.github.petebutty.viewarr.data.music.SubsonicClient
+import io.github.petebutty.viewarr.data.profiles.Invites
+import io.github.petebutty.viewarr.data.remote.services.HttpJson
+import io.github.petebutty.viewarr.data.remote.services.SeerrService
+import io.github.petebutty.viewarr.data.session.Session
+import io.github.petebutty.viewarr.data.settings.RowLayoutStore
+import io.github.petebutty.viewarr.playback.MusicPlayer
 
 enum class SetupMode { FirstRun, Manage }
 
@@ -57,7 +65,7 @@ enum class SetupItem(val id: String, val label: String, val description: String,
 
 /** Trakt needs a client id built into the app (secrets.properties); without one it isn't offered. */
 val SetupItem.available: Boolean
-    get() = this != SetupItem.Trakt || io.github.petebutty.viewarr.data.remote.services.TraktService.CLIENT_ID.isNotBlank()
+    get() = this != SetupItem.Trakt || TraktService.CLIENT_ID.isNotBlank()
 
 data class SetupUiState(
     val mode: SetupMode = SetupMode.FirstRun,
@@ -114,12 +122,12 @@ class SetupViewModel @Inject constructor(
     private val plex: PlexService,
     private val mediaServers: MediaServerService,
     private val stremio: StremioService,
-    private val seerr: io.github.petebutty.viewarr.data.remote.services.SeerrService,
-    private val subsonic: io.github.petebutty.viewarr.data.music.SubsonicClient,
-    private val musicLib: io.github.petebutty.viewarr.data.music.MusicLibrary,
-    private val httpJson: io.github.petebutty.viewarr.data.remote.services.HttpJson,
-    private val rowLayouts: io.github.petebutty.viewarr.data.settings.RowLayoutStore,
-    private val invites: io.github.petebutty.viewarr.data.profiles.Invites,
+    private val seerr: SeerrService,
+    private val subsonic: SubsonicClient,
+    private val musicLib: MusicLibrary,
+    private val httpJson: HttpJson,
+    private val rowLayouts: RowLayoutStore,
+    private val invites: Invites,
 ) : ViewModel() {
     /** Several Plex servers: show their repeated rows as one (also in Settings → Home page & menu). */
     val mergeRows = rowLayouts.mergeRows.stateIn(viewModelScope, SharingStarted.Eagerly, true)
@@ -161,20 +169,10 @@ class SetupViewModel @Inject constructor(
         go(SetupStep.Choose)
     }
 
-    /** Invited: the phone page asks only for the address and API key they were sent. */
-    fun openInvited() { startPhone() }
-    fun closeInvited() { stopPhone() }
-
-    /** Invited, on the TV itself (no phone): the address and key typed with the remote. */
+    /** Invited, on the TV itself (no phone): the address, username and password typed with the remote. */
     fun invitedPasswordSignIn(address: String, username: String, password: String) = viewModelScope.launch {
         _state.update { it.copy(busy = true, error = null) }
         invites.signInWithPassword(address, username, password).onFailure { e -> _state.update { it.copy(error = e.message) } }
-        _state.update { it.copy(busy = false) }
-    }
-
-    fun invitedSignIn(address: String, key: String) = viewModelScope.launch {
-        _state.update { it.copy(busy = true, error = null) }
-        invites.signInWithDetails(address, key).onFailure { e -> _state.update { it.copy(error = e.message) } }
         _state.update { it.copy(busy = false) }
     }
 
@@ -188,11 +186,6 @@ class SetupViewModel @Inject constructor(
         // Movies & Shows are built on TMDB, so picking any media source brings it along.
         val media = setOf(SetupItem.Trakt, SetupItem.Plex, SetupItem.Stremio, SetupItem.Jellyfin, SetupItem.Emby, SetupItem.Vod)
         it.copy(selected = if (item in media && item !in it.selected) next + SetupItem.Tmdb else next)
-    }
-
-    fun beginChosen() {
-        queue = SetupItem.entries.filter { it in _state.value.selected }.flatMap { it.steps }
-        advance()
     }
 
     /** Manage mode: run one item's steps, then come back to the list. */
@@ -217,7 +210,7 @@ class SetupViewModel @Inject constructor(
                 SetupItem.Vod -> store.update { it.copy(vodEnabled = false) }
                 SetupItem.Seerr -> store.update { it.copy(seerr = null) }
                 SetupItem.Mdblist -> store.update { it.copy(mdblistKey = null) }
-                SetupItem.Navidrome -> { io.github.petebutty.viewarr.playback.MusicPlayer.stop(); store.update { it.copy(navidrome = null, musicEnabled = false) } }
+                SetupItem.Navidrome -> { MusicPlayer.stop(); store.update { it.copy(navidrome = null, musicEnabled = false) } }
             }
         }
     }
@@ -249,14 +242,14 @@ class SetupViewModel @Inject constructor(
     /** Music step: the Music section on or off (off: nothing music-related anywhere). */
     fun setMusic(on: Boolean) = viewModelScope.launch {
         store.update { it.copy(musicEnabled = on) }
-        if (!on) io.github.petebutty.viewarr.playback.MusicPlayer.stop()
+        if (!on) MusicPlayer.stop()
     }
     /** Music step: one server's music library in use or not. */
     fun toggleMusicServer(id: String) = viewModelScope.launch {
         store.update { a -> a.copy(musicOff = if (id in a.musicOff) a.musicOff - id else a.musicOff + id) }
     }
     /** Music step: "No music" leaves it off and moves on. */
-    fun skipMusic() = viewModelScope.launch { store.update { it.copy(musicEnabled = false) }; io.github.petebutty.viewarr.playback.MusicPlayer.stop(); advance() }
+    fun skipMusic() = viewModelScope.launch { store.update { it.copy(musicEnabled = false) }; MusicPlayer.stop(); advance() }
     fun openNavidrome() = go(SetupStep.Navidrome)
     fun backToMusic() = go(SetupStep.Music)
     fun removeNavidrome() = viewModelScope.launch { store.update { it.copy(navidrome = null, musicOff = it.musicOff - "nd") } }
@@ -435,7 +428,7 @@ class SetupViewModel @Inject constructor(
                         busy = false,
                         fields = it.fields - ADDON_URLS,
                         info = if (added.isEmpty()) null else "Added ${added.joinToString()}.",
-                        error = if (failed.isEmpty()) null else "Couldn't load ${failed.size} addon URL(s). Check the link.",
+                        error = if (failed.isEmpty()) null else if (failed.size == 1) "Couldn't load 1 addon link. Check the link." else "Couldn't load ${failed.size} addon links. Check the links.",
                     )
                 }
             }
@@ -678,7 +671,7 @@ class SetupViewModel @Inject constructor(
                 val off = v["off"].orEmpty().split(',').filter { it.isNotBlank() }.toSet()
                 // The phone lists only the servers; Navidrome's own switch (in the Music menu) is kept as it was.
                 store.update { it.copy(musicEnabled = on, musicOff = off + it.musicOff.filter { id -> id == "nd" }) }
-                if (!on) io.github.petebutty.viewarr.playback.MusicPlayer.stop()
+                if (!on) MusicPlayer.stop()
                 activity(if (on) "Music turned on" else "Music turned off")
                 reply(true, if (on) "Music is on." else "Music is off.")
             }
@@ -952,7 +945,7 @@ class SetupViewModel @Inject constructor(
         }
     }
 
-    private fun kotlinx.serialization.json.JsonObjectBuilder.addons(list: List<io.github.petebutty.viewarr.data.accounts.AddonInfo>) {
+    private fun kotlinx.serialization.json.JsonObjectBuilder.addons(list: List<AddonInfo>) {
         putJsonArray("addons") { list.forEach { a -> add(buildJsonObject { put("name", a.name); put("baseUrl", a.baseUrl) }) } }
     }
 
@@ -980,7 +973,7 @@ class SetupViewModel @Inject constructor(
 }
 
 /** What's connected for one item, or null. Shared by the TV screens and the phone page. */
-fun statusText(item: SetupItem, a: Accounts, session: io.github.petebutty.viewarr.data.session.Session?): String? = when (item) {
+fun statusText(item: SetupItem, a: Accounts, session: Session?): String? = when (item) {
     SetupItem.LiveTv -> session?.let { when { it.isM3u -> "M3U playlist (${it.username})"; it.isXc -> "IPTV login: ${it.username}"; else -> "Dispatcharr: ${it.username}" } }
     SetupItem.Tmdb -> a.tmdbKey?.let { "Connected" }
     SetupItem.Trakt -> a.trakt?.let { "Signed in as ${it.username}" }

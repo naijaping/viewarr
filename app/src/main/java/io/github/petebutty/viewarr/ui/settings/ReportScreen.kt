@@ -39,9 +39,10 @@ import io.github.petebutty.viewarr.data.report.ReportSender
 import io.github.petebutty.viewarr.ui.common.MenuItem
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.launch
+import io.github.petebutty.viewarr.data.settings.RemoteChoice
 
 /** The Send a report row's (empty) status. */
-internal data class ReportLabel(override val label: String) : io.github.petebutty.viewarr.data.settings.RemoteChoice
+internal data class ReportLabel(override val label: String) : RemoteChoice
 
 /** Settings → Troubleshooting → Send a report (shown over everything by the app's root; see [ReportUi]). */
 object ReportUi {
@@ -77,9 +78,10 @@ fun ReportScreen(onClose: () -> Unit) {
     LaunchedEffect(Unit) { report = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ReportSender.build(context, kinds, null, names) } }
     LaunchedEffect(report != null, code) { kotlinx.coroutines.android.awaitFrame(); runCatching { if (noteMode && code == null) noteField.requestFocus() else first.requestFocus() } }
     // Its own window, so the Settings page behind (which pulls the highlight back to itself) lets go while it's up.
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-    Box(Modifier.fillMaxSize(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-        Column(Modifier.width(820.dp).background(AppColors.MenuPanel, RoundedCornerShape(16.dp)).padding(28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    // (ViewarrPopup, the shared pop-up window, and its radius: was a raw Dialog. Peter, 2026-11-17.)
+    io.github.petebutty.viewarr.ui.common.ViewarrPopup(onClose = onClose) {
+    Box(Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f)), contentAlignment = androidx.compose.ui.Alignment.Center) {
+        Column(Modifier.width(820.dp).background(AppColors.MenuPanel, RoundedCornerShape(io.github.petebutty.viewarr.ui.theme.Tokens.PopupRadius)).padding(28.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(if (noteMode) "Send a note" else "Send a report", fontSize = 26.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextPrimary)
             val c = code
             if (c != null) {
@@ -101,7 +103,7 @@ fun ReportScreen(onClose: () -> Unit) {
                     .border(1.dp, AppColors.Accent.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
                     .padding(horizontal = 14.dp, vertical = 12.dp),
             ) {
-                if (note.isEmpty()) Text(if (noteMode) "What happened, or what would you like? (OK to type)" else "Add a note: what went wrong? (optional, OK to type)", fontSize = 15.sp, color = AppColors.TextSecondary)
+                if (note.isEmpty()) Text(if (noteMode) "What happened, or what would you like? (OK: type)" else "Add a note: what went wrong? (optional, OK: type)", fontSize = 15.sp, color = AppColors.TextSecondary)
                 androidx.compose.foundation.text.BasicTextField(
                     value = note,
                     onValueChange = { note = it.take(2_000) },

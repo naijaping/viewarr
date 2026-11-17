@@ -16,13 +16,15 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import io.github.petebutty.viewarr.data.media.SkipMarker
 import io.github.petebutty.viewarr.data.settings.SkipMode
+import io.github.petebutty.viewarr.data.media.EpisodeInfo
+import io.github.petebutty.viewarr.ui.player.OsdPoster
 
 /**
  * The episode after the one playing (found as it starts), for the players: Skip credits plays it, and its countdown
  * starts over the credits (Settings → Playback → Episodes). Null episode: none (a film, the last episode, unknown).
  */
 object NextUp {
-    var episode by mutableStateOf<io.github.petebutty.viewarr.data.media.EpisodeInfo?>(null)
+    var episode by mutableStateOf<EpisodeInfo?>(null)
     /** For which stream (its address), so a late answer for the previous episode is ignored. */
     var forUrl: String? = null
     var play: () -> Unit = {}
@@ -30,19 +32,19 @@ object NextUp {
      * The season playing, every episode (then the start of the next season near its end): the Episodes row under the
      * film bar, opening on the one playing ([startAt]) so an earlier one missed is a Left away.
      */
-    var upcoming by mutableStateOf<List<io.github.petebutty.viewarr.data.media.EpisodeInfo>>(emptyList())
+    var upcoming by mutableStateOf<List<EpisodeInfo>>(emptyList())
     /** Where the playing episode is in [upcoming] (the row opens there, in the middle). */
     var startAt by androidx.compose.runtime.mutableIntStateOf(0)
     /** The episode playing (season, number): its card is marked ▶. */
     var current by mutableStateOf<Pair<Int, Int>?>(null)
-    var playEpisode: (io.github.petebutty.viewarr.data.media.EpisodeInfo) -> Unit = {}
+    var playEpisode: (EpisodeInfo) -> Unit = {}
     /** The episode before the one playing (into the previous season at a season's start), for the Previous episode
      *  button; null: the first episode, or not a show. */
-    var previous by mutableStateOf<io.github.petebutty.viewarr.data.media.EpisodeInfo?>(null)
+    var previous by mutableStateOf<EpisodeInfo?>(null)
     var playPrevious: () -> Unit = {}
     /** [upcoming] as the info bar's cards (the show's picture where an episode has none). */
-    fun cards(): List<io.github.petebutty.viewarr.ui.player.OsdPoster> = upcoming.map { ep ->
-        io.github.petebutty.viewarr.ui.player.OsdPoster(
+    fun cards(): List<OsdPoster> = upcoming.map { ep ->
+        OsdPoster(
             key = "ep-${ep.season}-${ep.number}",
             // Just the season and episode, and when it came out (Peter: no name or running time). ▶ the one playing.
             title = (if (current == ep.season to ep.number) "▶  " else "") + "S${ep.season} · E${ep.number}",
@@ -201,7 +203,7 @@ fun IntroSkipPill(skip: IntroSkip, modifier: Modifier = Modifier) {
     val text = skip.offered?.let { if (it.kind == SkipMarker.Kind.Intro) "Skip intro" else if (skip.creditsToNext) "Next episode" else "Skip credits" }
         ?: skip.skipped?.let { "Intro skipped" }
         ?: return
-    val hint = if (skip.offered != null) "OK" else "OK to watch it"
+    val hint = if (skip.offered != null) "OK" else "OK: watch it"
     Row(
         modifier
             .glass(24.dp)

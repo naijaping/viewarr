@@ -107,22 +107,58 @@ object ReportSender {
     /** Passwords, keys, tokens, addresses, IPs, emails and long secrets out. */
     fun clean(text: String): String {
         var t = text
-        // key=value / "key": value for anything secret-sounding.
-        t = Regex("(?i)\\b(api[_-]?key|apikey|token|access[_-]?token|refresh[_-]?token|password|passwd|pass|secret|auth(orization)?|X-Plex-Token|session|cookie|bearer)([\"']?\\s*[:=]\\s*[\"']?|\\s+)([^\\s&\"',;}]+)")
-            .replace(t) { m -> m.groupValues[1] + m.groupValues[3] + "[removed]" }
-        // Web addresses: scheme and path kept, the server itself out.
+        // key=value / "key": value for anything secret-sounding, including run-together names (xcPassword=, plexToken=,
+        // authToken=, X-Plex-Token: …, a data class's toString). No \b before the keyword: there's none between c and P.
+        // A "Bearer " / "Basic " in front of the value goes too, or the token after it stayed.
+        t = SECRET_KV.replace(t) { m -> m.groupValues[1] + m.groupValues[2] + "[removed]" }
+        // Emails before server names (the server part would otherwise go first and leave the name).
+        t = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}").replace(t, "[email]")
+        // Web addresses: scheme and path kept, the server itself out (a user:password@ in front of it too).
         t = Regex("(?i)\\b(https?|rtsp|rtmp|udp|wss?)://[^\\s/\"'?#]+").replace(t) { m -> m.groupValues[1] + "://[server]" }
         // IPTV (Xtream) addresses carry the login in the path: /live/<user>/<password>/123.ts
         t = Regex("(?i)/(live|movie|series|timeshift)/[^/\\s\"']+/[^/\\s\"']+/").replace(t) { m -> "/" + m.groupValues[1] + "/[user]/[pass]/" }
+        // …and the short form playlists use: http://host:port/<user>/<password>/<id>
+        t = XTREAM_SHORT.replace(t) { m -> "://[server]/[user]/[pass]/" + m.groupValues[1] }
         // Server names quoted in errors ("Unable to resolve host \"my.server.tld\"").
         t = Regex("\"[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}(:\\d+)?\"").replace(t, "\"[server]\"")
+        // …and unquoted ("Failed to connect to tv.example.com/…", "Hostname x.y.z not verified"); Java / Android
+        // package names in stack traces and file names (Foo.kt, report.txt) are left alone.
+        t = HOST.replace(t) { m ->
+            val name = m.value
+            if (PACKAGE_PREFIXES.any { name.startsWith(it) } || m.groupValues[1] in FILE_ENDINGS) name else "[server]"
+        }
         t = Regex("\\b\\d{1,3}(\\.\\d{1,3}){3}(:\\d+)?\\b").replace(t, "[ip]")
-        t = Regex("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}").replace(t, "[email]")
+        t = IPV6.replace(t, "[ip]")
         // Long keys / tokens left over (hex or base64, 24+ characters).
         t = Regex("\\b[A-Za-z0-9_\\-]{32,}\\b").replace(t, "[removed]")
         t = Regex("\\b[a-fA-F0-9]{24,}\\b").replace(t, "[removed]")
         return t
     }
+
+    private val SECRET_KV = Regex(
+        "(?i)([A-Za-z0-9_-]*(?:api[_-]?key|apikey|token|password|passwd|pass|secret|authorization|auth|session|cookie|bearer|device[_-]?code|user[_-]?code))" +
+            "([\"']?\\s*[:=]\\s*[\"']?|\\s+)((?:bearer|basic)\\s+)?[^\\s&\"',;})]+"
+    )
+    /** The short Xtream form after the server went: ://[server]/<user>/<pass>/<id>, but not the app's own API paths. */
+    private val XTREAM_SHORT = Regex(
+        "(?i)://\\[server]/(?!(?:api|live|movie|series|timeshift|library|items|users|videos|audio|proxy|hls|output|rest|photo|web|emby|jellyfin|xmltv\\.php|player_api\\.php|get\\.php)/)" +
+            "[^/\\s\"'?#]+/[^/\\s\"'?#]+/(\\d+)(?=[.\\s\"'?#]|$)"
+    )
+    /** A lower-case dotted name ending in letters, taken whole (not from the middle of Foo.bar or a.b.c). */
+    private val HOST = Regex("(?<![\\w.-])[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.([a-z]{2,24})\\b(?![.\\w-])")
+    private val PACKAGE_PREFIXES = listOf(
+        "java.", "javax.", "android.", "androidx.", "kotlin.", "kotlinx.", "okhttp3.", "okio.", "io.github.", "com.google.",
+        "com.android.", "dalvik.", "libcore.", "sun.", "org.json.", "org.chromium.", "dagger.", "retrofit2.", "coil.", "coil3.",
+        "com.squareup.", "is.xyz.",
+    )
+    private val FILE_ENDINGS = setOf(
+        "kt", "java", "txt", "json", "xml", "apk", "so", "png", "jpg", "jpeg", "webp", "gif", "svg", "html", "js", "css", "log",
+        "db", "m3u", "m3u8", "ts", "mp4", "mkv", "srt", "vtt", "php", "conf", "cfg", "properties", "dex", "jar", "zip", "gz",
+    )
+    /** IPv6: at least five groups, or a :: (not times like 12:34:56, nor Kotlin's Foo::bar). */
+    private val IPV6 = Regex(
+        "(?i)(?<![\\w:.])(?:(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}:){1,6}:(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?|::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}))(?:%\\w+)?(?![\\w:])"
+    )
 
     private fun lock(text: String): String {
         val rnd = SecureRandom()

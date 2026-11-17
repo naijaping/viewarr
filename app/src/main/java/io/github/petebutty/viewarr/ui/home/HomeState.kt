@@ -1,22 +1,8 @@
 package io.github.petebutty.viewarr.ui.home
 
 import androidx.compose.foundation.layout.fillMaxWidth
-import io.github.petebutty.viewarr.R
 import androidx.compose.runtime.mutableStateMapOf
-import io.github.petebutty.viewarr.ui.theme.appBackground
 import android.app.Activity
-import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.items
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -26,136 +12,70 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import io.github.petebutty.viewarr.ui.common.glass
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.zIndex
-import androidx.compose.ui.layout.layout
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.onKeyEvent
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.input.key.type
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.size
-import androidx.compose.ui.draw.clip
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.compose.LifecycleEventEffect
 import io.github.petebutty.viewarr.playback.PlaybackState
 import io.github.petebutty.viewarr.playback.PlaybackViewModel
-import io.github.petebutty.viewarr.ui.player.PlayerLayer
-import io.github.petebutty.viewarr.ui.player.PlayerOsd
 import io.github.petebutty.viewarr.ui.player.MultiView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.tv.material3.Text
 import io.github.petebutty.viewarr.data.session.Session
-import io.github.petebutty.viewarr.ui.common.MenuItem
-import io.github.petebutty.viewarr.ui.common.EdgeBlocked
-import io.github.petebutty.viewarr.ui.common.trapFocus
-import io.github.petebutty.viewarr.ui.guide.GuideScreen
-import io.github.petebutty.viewarr.ui.setup.SetupMode
-import io.github.petebutty.viewarr.ui.setup.SetupWizard
 import io.github.petebutty.viewarr.ui.guide.GuideViewModel
 import io.github.petebutty.viewarr.data.media.MediaType
-import io.github.petebutty.viewarr.ui.media.MediaScreen
 import io.github.petebutty.viewarr.ui.media.MediaViewModel
 import io.github.petebutty.viewarr.ui.dvr.DvrViewModel
-import io.github.petebutty.viewarr.ui.dvr.RecordDialog
-import io.github.petebutty.viewarr.ui.dvr.ProgramInfoDialog
-import io.github.petebutty.viewarr.ui.dvr.RecordingsScreen
 import io.github.petebutty.viewarr.data.media.VodStream
 import io.github.petebutty.viewarr.data.local.ChannelListItem
 import io.github.petebutty.viewarr.data.local.GuideProgram
-import io.github.petebutty.viewarr.data.settings.LocalRemote
-import io.github.petebutty.viewarr.data.settings.MediaBack
-import io.github.petebutty.viewarr.data.settings.PlayerOk
-import io.github.petebutty.viewarr.data.settings.ZapDirection
 import io.github.petebutty.viewarr.data.settings.StartPage
 import io.github.petebutty.viewarr.ui.theme.AppColors
-import kotlinx.coroutines.android.awaitFrame
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.material3.Icon
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.SideEffect
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.text.font.Font
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.Constraints
-import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.sync.withPermit
 import androidx.compose.foundation.layout.offset
-import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.runtime.mutableIntStateOf
-import io.github.petebutty.viewarr.data.dvr.DvrRecording
 import io.github.petebutty.viewarr.data.dvr.DvrState
 import io.github.petebutty.viewarr.data.dvr.Reminder
-import io.github.petebutty.viewarr.data.media.DeepLink
-import io.github.petebutty.viewarr.data.media.MediaItem
 import io.github.petebutty.viewarr.data.profiles.Access
 import io.github.petebutty.viewarr.data.settings.BtnAction
 import io.github.petebutty.viewarr.data.settings.BtnPress
 import io.github.petebutty.viewarr.data.settings.BtnScreen
 import io.github.petebutty.viewarr.data.settings.ButtonMap
-import io.github.petebutty.viewarr.data.settings.GuideLeft
-import io.github.petebutty.viewarr.data.settings.LiveSides
 import io.github.petebutty.viewarr.playback.MusicPlayer
 import io.github.petebutty.viewarr.ui.common.AppIcons
-import io.github.petebutty.viewarr.ui.common.ButtonHint
-import io.github.petebutty.viewarr.ui.common.LocalQuickSearchOpen
-import io.github.petebutty.viewarr.ui.common.Press
 import io.github.petebutty.viewarr.ui.common.RemoteAction
 import io.github.petebutty.viewarr.ui.common.RemoteKeys
 import io.github.petebutty.viewarr.ui.common.SearchKey
-import io.github.petebutty.viewarr.ui.common.TapHold
 import io.github.petebutty.viewarr.ui.dvr.GuideMatch
-import io.github.petebutty.viewarr.ui.dvr.SeasonPicker
 import io.github.petebutty.viewarr.ui.guide.channelLogo
-import io.github.petebutty.viewarr.ui.guide.displayTitle
-import io.github.petebutty.viewarr.ui.media.FullTrailer
 import io.github.petebutty.viewarr.ui.media.VodHost
-import io.github.petebutty.viewarr.ui.media.VodSource
 import io.github.petebutty.viewarr.ui.music.MusicBrowseKind
-import io.github.petebutty.viewarr.ui.music.MusicScreen
 import io.github.petebutty.viewarr.ui.music.MusicViewModel
-import io.github.petebutty.viewarr.ui.player.CardOption
 import io.github.petebutty.viewarr.ui.player.LiveShortcut
 import io.github.petebutty.viewarr.ui.player.LiveShortcuts
-import io.github.petebutty.viewarr.ui.player.LiveShortcutsBridge
-import io.github.petebutty.viewarr.ui.player.OsdPoster
-import io.github.petebutty.viewarr.ui.common.InfoRows.Kind as RowKind
-import io.github.petebutty.viewarr.ui.player.OsdRow
 import io.github.petebutty.viewarr.ui.player.RowSets
 import io.github.petebutty.viewarr.ui.player.ShortcutColours
-import io.github.petebutty.viewarr.ui.player.ShortcutLogos
-import io.github.petebutty.viewarr.ui.player.TransparencyPanel
 import io.github.petebutty.viewarr.ui.settings.RemoteViewModel
 import io.github.petebutty.viewarr.ui.settings.SportsViewModel
-import io.github.petebutty.viewarr.ui.theme.CornerPicture
-import io.github.petebutty.viewarr.ui.theme.Dates
 import io.github.petebutty.viewarr.ui.theme.UiOpts
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
+import io.github.petebutty.viewarr.data.media.MediaLibrary
+import io.github.petebutty.viewarr.data.media.MediaRow
+import io.github.petebutty.viewarr.data.settings.RemoteSettings
+import io.github.petebutty.viewarr.ui.common.BackLayers
+import io.github.petebutty.viewarr.ui.common.NewsTicker
+import io.github.petebutty.viewarr.ui.common.Ticker
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.ui.input.key.KeyEvent
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 
 /**
  * What the home screen keeps track of (menus, dialogs, full screen, holds…), in one place. HomeScreen() itself had
@@ -175,12 +95,12 @@ class HomeState(
 
     // What HomeScreen hands over each time it's drawn (its view models, the remote's settings, its scopes…).
     lateinit var vm: GuideViewModel
-    lateinit var playback: io.github.petebutty.viewarr.playback.PlaybackViewModel
-    lateinit var dvr: io.github.petebutty.viewarr.ui.dvr.DvrViewModel
+    lateinit var playback: PlaybackViewModel
+    lateinit var dvr: DvrViewModel
     var session: Session? = null
-    var remote: io.github.petebutty.viewarr.data.settings.RemoteSettings = io.github.petebutty.viewarr.data.settings.RemoteSettings()
-    lateinit var fromStartScope: kotlinx.coroutines.CoroutineScope
-    lateinit var ownScope: kotlinx.coroutines.CoroutineScope
+    var remote: RemoteSettings = RemoteSettings()
+    lateinit var fromStartScope: CoroutineScope
+    lateinit var ownScope: CoroutineScope
     var activity: Activity? = null
     lateinit var moviesVm: MediaViewModel
     lateinit var showsVm: MediaViewModel
@@ -201,37 +121,61 @@ class HomeState(
     val programs get() = vm.programs.value
     val now get() = vm.now.value
     // Kept here (were remembered in HomeScreen).
+    /**
+     * When the live controls were last used: a plain holder, not state. As state, every press inside the controls
+     * rebuilt the whole home screen (guide, shortcuts, poster rows), which made them sluggish.
+     */
     val osdUsedAt = longArrayOf(0L)
-    val holdJob = arrayOfNulls<kotlinx.coroutines.Job>(1)
+    val holdJob = arrayOfNulls<Job>(1)
     /** When the Back press being timed went down (the corner picture's hold). */
     private var backDownAt = 0L
     val ownPrograms = mutableStateMapOf<Int, Pair<Long, List<GuideProgram>>>()
     val ownLoading = HashSet<Int>()
+    /**
+     * Two guide lookups at a time for [programsOf]: the info bar's rows ask for up to ~95 channels at once (Recent,
+     * Favourites, On now), which all went off together and stalled a small box.
+     */
+    private val ownLimit = kotlinx.coroutines.sync.Semaphore(2)
     var menuOpen by menuOpenState
     var showAccounts by showAccountsState
     /** The page shown: Live TV's guide only for someone who has Live TV (Films otherwise). */
     var page: Page
         get() = pageState.value
-        set(v) { pageState.value = if (v == Page.Tv && !io.github.petebutty.viewarr.data.profiles.Access.liveTv) Page.Movies else v }
+        set(v) {
+            pageState.value = if (v == Page.Tv && !Access.liveTv) Page.Movies else v
+            io.github.petebutty.viewarr.ui.theme.Wallpaper.titleBehind = pageState.value == Page.Movies || pageState.value == Page.Shows
+        }
     /** Where Viewarr opens: a guide or channel start becomes Movies for someone without Live TV. */
-    fun startFor(start: io.github.petebutty.viewarr.data.settings.StartPage) =
-        if (io.github.petebutty.viewarr.data.profiles.Access.liveTv) start
-        else if (start == io.github.petebutty.viewarr.data.settings.StartPage.Guide || start == io.github.petebutty.viewarr.data.settings.StartPage.LastChannel) io.github.petebutty.viewarr.data.settings.StartPage.Movies else start
+    fun startFor(start: StartPage) =
+        if (Access.liveTv) start
+        else if (start == StartPage.Guide || start == StartPage.LastChannel) StartPage.Movies else start
+    /** The start page from Settings, applied once when the app opens. */
     var startApplied by startAppliedState
     var fullscreen by fullscreenState
+    /** Record options for a programme (from the guide or the player's Record button). */
     var recordTarget by mutableStateOf<Pair<ChannelListItem, GuideProgram>?>(null)
+    /** Hold OK in the guide → Guide times: the channel whose guide offset is being set. */
+    var guideShiftFor by mutableStateOf<ChannelListItem?>(null)
+    /** Hold OK in the guide → Timeline: choosing how many hours the guide shows. */
+    var guideTimelineOpen by mutableStateOf(false)
+    /** Seerr: choosing which series of a guide programme's show to request. */
     var seasonPick by mutableStateOf<GuideMatch?>(null)
     var recordingPlayback by mutableStateOf<VodStream?>(null)
     var infoTarget by mutableStateOf<Pair<ChannelListItem, GuideProgram>?>(null)
+    /** Search popped up over the current screen (Settings → Remote → Search button); Back closes it. */
     var quickSearch by mutableStateOf(false)
     var searchHeld by mutableStateOf(false)
+    /** A changed button from Settings → Remote buttons: the rest of its press (repeats, release) is swallowed. */
     var tableHeld by mutableStateOf<BtnPress?>(null)
+    /** A button with a long press as well (Settings → Remote buttons): its tap waits for the release, its hold for a timer. */
     var holdTap by mutableStateOf<BtnPress?>(null)
+    /** Buttons that open a page or leave the app (done in HomeLinkEffects, once those are in reach). */
     var buttonRequest by mutableStateOf<BtnAction?>(null)
     var dueReminder by mutableStateOf<Reminder?>(null)
     var dvrNote by mutableStateOf<String?>(null)
     var menuWidth by mutableIntStateOf(0)
     var menuFullPage by mutableStateOf(false)
+    /** A channel number typed on the remote's number keys. */
     var digits by mutableStateOf("")
     private var channelListOpenState by mutableStateOf(false)
     /** The channel list over full-screen live TV. Opening it closes the info bar and the controls (Peter, 2026-11-16). */
@@ -241,35 +185,56 @@ class HomeState(
             if (v && !channelListOpenState) { bannerVisible = false; osdVisible = false }
             channelListOpenState = v
         }
+    /** Back held on the TV page: the rest of that press is swallowed (see holdBack). */
     var backLongPress by mutableStateOf(false)
-    var backHoldJob by mutableStateOf<kotlinx.coroutines.Job?>(null)
+    /** The timer that turns a Back press into a hold (see the root key handler). */
+    var backHoldJob by mutableStateOf<Job?>(null)
+    /** Hold Back with a picture in the corner (live TV or a film, over another page): closes it. */
     var pipBackHeld by mutableStateOf(false)
-    var pipMenu by mutableStateOf(false)
-    var pipHoldJob by mutableStateOf<kotlinx.coroutines.Job?>(null)
+    var pipHoldJob by mutableStateOf<Job?>(null)
     var digitsToken by mutableLongStateOf(0L)
     var digitsMessage by mutableStateOf<String?>(null)
+    /**
+     * Movies or Shows opened from the menu over the guide (or a page from the Live TV hub): the channel carries on in
+     * the guide's preview place, the page's content starting where the guide's did.
+     */
     var livePreview by mutableStateOf(false)
+    /** The Sports page (Sports in the menu): over whatever page is open, live TV staying in the top-left window. */
     var sportsOpen by mutableStateOf(false)
     var liveBehind by mutableStateOf(false)
+    /** The film player's Settings button opened the menu (its film is in the corner meanwhile). */
     var settingsFromFilm by mutableStateOf(false)
+    /**
+     * Full-screen live TV: Left asks "Rewind?" first (a second Left, or holding it, rewinds), so a stray press doesn't
+     * drop you out of live. When it was asked; 0: not asking.
+     */
     var rewindAsk by mutableLongStateOf(0L)
+    /** A hold that already rewound: the rest of that press is ignored (each repeat would rewind again). */
     var rewindHeld by mutableStateOf(false)
     var bannerToken by mutableLongStateOf(0L)
     var bannerVisible by mutableStateOf(false)
+    /** A channel browsed to in the info bar, not changed to yet (browse()). */
     var browseChannel by mutableStateOf<ChannelListItem?>(null)
-    var browseJob by mutableStateOf<kotlinx.coroutines.Job?>(null)
+    var browseJob by mutableStateOf<Job?>(null)
     var osdVisible by mutableStateOf(false)
+    /** Several channels on screen at once (from the player menu). */
     var multiView by mutableStateOf(false)
+    /** "Watch from the start" from the guide: search opens on the programme's title. */
     var searchStart by mutableStateOf<String?>(null)
+    /** Search opened from the guide's "Search catch-up": with the Catch-up pill picked. */
     var searchCatchup by mutableStateOf(false)
     var accountsFromMenu by mutableStateOf(false)
     var searchVoice by mutableStateOf(false)
     var menuOnSettings by mutableStateOf(false)
     /** The menu opens on Live TV's channel groups (the "Channel groups menu" button), not the main list. */
     var menuOnGroups by mutableStateOf(false)
+    /** Sign out of everything: asked first. */
     var askSignOut by mutableStateOf(false)
+    /** Live TV controls → Transparency: the three sliders over the picture. */
     var transparencyOpen by mutableStateOf(false)
+    /** Held Back with nothing playing: the menu opens on its main list (not the page's own list). */
     var menuOnMain by mutableStateOf(false)
+    /** A library (from My Library) on screen: Left opens the menu on My Library. */
     var menuOnLibrary by mutableStateOf(false)
     var osdAudio by mutableStateOf(false)
     var playingGroup by mutableStateOf<Int?>(null)
@@ -277,18 +242,15 @@ class HomeState(
     var lastKeyAt by mutableLongStateOf(System.currentTimeMillis())
     var stillAsk by mutableStateOf(false)
     var exitArmed by mutableLongStateOf(0L)
+    /**
+     * The menu was opened by Back in the guide (TV guide → Back: Open the menu, as classic IPTV apps): Back out of it asks to
+     * exit, and Back once more exits (it used to close the menu, and Back opened it again: no way out).
+     */
     var menuFromGuideBack by mutableStateOf(false)
-    var guideFromFullAt by mutableLongStateOf(0L)
-    var preloadStage by androidx.compose.runtime.mutableIntStateOf(0)
+    var preloadStage by mutableIntStateOf(0)
     var liveEvents by mutableStateOf<GuideViewModel.LiveEvents?>(null)
     var cornerFocused by mutableStateOf(false)
 
-    // Channel number typed on the remote's number keys.
-    // Up/Down while watching: a see-through channel list over the picture.
-    // Long-press Back on the guide returns to the channel that's playing, full screen.
-    // The timer that turns a Back press into a hold (see the root key handler).
-    // Hold Back with a picture in the corner (live TV or a film, over another page): Full screen / Close picture.
-    // Start page from Settings, applied once when the app opens.
     /** A short message at the top right (replaces the one showing). */
     fun toast(text: String) { hs.digitsMessage = text; hs.digitsToken = System.nanoTime() }
 
@@ -297,10 +259,14 @@ class HomeState(
         val cached = ownPrograms[ch.id]
         // Refreshed every 10 minutes, so what's on now moves on.
         if ((cached == null || System.currentTimeMillis() - cached.first > 600_000) && ownLoading.add(ch.id)) ownScope.launch {
-            val got = runCatching { vm.programsFor(ch) }.getOrNull()
-            // Not found this time: known as "nothing" for now (the bar can say so), asked again in a minute.
-            ownPrograms[ch.id] = if (got != null) System.currentTimeMillis() to got else (System.currentTimeMillis() - 540_000) to (cached?.second.orEmpty())
-            ownLoading.remove(ch.id)
+            // (Removed in finally: a lookup cancelled part-way left the channel marked as loading, never asked again.)
+            try {
+                val got = ownLimit.withPermit { runCatching { vm.programsFor(ch) }.getOrNull() }
+                // Not found this time: known as "nothing" for now (the bar can say so), asked again in a minute.
+                ownPrograms[ch.id] = if (got != null) System.currentTimeMillis() to got else (System.currentTimeMillis() - 540_000) to (cached?.second.orEmpty())
+            } finally {
+                ownLoading.remove(ch.id)
+            }
         }
         return cached?.second.orEmpty()
     }
@@ -315,11 +281,11 @@ class HomeState(
 
     /**
      * Onto [ch] full screen (the guide moves to it first): live, or [catchup] from catch-up. [endMultiView]: multi-view
-     * closes; [keepIfPlaying]: no restart when it's the channel already playing.
+     * closes; [keepIfPlaying]: no restart when it's the channel already playing. [full]: full screen (false: in the
+     * guide's window, as reopening where you left it can ask).
      */
-    /** [full]: full screen (false: in the guide's window, as reopening where you left it can ask). */
     fun watchChannel(ch: ChannelListItem, catchup: GuideProgram? = null, endMultiView: Boolean = false, keepIfPlaying: Boolean = false, s: Session? = session, full: Boolean = true) {
-        if (!io.github.petebutty.viewarr.data.profiles.Access.liveTv) return
+        if (!Access.liveTv) return
         vm.reveal(ch) {
             hs.page = Page.Tv
             when {
@@ -361,7 +327,7 @@ class HomeState(
         if (size <= 0) return 0
         if (index < 0) return 0
         val next = index + delta
-        val stop = AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.LIST_ENDS) == 1
+        val stop = AppColors.palette.opt(UiOpts.LIST_ENDS) == 1
         return when {
             next in 0 until size -> next
             stop -> next.coerceIn(0, size - 1)
@@ -397,6 +363,9 @@ class HomeState(
     fun browse(delta: Int) {
         val list = vm.channels.value
         if (list.isEmpty()) return
+        // The first press with no info bar up: the channel you're watching in it first (what's on now and next); the
+        // next press browses from there. (Peter, 2026-11-17: the first press jumped straight to the next channel.)
+        if (hs.browseChannel == null && !hs.bannerVisible) { showBanner(); return }
         val from = hs.browseChannel ?: playing
         val index = list.indexOfFirst { it.id == from?.id }
         val target = list.getOrNull(stepIndex(index, delta, list.size)) ?: return
@@ -406,7 +375,7 @@ class HomeState(
         hs.browseJob?.cancel()
         if (hs.browseChannel == null) return
         // (Up / Down set to "Browse, OK changes": only OK changes.)
-        val wait = (if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.LIVE_UPDOWN) == 1) null else AppColors.palette.browseDelayMs) ?: return
+        val wait = (if (AppColors.palette.opt(UiOpts.LIVE_UPDOWN) == 1) null else AppColors.palette.browseDelayMs) ?: return
         hs.browseJob = fromStartScope.launch { delay(wait); commitBrowse() }
     }
 
@@ -421,16 +390,15 @@ class HomeState(
         for (k in 1..2) {
             val ch = list.getOrNull(stepIndex(at, dir * k, list.size)) ?: continue
             programsOf(ch)
-            io.github.petebutty.viewarr.ui.guide.channelLogo(server, ch)?.let { url ->
+            channelLogo(server, ch)?.let { url ->
                 runCatching { coil.Coil.imageLoader(ctx).enqueue(coil.request.ImageRequest.Builder(ctx).data(url).build()) }
             }
         }
     }
 
     /** Up / Down and Channel + / − while watching (Settings → Live TV → Up / Down while watching): change, or browse. */
-    fun upDown(delta: Int) { if (AppColors.palette.opt(io.github.petebutty.viewarr.ui.theme.UiOpts.LIVE_UPDOWN) != 0) browse(delta) else zap(delta) }
+    fun upDown(delta: Int) { if (AppColors.palette.opt(UiOpts.LIVE_UPDOWN) != 0) browse(delta) else zap(delta) }
 
-    /** A press from the button table (Settings → Remote → Buttons) on the guide, live TV or a page. */
     /**
      * OK on a programme in the guide (and Watch / Watch in the preview from a changed button there): a recording plays
      * the recording; on now, the channel; aired on a catch-up channel, its catch-up straight away (never a library
@@ -468,6 +436,7 @@ class HomeState(
         }
     }
 
+    /** A press from the button table (Settings → Remote → Buttons) on the guide, live TV or a page. */
     fun doButton(screen: BtnScreen, act: BtnAction) {
         val ch = playing
         when (act) {
@@ -564,7 +533,7 @@ class HomeState(
                 hs.bannerVisible = false
             }
             // Films only (VodKeys).
-            BtnAction.Details, BtnAction.TimeTitle, BtnAction.SeekBar -> Unit
+            BtnAction.Details -> Unit
         }
     }
 
@@ -578,7 +547,7 @@ class HomeState(
         val music = MusicPlayer
         if (music.active && !music.nowPlayingOpen) return false
         val screen = when {
-            hs.page == Page.Tv && hs.fullscreen -> if (hs.osdVisible || hs.channelListOpen || hs.multiView || hs.transparencyOpen) return false else BtnScreen.Live
+            hs.page == Page.Tv && hs.fullscreen -> if (hs.osdVisible || hs.channelListOpen || hs.multiView) return false else BtnScreen.Live
             hs.page == Page.Tv -> BtnScreen.Guide
             playing == null -> BtnScreen.Pages
             // The channel in the preview place over another page, or full screen behind it: hold Back closes it too.
@@ -711,7 +680,6 @@ class HomeState(
         if (closeMenu) hs.menuOpen = false
     }
 
-
     fun openService(name: String, closeMenu: Boolean, rowId: String? = null, keepLive: Boolean = false) {
         val key = "name:$name"
         val type = if (showMenuRows.rows.any { RowSets.matches(key, it) }) MediaType.Show else MediaType.Movie
@@ -731,29 +699,39 @@ class HomeState(
         hs.openPage(if (type == MediaType.Show) Page.Shows else Page.Movies, keepLive = keepLive, closeMenu = closeMenu)
     }
 
-    /** OK on Live now: the TV guide, on the events group most of what's on now is in. */
+    /**
+     * The menu's My Library, highlighted (or its "My Library home"): your own servers' rows, films and shows, on the
+     * Movies page (MyLibrary). It used to leave the TV guide behind. (Peter, 2026-11-17.)
+     */
+    fun openMyLibrary(closeMenu: Boolean, keepLive: Boolean = false) {
+        val mine = io.github.petebutty.viewarr.ui.media.MyLibrary.SET
+        if (moviesVm.currentRowSet.value != mine) { moviesVm.openLibrary(null, MediaType.Movie); moviesVm.jumpTo(null) }
+        moviesVm.closeTitlePages()
+        // (Both pages' rows feed it: Shows may not have been opened yet.)
+        moviesVm.load(MediaType.Movie); showsVm.load(MediaType.Show)
+        moviesVm.showRowSet(mine)
+        hs.openPage(Page.Movies, keepLive = keepLive, closeMenu = closeMenu)
+    }
+
+    /** The Live now (and Sports) shortcut: the TV guide, on the Live now group. */
     fun openLiveEvents() {
         hs.osdVisible = false
-        hs.liveEvents?.mainGroup?.let { name -> vm.groups.value.firstOrNull { it.name == name }?.let { g -> vm.selectGroup(g.id) } }
+        // The guide on just the channels with something live or starting soon (the Live now group); nothing found yet:
+        // the event group most of it is in, as before.
+        if (vm.liveNowCount > 0) vm.selectGroup(GuideViewModel.LIVE_NOW)
+        else hs.liveEvents?.mainGroup?.let { name -> vm.groups.value.firstOrNull { it.name == name }?.let { g -> vm.selectGroup(g.id) } }
+        // The TV guide itself (watching over Movies or Shows left that page showing instead).
+        if (hs.page != Page.Tv) hs.openPage(Page.Tv, keepLive = true)
         hs.fullscreen = false
     }
 
     /**
-     * The menu's Live now and Sports: the TV guide on the event channels, or on your sports channels (the first group
-     * named Sports). Moving onto one shows it behind the menu; Right / OK goes into the guide.
+     * The menu's Sports: its own page of game panels (live TV carries on in the top-left window). Moving onto it shows
+     * it behind the menu; Right / OK goes into it. (Live now is a group in the TV guide now, not a menu entry.)
      */
-    fun openLiveEntry(label: String, closeMenu: Boolean) {
-        // Sports: its own page of game panels (live TV carries on in the top-left window).
-        if (label == "Sports") {
-            if (hs.fullscreen) { hs.fullscreen = false; hs.osdVisible = false }
-            hs.sportsOpen = true
-            if (closeMenu) hs.menuOpen = false
-            return
-        }
-        hs.sportsOpen = false
-        if (hs.page != Page.Tv) hs.openPage(Page.Tv, closeMenu = closeMenu)
-        val sports = if (label == "Sports") vm.groups.value.firstOrNull { it.name.equals("Sports", true) } ?: vm.groups.value.firstOrNull { it.name.contains("Sport", true) } else null
-        if (sports != null) { hs.osdVisible = false; vm.selectGroup(sports.id); hs.fullscreen = false } else openLiveEvents()
+    fun openSportsPage(closeMenu: Boolean) {
+        if (hs.fullscreen) { hs.fullscreen = false; hs.osdVisible = false }
+        hs.sportsOpen = true
         if (closeMenu) hs.menuOpen = false
     }
 
@@ -772,6 +750,70 @@ class HomeState(
             }
             hs.toast(if (done != null) "Shortcuts up to date" else "Some addons are slow to answer: their rows will appear when they do")
         }
+    }
+
+    /**
+     * The main row of live TV shortcuts (before the pinned teams), each with what it does when pressed. Built in
+     * HomeScreen's remember (only when what it's made from changes); here to keep that body small.
+     */
+    fun buildShortcuts(
+        movieLibs: List<MediaLibrary>, showLibs: List<MediaLibrary>,
+        movieRows: List<MediaRow>, showRows: List<MediaRow>,
+        musicOn: Boolean, musicSource: String?, savedIds: List<String>?,
+    ): List<Pair<LiveShortcut, () -> Unit>> {
+        val all = LiveShortcuts.candidates(
+            movieLibs, showLibs, movieRows, showRows, musicOn, musicSource,
+        ).associateBy { it.id }
+        val rowsForIds = movieRows + showRows
+        val saved = (savedIds ?: LiveShortcuts.defaults)
+            .mapNotNull { LiveShortcuts.resolve(it, all, rowsForIds) }.distinctBy { it.id }
+        // Nothing usable saved (everything gone, or not loaded yet): the defaults rather than an empty row.
+        val use = saved.ifEmpty { LiveShortcuts.defaults.mapNotNull { all[it] } }
+        return use.map { it.id }.mapNotNull { id ->
+            val sc = all[id] ?: return@mapNotNull null
+            sc to sc@{
+                // Sports: like Live now, OK opens the guide on the Live now group (its rows, Down, are your teams).
+                if (id == "page:Sports") { hs.openLiveEvents(); return@sc }
+                hs.osdVisible = false
+                val parts = id.split(":", limit = 3)
+                val type = if (parts.getOrNull(1) == "Show") MediaType.Show else MediaType.Movie
+                val mvm = if (type == MediaType.Show) showsVm else moviesVm
+                val target = if (type == MediaType.Show) Page.Shows else Page.Movies
+                when (parts[0]) {
+                    "home" -> { mvm.openLibrary(null, type); mvm.jumpTo(null); hs.openPage(target, keepLive = true) }
+                    "lib" -> { (if (type == MediaType.Show) showLibs else movieLibs).firstOrNull { it.key == parts[2] }?.let { mvm.openLibrary(it, type) }; hs.openPage(target, keepLive = true) }
+                    "row" -> { mvm.openLibrary(null, type); mvm.jumpTo(parts[2]); hs.openPage(target, keepLive = true) }
+                    "set" -> {
+                        mvm.openLibrary(null, type); mvm.jumpTo(null)
+                        // A network: its film rows follow its show rows on the same page (named "… (films)").
+                        val other = if (type == MediaType.Show) movieRows else showRows
+                        val extra = if (!parts[2].startsWith("name:")) emptyList() else other
+                            .filter { RowSets.matches(parts[2], it) }
+                            .map { it.copy(title = it.title + if (type == MediaType.Show) " (films)" else " (shows)") }
+                        mvm.showRowSet(parts[2], extra)
+                        hs.openPage(target, keepLive = true)
+                    }
+                    // Music: straight into Albums, Artists, Playlists… (the channel carries on in the corner).
+                    "music" -> {
+                        runCatching { MusicBrowseKind.valueOf(parts[1]) }.getOrNull()?.let { musicVm.openBrowse(it) }
+                        hs.openPage(Page.Music, keepLive = true)
+                    }
+                    "page" -> when (parts[1]) {
+                        "Guide" -> hs.fullscreen = false
+                        "Live" -> hs.openLiveEvents()
+                        "Music" -> hs.openPage(Page.Music, keepLive = true)
+                        "Recordings" -> hs.openPage(Page.Recordings, keepLive = true)
+                        "Settings" -> { hs.menuOnSettings = true; hs.menuOpen = true }
+                        else -> { hs.searchStart = null; hs.quickSearch = true }
+                    }
+                }
+            }
+        } + listOf(
+            // Last in the row: fetch every row again from your addons (AIOMetadata, AIOStreams…) and servers, so new
+            // networks and fresh catalogues turn up without restarting Viewarr. (Not movable or hideable.)
+            LiveShortcut(REFRESH_SHORTCUT, "Refresh", AppIcons.Refresh,
+                colors = ShortcutColours.settings) to { hs.refreshShortcuts() },
+        )
     }
 
     fun hideShortcut(sc: LiveShortcut) {
@@ -835,11 +877,16 @@ class HomeState(
         remoteVm.setLiveShortcuts(shown.toMutableList().apply { add(j, removeAt(i)) } + unseen)
     }
 
-
-
     /** The screen's first look at every button press (was HomeScreen's root onPreviewKeyEvent). True: handled. */
-    fun onRootKey(e: androidx.compose.ui.input.key.KeyEvent): Boolean = run root@{
+    fun onRootKey(e: KeyEvent): Boolean = run root@{
         hs.lastKeyAt = System.currentTimeMillis()
+        // A fresh Back press is a new press: whatever the last one left set to swallow its rest goes. Its release can be
+        // dropped (as for searchHeld / tableHeld below) or land in another window (a pop-up, a dialog), and the flag then
+        // ate the next Back.
+        if (e.key == Key.Back && e.type == KeyEventType.KeyDown && e.nativeKeyEvent.repeatCount == 0) {
+            hs.pipBackHeld = false; hs.backLongPress = false
+            VodHost.swallowBack = false; VodHost.eatBackRelease = false; MusicPlayer.eatBackRelease = false
+        }
         // "Still watching?" up: any button answers yes.
         if (hs.stillAsk) { if (e.type == KeyEventType.KeyUp) hs.stillAsk = false; return@root true }
         // A reminder on screen: OK switches to it, Back dismisses it; other buttons work as usual.
@@ -881,9 +928,9 @@ class HomeState(
         // A picture in the corner (a film, or live TV over another page): Back brings it full screen, hold Back closes
         // it, whatever page is open (as on the players themselves: Back shrinks, hold Back stops). The menu, search
         // and dialogs over the page take their own Back first.
-        if (e.key == Key.Back && (hs.pipBackHeld || (cornerUp && !hs.pipMenu && !hs.showAccounts && !hs.menuOpen && !hs.quickSearch &&
+        if (e.key == Key.Back && (hs.pipBackHeld || (cornerUp && !hs.showAccounts && !hs.menuOpen && !hs.quickSearch &&
                 hs.recordTarget == null && hs.infoTarget == null && hs.seasonPick == null &&
-                io.github.petebutty.viewarr.ui.common.BackLayers.open == 0))) {
+                BackLayers.open == 0))) {
             fun closeCorner() {
                 hs.pipHoldJob?.cancel(); hs.pipHoldJob = null
                 hs.pipBackHeld = true
@@ -1145,14 +1192,14 @@ class HomeState(
  * How long the key [e] has been held, by its own times (down and this event). A repeat Android marks as a long press
  * (its own long-press time, 0.4 s on most boxes) counts as held long enough.
  */
-private fun heldFor(e: androidx.compose.ui.input.key.KeyEvent): Long =
+private fun heldFor(e: KeyEvent): Long =
     if (e.nativeKeyEvent.isLongPress) Long.MAX_VALUE else e.nativeKeyEvent.eventTime - e.nativeKeyEvent.downTime
 
 /** How long Back must be held to count as a hold (the corner picture's menu, Settings → Remote → Hold Back). */
 private const val BACK_HOLD_MS = 500L
 
 /** HomeScreen's state holder; the values that must survive the app being recreated are saved. */
-@androidx.compose.runtime.Composable
+@Composable
 internal fun rememberHomeState(): HomeState {
     val menuOpen = rememberSaveable { mutableStateOf(false) }
     val showAccounts = rememberSaveable { mutableStateOf(false) }
@@ -1166,12 +1213,12 @@ internal fun rememberHomeState(): HomeState {
  * Live TV switched off for whoever is here (or found to be off once Dispatcharr answers): the channel stops, the
  * guide goes and Movies shows. Switched back on (an admin's profile, say): the guide is fetched again.
  */
-@androidx.compose.runtime.Composable
+@Composable
 internal fun LiveTvLockEffect(hs: HomeState) {
-    val on = io.github.petebutty.viewarr.data.profiles.Access.liveTv
+    val on = Access.liveTv
     // (The guide is fetched again only when Live TV comes back on, not on every start: that's syncIfStale's job.)
-    val was = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf<Boolean?>(null) }
-    androidx.compose.runtime.LaunchedEffect(on) {
+    val was = remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(on) {
         val before = was.value; was.value = on
         if (!on) {
             hs.playback.close()
@@ -1189,21 +1236,21 @@ internal fun LiveTvLockEffect(hs: HomeState) {
  * leaving its page closes search too, instead of going back to the old results. (Channels, catch-up and music
  * already close search as they're picked.) A person's page is still searching, so it doesn't count.
  */
-@androidx.compose.runtime.Composable
+@Composable
 internal fun SearchClosesAfterTitle(onClose: () -> Unit) {
-    val searchVm: io.github.petebutty.viewarr.ui.media.MediaViewModel = androidx.hilt.navigation.compose.hiltViewModel(key = "media-search")
+    val searchVm: MediaViewModel = hiltViewModel(key = "media-search")
     val detail by searchVm.detail.collectAsStateWithLifecycle()
-    var chose by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
-    androidx.compose.runtime.LaunchedEffect(detail != null) {
+    var chose by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(detail != null) {
         if (detail != null) chose = true
         else if (chose) { chose = false; onClose() }
     }
 }
 
 /** Settings → Appearance → News ticker → On Movies, Shows and Sports: the ticker along the bottom of those pages. */
-@androidx.compose.runtime.Composable
-internal fun androidx.compose.foundation.layout.BoxScope.PagesTicker(hs: HomeState) {
+@Composable
+internal fun BoxScope.PagesTicker(hs: HomeState) {
     val onPage = (hs.page == Page.Movies || hs.page == Page.Shows || hs.sportsOpen) && !hs.fullscreen && !hs.quickSearch && !hs.menuOpen
-    if (onPage && io.github.petebutty.viewarr.ui.common.Ticker.onPages)
-        io.github.petebutty.viewarr.ui.common.NewsTicker(androidx.compose.ui.Modifier.align(androidx.compose.ui.Alignment.BottomCenter).fillMaxWidth())
+    if (onPage && Ticker.onPages)
+        NewsTicker(Modifier.align(Alignment.BottomCenter).fillMaxWidth())
 }

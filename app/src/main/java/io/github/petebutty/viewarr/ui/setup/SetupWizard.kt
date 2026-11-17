@@ -17,7 +17,6 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -68,6 +67,10 @@ import io.github.petebutty.viewarr.ui.setup.SetupViewModel.Companion.USER
 import io.github.petebutty.viewarr.ui.theme.AppColors
 import kotlinx.coroutines.android.awaitFrame
 import androidx.compose.material3.Text as M3Text
+import io.github.petebutty.viewarr.ui.settings.AddonSwitches
+import io.github.petebutty.viewarr.ui.settings.LiveSourcesItems
+import io.github.petebutty.viewarr.ui.settings.PlexServersItems
+import io.github.petebutty.viewarr.ui.settings.TraktSyncItems
 
 /** First-run setup, or (Manage) the Settings → Accounts & sources screen: same steps either way. */
 @Composable
@@ -117,7 +120,7 @@ fun SetupWizard(
                 SetupStep.Welcome -> {
                     Text(
                         "You'll choose what to connect: live TV from Dispatcharr, and films and shows from Plex, addons, " +
-                            "Jellyfin or Emby, with TMDB and Trakt for discovery. Anything you skip can be added later in Settings.",
+                            "Jellyfin or Emby, with TMDB and Trakt for discovery. Anything you skip can be added later in Settings → Accounts & sources.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = AppColors.TextPrimary,
                     )
@@ -193,14 +196,14 @@ fun SetupWizard(
                                     servers.isEmpty() -> "None of your connected servers (Plex, Jellyfin, Emby) has a music library."
                                     else -> "Your servers' music libraries:"
                                 },
-                                fontSize = 14.sp, color = io.github.petebutty.viewarr.ui.theme.AppColors.TextSecondary,
+                                fontSize = 14.sp, color = AppColors.TextSecondary,
                                 modifier = Modifier.padding(start = 12.dp, top = 6.dp),
                             )
                             servers.orEmpty().forEach { (id, name) ->
                                 val use = id !in accounts.musicOff
                                 MenuItem(text = "$name music", trailing = if (use) "On" else "Off", selected = false, dim = !use, onClick = { vm.toggleMusicServer(id) })
                             }
-                            Text("Navidrome / Subsonic:", fontSize = 14.sp, color = io.github.petebutty.viewarr.ui.theme.AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, top = 6.dp))
+                            Text("Navidrome / Subsonic:", fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(start = 12.dp, top = 6.dp))
                             val nd = accounts.navidrome
                             if (nd == null) MenuItem(text = "Add a Navidrome server", trailing = "›", selected = false, onClick = vm::openNavidrome)
                             else {
@@ -290,7 +293,7 @@ fun SetupWizard(
                     }
                 }
                 SetupStep.Done -> {
-                    Text(summary(accounts, session).ifEmpty { "Nothing connected yet. You can add sources any time in Settings." }, color = AppColors.TextPrimary)
+                    Text(summary(accounts, session).ifEmpty { "Nothing connected yet. You can add sources any time in Settings → Accounts & sources." }, color = AppColors.TextPrimary)
                     Button(onClick = { vm.finish(onClose) }, modifier = Modifier.focusRequester(firstFocus)) { Text("Start watching") }
                 }
             }
@@ -362,20 +365,17 @@ private fun ServiceOptions(item: SetupItem, status: String, onChange: () -> Unit
     var confirm by remember { mutableStateOf(false) }
     androidx.activity.compose.BackHandler(onBack = onClose)
     LaunchedEffect(Unit) { kotlinx.coroutines.android.awaitFrame(); runCatching { first.requestFocus() } }
-    androidx.compose.ui.window.Dialog(onDismissRequest = onClose) {
-        Column(
-            Modifier.width(460.dp).background(AppColors.Panel, androidx.compose.foundation.shape.RoundedCornerShape(14.dp)).padding(22.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(item.label, fontSize = 20.sp, color = AppColors.TextPrimary)
-            Text(status, fontSize = 13.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(bottom = 10.dp))
+    // (The shared pop-up: was a raw Dialog. Peter, 2026-11-17.)
+    io.github.petebutty.viewarr.ui.common.PopupPanel(onClose = onClose, width = io.github.petebutty.viewarr.ui.theme.Tokens.PopupStandard) {
+        io.github.petebutty.viewarr.ui.common.PopupTitle(item.label, status)
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             MenuItem(text = when (item) { SetupItem.Stremio -> "Add or remove addons"; SetupItem.LiveTv -> "Add another source"; else -> "Change" }, selected = false, onClick = onChange, modifier = Modifier.focusRequester(first))
             // Several Dispatcharr instances / IPTV logins / playlists: switch between them here (or from the menu).
-            if (item == SetupItem.LiveTv) io.github.petebutty.viewarr.ui.settings.LiveSourcesItems()
+            if (item == SetupItem.LiveTv) LiveSourcesItems()
             // The on/off switches that belong with the service: each Plex server, each Stremio addon.
-            if (item == SetupItem.Plex) io.github.petebutty.viewarr.ui.settings.PlexServersItems()
-            if (item == SetupItem.Stremio) io.github.petebutty.viewarr.ui.settings.AddonSwitches()
-            if (item == SetupItem.Trakt) io.github.petebutty.viewarr.ui.settings.TraktSyncItems()
+            if (item == SetupItem.Plex) PlexServersItems()
+            if (item == SetupItem.Stremio) AddonSwitches()
+            if (item == SetupItem.Trakt) TraktSyncItems()
             // Live TV: sources are removed one by one in the list above.
             if (item != SetupItem.LiveTv) MenuItem(
                 text = if (confirm) "Press OK again to disconnect" else "Disconnect",

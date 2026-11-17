@@ -1,7 +1,9 @@
 package io.github.petebutty.viewarr.ui.settings
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.hilt.navigation.compose.hiltViewModel
+import io.github.petebutty.viewarr.ui.common.NewsViewModel
 
 /**
  * Where every setting lives. The settings themselves are built where they always were (appearanceCategories,
@@ -45,8 +47,14 @@ object SettingsMap {
                 r(A, "Live TV", "Info bar style", "Info bar corners", "Info bar size", "Clock on the info bar", "Info bar width", "Preview cards", "Info bar: channel number", "Info bar: episode numbers", "Info bar: picture quality", "Info bar: source", "Info bar: frame rate", "Rows under the info bar") +
                     r(P, "Player", "Player controls size")),
             Section("Menu", "How the menu on the left looks: headings, colours, hints and marks.",
-                r(A, "Main menu", "List headings", "Source in the Live TV heading", "Colour edge", "Colour tint", "Icon column", "Left / Right hints", "TV mark on channel groups", "LIVE mark") +
-                    r(N, "Menu", "Button hints")),
+                // (Button hints live in one place, Menu & navigation → Menu: it was in both. Peter, 2026-11-17.)
+                r(A, "Main menu", "List headings", "Source in the Live TV heading", "Colour edge", "Colour tint", "Left / Right hints", "TV mark on channel groups", "LIVE mark")),
+            Section("Info bar buttons", "Which buttons are on the info bar, and in what order. Each bar's main buttons are always there; you can move them.",
+                all(A, "Info bar buttons")),
+            Section("News ticker", "Scrolling headlines along the bottom: where they show, which feeds, and each one's look.",
+                all(A, "News ticker")),
+            Section("Title logos by group", "Programme title logos in the guide, group by group: switch a group off to always show its programmes' names.",
+                all(A, "Title logos by group")),
             Section("Posters", "How big library posters are, and what's drawn on posters in Movies, Shows and search.",
                 all(A, "Posters")),
             Section("Title pages", "What a film's or show's page shows. Anything off isn't fetched either, so pages open with less to do.",
@@ -64,9 +72,13 @@ object SettingsMap {
             Section("Watching", "Full-screen live TV: changing channel and the picture in the corner.",
                 r(P, "Live TV", "Up / Down while watching", "Browsing channels", "Highlight the corner picture", "Still watching?")),
             Section("TV guide", "How far the guide reaches, how often it's fetched, and moving through it.",
-                r(P, "Live TV", "TV guide days ahead", "TV guide refresh") + r(A, "Live TV", "End of a list")),
-            Section("Channel groups", "The channel groups in the menu.",
-                r(P, "Live TV", "\"All channels\" group")),
+                r(P, "Live TV", "TV guide days ahead", "TV guide refresh", "EPG offset") + r(A, "Live TV", "End of a list")),
+            Section("Channel groups", "The channel groups in the menu, and how their names show.",
+                r(P, "Live TV", "\"All channels\" group", "Tidy group names")),
+            Section("Group name clean-up", "With Tidy group names on: the marks left out of channel group names. Switch one off to keep it.",
+                all(P, "Group name clean-up")),
+            Section("Live now sports", "Which sports go in 📡 Live now (in the TV guide's channel groups). Switch off the ones you're not interested in.",
+                all(P, "Live now sports")),
         )),
         Page(PLAYBACK, "Playback", listOf(
             Section("Player", "Which player plays films, shows and recordings, and how it behaves.",
@@ -82,7 +94,7 @@ object SettingsMap {
         )),
         Page(NAVIGATION, "Menu & navigation", listOf(
             Section("Start", "What you see when Viewarr opens.", all(N, "Start")),
-            Section("Menu", "Opening the side menu and going into its lists.", r(N, "Menu", "Button hints")),
+            Section("Menu", "Hints: what the buttons do on each screen.", r(N, "Menu", "Button hints")),
             Section("What the menu lists", "What's listed in the menu on the left. Live TV and Settings are always there; streaming services appear once your addons' rows have loaded.",
                 all(A, "Main menu")),
             Section("Poster rows", "Moving around the rows of posters on Movies, Shows and title pages.", all(N, "Poster rows")),
@@ -102,10 +114,16 @@ object SettingsMap {
         val key get() = "$source/$section/${item.title}"
     }
 
+    /** Every ref placed by name, and every "all" ref's prefix (fixed: worked out once, not per page shown). */
+    private val named by lazy { pages.flatMap { p -> p.sections.flatMap { it.refs } }.filterNot { it.endsWith("/*") }.toSet() }
+    private val wild by lazy { pages.flatMap { p -> p.sections.flatMap { it.refs } }.filter { it.endsWith("/*") }.map { it.removeSuffix("*") }.toSet() }
+
+    /** The sources [id] lists settings from (its refs', and its own "More"): only these need building to show it. */
+    fun sources(id: String): Set<String> =
+        page(id).sections.flatMap { sec -> sec.refs.map { it.substringBefore('/') } }.toSet() + home.filterValues { it == id }.keys
+
     /** [id]'s sections, filled from [pool] (empty sections left out). */
     fun categories(id: String, pool: List<Entry>): List<SettingCategory> {
-        val named = pages.flatMap { p -> p.sections.flatMap { it.refs } }.filterNot { it.endsWith("/*") }.toSet()
-        val wild = pages.flatMap { p -> p.sections.flatMap { it.refs } }.filter { it.endsWith("/*") }.map { it.removeSuffix("*") }.toSet()
         val page = page(id)
         val out = page.sections.mapNotNull { sec ->
             val items = sec.refs.flatMap { ref ->
@@ -129,18 +147,22 @@ object SettingsMap {
     class Hit(val page: String, val pageTitle: String, val section: String, val title: String, val description: String)
 }
 
-/** Every setting, from where each is built (the catalogue the map places). */
+/**
+ * Every setting, from where each is built (the catalogue the map places). [sources]: just these (a page shows one or
+ * two; the rest aren't built). Fixed for a screen, so the calls below stay put.
+ */
 @Composable
 fun settingsPool(
     appearance: AppearanceViewModel = hiltViewModel(),
     playback: PlaybackSettingsViewModel = hiltViewModel(),
     remote: RemoteViewModel = hiltViewModel(),
     opts: UiOptsViewModel = hiltViewModel(),
+    sources: Set<String> = setOf("Appearance", "Playback", "Navigation"),
 ): List<SettingsMap.Entry> {
     fun from(source: String, cats: List<SettingCategory>) = cats.flatMap { c -> c.items.map { SettingsMap.Entry(source, c.name, it) } }
-    return from("Appearance", appearanceCategories(appearance, opts)) +
-        from("Playback", playbackCategories(playback, opts)) +
-        from("Navigation", navigationCategories(remote, opts))
+    return (if ("Appearance" in sources) from("Appearance", appearanceCategories(appearance, opts)) else emptyList()) +
+        (if ("Playback" in sources) from("Playback", playbackCategories(playback, opts)) else emptyList()) +
+        (if ("Navigation" in sources) from("Navigation", navigationCategories(remote, opts)) else emptyList())
 }
 
 /** A page of Settings as the map lays it out ([startSection] / [startItem]: open there, that setting highlighted). */
@@ -149,10 +171,12 @@ fun MappedSettingsScreen(pageId: String, onBack: () -> Unit, startSection: Strin
     val appearance: AppearanceViewModel = hiltViewModel()
     val playback: PlaybackSettingsViewModel = hiltViewModel()
     val opts: UiOptsViewModel = hiltViewModel()
-    val pool = settingsPool(appearance = appearance, playback = playback, opts = opts)
+    val news: NewsViewModel = hiltViewModel()
+    // Only the sources this page lists from (Playback's page doesn't build Appearance's or Navigation's settings).
+    val pool = settingsPool(appearance = appearance, playback = playback, opts = opts, sources = remember(pageId) { SettingsMap.sources(pageId) })
     val page = SettingsMap.page(pageId)
     val reset: (() -> Unit)? = when (pageId) {
-        SettingsMap.APPEARANCE -> ({ appearanceReset(appearance, opts) })
+        SettingsMap.APPEARANCE -> ({ appearanceReset(appearance, opts, playback, news.feeds.all().map { it.id }) })
         SettingsMap.PLAYBACK -> ({ playbackReset(playback, opts) })
         else -> null
     }

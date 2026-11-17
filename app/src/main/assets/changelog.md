@@ -1,5 +1,48 @@
 # Viewarr changelog (built by tools/changelog.py from the GitHub releases; don't edit by hand)
 
+## 0.28.9 · 17 Nov 2026
+
+### A new look
+- **New logo**: three play buttons, one behind the other, in emerald to cyan. On the start-up screen (animated), in the menu, the app icon and the Android TV banner.
+- **The menu takes the page's own background**: the wallpaper (or the film's picture on Movies and Shows) runs on under the menu, with no join at its edge.
+- **The top of the menu stays put**: the logo, ⚙ Settings, the mic and Search stay where they are when you go into the channel groups (or any list), and the list starts level with the main menu. Up from the list lands on ⚙ Settings; Left goes along to the mic and Settings.
+- **⚙ Settings is a round button** like the mic beside it.
+- **Shared pop-ups, pills and cards** across the app: the same options pop-up everywhere (with Cancel and a confirm step for anything you can't undo), the same way to move things (hold OK → Move), and the same search bar.
+
+### My Library
+- **Highlight My Library in the menu** and your own servers' rows show behind it (Plex, Jellyfin, Emby, IPTV): Continue watching, Recently added, each library's Recently added and your collections, films and shows together.
+- **My Library home** at the top of its list goes into them.
+- **Settings → Home page & menu → My Library**: choose and order its rows.
+
+### Sports
+- **Many more games get their channel**, for any sport: Viewarr reads the Sky guide's listings itself (UK and Ireland), knows each team's own channel (club TV) and event channels, and matches team names the way ESPN writes them. Each game shows how sure it is and why.
+- **The Sports page is a fixture guide**: times down the side, compact rows, your followed teams and leagues as pills along the top (hold OK on a pill: Move or Stop following).
+- **A richer game page**, and **Remind me** works from it.
+- **Watch** on a game goes to the channel (it used to play behind the Sports page).
+
+### Live TV
+- **📡 Live now is a group in the TV guide**: what's live in sport right now, from the guide and your Sports schedule. Only real guide entries marked live count: placeholders ("No Fixtures Today"), stream names and dead channels are left out, and event feeds show only around their event's time. Move or hide the group like any other.
+- **Settings → Live TV → Live now sports**: choose which sports Live now shows.
+- **EPG offset** (hold OK on a channel → EPG offset): a slider, −10 to +10 hours. The listings slide straight away and it's saved, with no guide download. The whole-guide offset in Settings → Live TV works the same way.
+- **Timeline** in the guide's hold-OK menu: 1½, 2, 2½, 3, 4 or 6 hours across the screen.
+- **Tidy group names** (Settings → Live TV): "UK| SKY SPORTS FHD" shows as "SKY SPORTS"; choose which marks go.
+- **Up / Down while watching** (browse mode): the first press shows the channel you're on, the next one browses.
+
+### Info bar
+- **Choose its buttons in Settings → Appearance → Info bar buttons**, with ticks. The main player buttons are locked on (they can be moved, not removed), shown first with a line after them.
+- The edit page stays up until you've finished.
+
+### Remote buttons
+- The second button preset is now called **Classic** (the layout most IPTV apps use). If you had it chosen, you still do.
+
+### Fixes
+- Trailers no longer make the TV change frame rate on the home pages and title pages.
+- The menu's Settings and Search row no longer scrolls away with the menu.
+- The top of the TV guide is no longer cut off.
+- Title pages fill the space under the details with a second row.
+- The Sports page is no longer see-through.
+- Faster, smoother Live now and Sports (work moved off the main thread).
+
 ## 0.28.8 · 16 Nov 2026
 
 ### Fixes
@@ -72,9 +115,9 @@
 
 ### TV guide and remote
 - **Back in the guide**: with something playing it goes back to it full screen (jumping to now first); with nothing playing, ask to exit or the menu. New: **jump to now first** On / Off (Remote buttons → Back).
-- The TiviMate preset's hold OK in the guide opens the record options.
+- The Classic preset's hold OK in the guide opens the record options.
 - Right on Edit menus moves on.
-- Holding Left on what's on now (TiviMate layout) steps back one programme into catch-up, instead of racing past several.
+- Holding Left on what's on now (Classic layout) steps back one programme into catch-up, instead of racing past several.
 
 ### Looks
 - **Transparency that does what it says**: Pop-up glass now goes from 0% (solid) to 100% (clear), and every info bar style, pop-up and notice follows it. Glass and Guide are exactly the percentage set (your current ones will look more see-through: about 20% / 40% is the old look).
@@ -88,7 +131,7 @@
 ## 0.28.4 · 15 Nov 2026
 
 ### A new Viewarr button layout
-**Use Viewarr buttons** (Settings → Remote buttons, and how Viewarr now comes) is TiviMate's layout with a few changes:
+**Use Viewarr buttons** (Settings → Remote buttons, and how Viewarr now comes) is the Classic layout with a few changes:
 - **TV guide**: **Left** goes back a programme and carries straight on into catch-up, with no hold needed (it stops at the start of catch-up). **Menu (≡)** opens the main menu, and so does Back on what's on now when nothing's playing. Hold OK opens the record options. **Red / Green / Yellow / Blue**: record options, channel groups, a day back, a day forward.
 - **Live TV**: **Up / Down change channel** (they used to open the channel list), OK opens the controls, Left / Right rewind and skip, **hold Play / pause** goes back to live, hold OK or Menu opens the main menu. Red / Green / Yellow / Blue: TV guide, channel groups, the controls, Settings.
 - Applying either preset now resets everything, including the Search button and any extra buttons you'd taught.
@@ -131,7 +174,7 @@
 - **Back** in the player: a tap switches between full screen and the small picture (films go to the corner, live TV to the guide window); **hold Back** to close the player.
 - **Left** from the first poster opens the menu on that page. Left on a menu entry opens its own list, Left again goes to the main menu. **Right / OK** on an entry goes to its rows.
 - **Back** in any menu list closes the menu.
-- **TV guide, TiviMate style**: Left goes back a programme; on what's on now it opens the channel groups (Left again: the main menu); **hold Left** goes back into catch-up.
+- **TV guide, classic style**: Left goes back a programme; on what's on now it opens the channel groups (Left again: the main menu); **hold Left** goes back into catch-up.
 - The old "Menu opens on", "Guide Left" and "Row Left" settings are gone: there's one way for everyone now.
 - **Button hints** say so the first few times: on full screen "Back: mini player · hold Back: close the player", on the mini player "Back: full screen · hold Back: close the player", for live TV and films alike.
 
@@ -322,7 +365,7 @@ Download **viewarr.apk** (or `viewarr-0.26.1.apk`) below, or update from inside 
 ### A new look: the glass design
 - **One menu on the left, made of glass.** It's see-through on every page and slides the page and the picture aside instead of covering them.
 - **Pages change as you move.** Moving down the menu shows each page straight away: Live TV, Live now, Sports, Movies, Shows, your **streaming services** (Netflix, Disney+, Peacock… from your AIOMetadata rows), Music and Recordings.
-- **One panel at a time, as in TiviMate.** Right or OK opens an entry's list (channel groups, libraries) in place of the menu; Left brings the menu back. From full-screen live TV, Left goes all the way to the main menu.
+- **One panel at a time.** Right or OK opens an entry's list (channel groups, libraries) in place of the menu; Left brings the menu back. From full-screen live TV, Left goes all the way to the main menu.
 - **Live TV keeps playing in the top-left window** while you browse Movies, Shows, a service, a library, a title's page, Recordings or Music. The details of whatever you're on sit beside it, with the posters below. With nothing on, the highlighted title's **trailer** plays there.
 - **The menu over a film:** press OK, then Left from the first button, and the menu opens while the film plays on full screen.
 
@@ -338,8 +381,8 @@ Download **viewarr.apk** (or `viewarr-0.26.1.apk`) below, or update from inside 
 - **Settings → Appearance → Main menu** has the same on / off switches.
 
 ### Remote buttons, rewritten
-- **Every button has its own entry,** as in TiviMate: OK and Long OK, Back, the arrows and their long presses, Menu, Ch + / −, play controls, Record, Info and the colour buttons.
-- **Each button lists what it does** in the TV guide, on live TV, in films & shows and in menus & pages, each with its own choice. The **TiviMate** and **Viewarr** presets set them all at once.
+- **Every button has its own entry:** OK and Long OK, Back, the arrows and their long presses, Menu, Ch + / −, play controls, Record, Info and the colour buttons.
+- **Each button lists what it does** in the TV guide, on live TV, in films & shows and in menus & pages, each with its own choice. The **Classic** and **Viewarr** presets set them all at once.
 
 ### Theme and settings
 - **The Viewarr theme:** charcoal glass with an orange highlight. Everyone moves to it once on updating; the highlight can still be changed.
@@ -401,7 +444,7 @@ Download **viewarr.apk** (or `viewarr-0.26.0.apk`) below, or update from inside 
 - **A guide when you turn it on** says what the hub needs and checks your addons for network rows.
 
 ### Remote buttons
-- **Presets:** **TiviMate-style** (Up / Down change channel, Left the channel list, Right the previous channel; in the guide Left goes back to now then the groups, hold Left for catch-up, Back shows the groups then asks to exit, hold Back goes full screen) or **Viewarr**. The buttons a preset sets are listed under it to change; it then shows **Custom (from …)**. Every preset keeps a way to the menu and a way out.
+- **Presets:** **Classic** (Up / Down change channel, Left the channel list, Right the previous channel; in the guide Left goes back to now then the groups, hold Left for catch-up, Back shows the groups then asks to exit, hold Back goes full screen) or **Viewarr**. The buttons a preset sets are listed under it to change; it then shows **Custom (from …)**. Every preset keeps a way to the menu and a way out.
 - **Live TV Left / Right:** rewind / skip ahead, or channel list / previous channel. **OK** can also show the channel list.
 - **Stop** on live TV stops the channel and leaves you on the guide (also in the button table).
 - **Back on the guide asks to exit again** with Classic menus (0.23 made it go full screen for everyone by mistake), and **Back twice quickly** from live TV always exits.

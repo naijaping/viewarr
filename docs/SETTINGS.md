@@ -66,7 +66,7 @@ Which libraries the menu lists for Movies and Shows (on or off, order, names), a
 
 ### Remote buttons
 
-Every button on your remote, and what it does in the TV guide, on live TV, in films & shows and in menus & pages. **Presets** (Viewarr or TiviMate), **Skip size**, **Channel change delay**, the **Search button** and extra buttons. See [Remote control](REMOTE.md).
+Every button on your remote, and what it does in the TV guide, on live TV, in films & shows and in menus & pages. **Presets** (Viewarr or Classic), **Skip size**, **Channel change delay**, the **Search button** and extra buttons. See [Remote control](REMOTE.md).
 
 ### Menu & navigation
 

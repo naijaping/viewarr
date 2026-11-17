@@ -142,7 +142,17 @@ Dispatcharr and IPTV providers don't remember where you stopped, so Viewarr does
 - **Continue watching on IPTV** joins the Movies and Shows rows (combined with your servers' Continue watching when rows are combined).
 - Hold OK on a film for **Mark as watched / not watched** and **Remove from Continue watching**; hold OK on an episode for **Mark as watched**.
 
-It stays on that box: another box keeps its own. *(0.28.2 and later.)*
+**Shared between your TVs** *(0.28.9 and later)*: with Dispatcharr, your progress and ticks are also kept on your Dispatcharr user (in its app-data store, key `viewarr_vod_progress`), so every box signed in as you carries on where another left off, and an episode un-ticked on one is un-ticked on the others. Synced when Viewarr starts, every 5 minutes, and a minute after you stop or tick something; the newest change wins. Plain Xtream / M3U logins keep it on the box only.
+
+The format is open for companion Dispatcharr plugins (for example one that syncs it with Emby / Jellyfin):
+
+```json
+{ "tmdb_movie_693134": {"title": "Dune: Part Two", "pos": 2415, "dur": 9960, "status": "watching", "updated_at": 1794782733},
+  "tmdb_tv_94997_s02_e04": {"status": "watched", "updated_at": 1794782340},
+  "tmdb_movie_550": {"status": "unwatched", "updated_at": 1794782900} }
+```
+
+Ids are `tmdb_movie_<id>` / `tmdb_tv_<show id>_s<SS>_e<EE>` (else `imdb_…`, else `title_movie_<slug>` / `title_tv_<slug>_s<SS>_e<EE>`); `pos`, `dur` and `updated_at` are seconds. Newest `updated_at` wins per item; "unwatched" markers are kept 90 days; the whole value stays under 115 KiB (Dispatcharr allows 128 KiB per key). Read, merge, then write, as Viewarr does, so two writers don't lose each other's changes.
 
 ### Skip intro and next episode
 
